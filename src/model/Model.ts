@@ -5,6 +5,7 @@ import { ObserverRegistry } from "./Observer.js";
 import { MorphMap } from "./MorphMap.js";
 import { MorphTo, MorphOne, MorphMany, MorphToMany } from "./MorphRelations.js";
 import { BelongsToMany } from "./BelongsToMany.js";
+import { Schema } from "../schema/Schema.js";
 
 export type ModelConstructor<T extends Model = Model> = typeof Model & (new (...args: any[]) => T);
 export type GlobalScope = (builder: Builder<any>, model: typeof Model) => void;
@@ -358,6 +359,9 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   static timestamps = true;
   static connection?: Connection;
   static dateFormat = "YYYY-MM-DD HH:mm:ss";
+  static keyType: "int" | "string" | "uuid" = "int";
+  static incrementing = true;
+  static usesUuids = false;
   static morphName?: string;
   static casts: Record<string, CastDefinition> = {};
   static fillable: string[] = [];
@@ -461,6 +465,17 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
   static getQualifiedDeletedAtColumn(): string {
     return `${this.getTable()}.${this.deletedAtColumn}`;
+  }
+
+  static async shouldAutoGeneratePrimaryKey(): Promise<boolean> {
+    if ((this as any).usesUuids || this.keyType === "uuid") return true;
+    const column = await Schema.getColumn(this.getTable(), this.primaryKey);
+    if (!column) return false;
+    if (!column.primary) return false;
+    if (column.autoIncrement) return false;
+    const type = String(column.type || "").toLowerCase();
+    const numericTypes = new Set(["integer", "int", "bigint", "smallint", "tinyint", "real", "float", "double", "decimal", "numeric"]);
+    return !numericTypes.has(type);
   }
 
   static async create<M extends typeof Model>(this: M, attributes: Partial<InstanceType<M> extends Model<infer U> ? U : Record<string, any>>): Promise<InstanceType<M>> {
@@ -763,9 +778,21 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
         (this.$attributes as any)["updated_at"] = now;
       }
 
-      const result = await new Builder(constructor.getConnection(), constructor.getTable()).insertGetId(this.$attributes);
-      if (result) {
-        (this.$attributes as any)[constructor.primaryKey] = result;
+      const primaryKey = constructor.primaryKey;
+      const primaryKeyValue = this.getAttribute(primaryKey);
+      const shouldGeneratePrimaryKey = await constructor.shouldAutoGeneratePrimaryKey();
+      if ((primaryKeyValue === null || primaryKeyValue === undefined || primaryKeyValue === "") && shouldGeneratePrimaryKey) {
+        const generated = crypto.randomUUID();
+        (this.$attributes as any)[primaryKey] = generated;
+      }
+
+      if (shouldGeneratePrimaryKey || primaryKeyValue !== null && primaryKeyValue !== undefined && primaryKeyValue !== "") {
+        await new Builder(constructor.getConnection(), constructor.getTable()).insert(this.$attributes);
+      } else {
+        const result = await new Builder(constructor.getConnection(), constructor.getTable()).insertGetId(this.$attributes);
+        if (result) {
+          (this.$attributes as any)[constructor.primaryKey] = result;
+        }
       }
 
       this.$exists = true;
