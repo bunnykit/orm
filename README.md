@@ -1,5 +1,13 @@
 # Bunny
 
+> **Bun-only package.** Install with:
+>
+> ```bash
+> bun add @bunnykit/orm
+> ```
+>
+> npm, yarn, pnpm, and Node.js runtime usage are not supported.
+
 An **Eloquent-inspired ORM** built specifically for [Bun](https://bun.sh)'s native `bun:sql` client. Supports **SQLite**, **MySQL**, and **PostgreSQL** with full TypeScript typing, a chainable query builder, schema migrations, model observers, and polymorphic relations.
 
 ---
@@ -23,8 +31,6 @@ An **Eloquent-inspired ORM** built specifically for [Bun](https://bun.sh)'s nati
 ```bash
 bun add @bunnykit/orm
 ```
-
-> **Note:** This package is Bun-only. Install and run it with Bun >= 1.1; npm, yarn, pnpm, and Node.js runtime usage are not supported.
 
 ---
 
@@ -136,6 +142,16 @@ await user.save();
 // Delete
 await user.delete();
 ```
+
+### REPL
+
+Start an interactive Bunny session with the ORM already loaded:
+
+```bash
+bunny repl
+```
+
+The REPL exposes `Model`, `Schema`, `Connection`, and `db`. If no project config is present, it starts against an in-memory SQLite database so you can still experiment immediately.
 
 ---
 
