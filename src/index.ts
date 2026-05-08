@@ -12,6 +12,7 @@ export { Builder } from "./query/Builder.js";
 
 export { Model, HasMany, BelongsTo, HasOne, HasManyThrough, HasOneThrough } from "./model/Model.js";
 export type { ModelConstructor, GlobalScope, CastDefinition, CastsAttributes } from "./model/Model.js";
+export { ModelNotFoundError } from "./model/ModelNotFoundError.js";
 export { ObserverRegistry, type ObserverContract } from "./model/Observer.js";
 export { MorphMap } from "./model/MorphMap.js";
 export { MorphTo, MorphOne, MorphMany, MorphToMany } from "./model/MorphRelations.js";

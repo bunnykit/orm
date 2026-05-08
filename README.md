@@ -18,11 +18,12 @@ An **Eloquent-inspired ORM** built specifically for [Bun](https://bun.sh)'s nati
 - 📦 **Multi-database** — SQLite, MySQL, and PostgreSQL support
 - 🔷 **Fully Typed** — Written in TypeScript with generics everywhere
 - 🏗️ **Schema Builder** — Programmatic table creation, indexes, foreign keys
-- 🔍 **Query Builder** — Chainable `where`, `join`, `orderBy`, `groupBy`, etc.
-- 🧬 **Eloquent-style Models** — Property attributes, defaults, casts, dirty tracking, soft deletes, scopes
+- 🔍 **Query Builder** — Chainable `where`, `join`, `orderBy`, `groupBy`, date filters, conditional building, etc.
+- 🧬 **Eloquent-style Models** — Property attributes, defaults, casts, dirty tracking, soft deletes, scopes, find-or-fail, first-or-create
 - 🔗 **Relations** — Standard, many-to-many, polymorphic, through, one-of-many, and relation queries
 - 👁️ **Observers** — Lifecycle hooks (`creating`, `created`, `updating`, `updated`, etc.)
 - 🚀 **Migrations & CLI** — Create, run, and rollback migrations from the command line
+- ⚡ **Streaming** — `chunk`, `cursor`, `each`, and `lazy` for memory-efficient large dataset processing
 
 ---
 
@@ -261,6 +262,14 @@ User.where({ role: "admin", active: true });
 User.whereIn("id", [1, 2, 3]);
 User.whereNull("deleted_at");
 User.whereNotNull("email");
+User.whereNot("status", "banned");
+
+// Date filtering (cross-database)
+Event.whereDate("happened_at", "2024-01-01");
+Event.whereYear("created_at", ">=", 2023);
+Event.whereMonth("birthday", 12);
+Event.whereDay("anniversary", 14);
+Event.whereTime("opened_at", "09:00:00");
 
 // Chaining
 const results = await User
@@ -270,6 +279,16 @@ const results = await User
   .limit(10)
   .offset(0)
   .get();
+
+// Conditional building
+User.when(filters.name, (q) => q.where("name", filters.name))
+    .when(filters.age,  (q) => q.where("age", ">=", filters.age))
+    .unless(showAll,    (q) => q.where("active", true))
+    .tap((q) => console.log(q.toSql()));
+
+// Ordering convenience
+Post.latest().first();        // orderBy created_at desc
+Post.oldest("published_at");  // orderBy published_at asc
 
 // Aggregates
 const count = await User.where("active", true).count();
@@ -288,6 +307,16 @@ const emails = await User.pluck("email");
 // First / Find
 const user = await User.where("email", "alice@example.com").first();
 const byId = await User.find(1);
+
+// Find-or-Fail (throws if not found)
+const user = await User.findOrFail(1);
+const first = await User.firstOrFail();
+
+// Streaming large datasets
+await User.chunk(100, (users) => { ... });
+await User.each(100, (user) => { ... });
+for await (const user of User.cursor()) { ... }
+for await (const user of User.lazy(500)) { ... }
 ```
 
 ---
@@ -345,7 +374,18 @@ user.getDirty();          // { name: "Charlie" }
 await user.save();
 await user.delete();
 await user.refresh();
+await user.touch();       // update only timestamps
+await user.load("posts"); // lazy eager loading
 user.toJSON();            // plain object
+
+// Increment / Decrement
+await user.increment("login_count");
+await user.increment("login_count", 5, { last_login_at: new Date() });
+await user.decrement("stock", 10);
+
+// First-or-Create / Update-or-Create
+const user = await User.firstOrCreate({ email: "alice@example.com" }, { name: "Alice" });
+const user = await User.updateOrCreate({ email: "alice@example.com" }, { name: "Alice Smith" });
 ```
 
 ### Default Attributes
@@ -932,7 +972,7 @@ Bunny includes a full test suite built with `bun:test`.
 bun test
 ```
 
-92 tests covering connection management, schema grammars, query builder, model CRUD, casts, scopes, soft deletes, relations, observers, migrations, and type generation.
+139 tests covering connection management, schema grammars, query builder, model CRUD, casts, scopes, soft deletes, relations, observers, migrations, type generation, lazy eager loading, find-or-fail, first-or-create, increment/decrement, touch, chunk/cursor/lazy streaming, date where clauses, conditional query building, whereNot, and latest/oldest.
 
 ---
 

@@ -6,6 +6,7 @@ import { MorphMap } from "./MorphMap.js";
 import { MorphTo, MorphOne, MorphMany, MorphToMany } from "./MorphRelations.js";
 import { BelongsToMany } from "./BelongsToMany.js";
 import { Schema } from "../schema/Schema.js";
+import { ModelNotFoundError } from "./ModelNotFoundError.js";
 
 export type ModelConstructor<T extends Model = Model> = typeof Model & (new (...args: any[]) => T);
 export type GlobalScope = (builder: Builder<any>, model: typeof Model) => void;
@@ -489,12 +490,56 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().find(id, this.primaryKey);
   }
 
+  static async findOrFail<M extends typeof Model>(this: M, id: any): Promise<InstanceType<M>> {
+    const result = await this.find(id);
+    if (!result) {
+      throw new ModelNotFoundError(this.name, id);
+    }
+    return result;
+  }
+
   static async first<M extends typeof Model>(this: M): Promise<InstanceType<M> | null> {
     return this.query().first();
   }
 
+  static async firstOrFail<M extends typeof Model>(this: M): Promise<InstanceType<M>> {
+    const result = await this.first();
+    if (!result) {
+      throw new ModelNotFoundError(this.name);
+    }
+    return result;
+  }
+
+  static async firstOrCreate<M extends typeof Model>(
+    this: M,
+    attributes: Record<string, any> = {},
+    values: Record<string, any> = {}
+  ): Promise<InstanceType<M>> {
+    const found = await this.where(attributes).first();
+    if (found) return found;
+    return this.create({ ...attributes, ...values } as any);
+  }
+
+  static async updateOrCreate<M extends typeof Model>(
+    this: M,
+    attributes: Record<string, any>,
+    values: Record<string, any> = {}
+  ): Promise<InstanceType<M>> {
+    const found = await this.where(attributes).first();
+    if (found) {
+      found.fill(values);
+      await found.save();
+      return found;
+    }
+    return this.create({ ...attributes, ...values } as any);
+  }
+
   static where<M extends typeof Model>(this: M, column: string | Record<string, any>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().where(column as any, operator, value);
+  }
+
+  static orderBy<M extends typeof Model>(this: M, column: string, direction?: "asc" | "desc"): Builder<InstanceType<M>> {
+    return this.query().orderBy(column, direction);
   }
 
   static whereIn<M extends typeof Model>(this: M, column: string, values: any[]): Builder<InstanceType<M>> {
@@ -511,6 +556,94 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
   static orWhere<M extends typeof Model>(this: M, column: string | Record<string, any>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().orWhere(column as any, operator, value);
+  }
+
+  static whereNot<M extends typeof Model>(this: M, column: string | Record<string, any>, value?: any): Builder<InstanceType<M>> {
+    return this.query().whereNot(column as any, value);
+  }
+
+  static orWhereNot<M extends typeof Model>(this: M, column: string | Record<string, any>, value?: any): Builder<InstanceType<M>> {
+    return this.query().orWhereNot(column as any, value);
+  }
+
+  static whereDate<M extends typeof Model>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+    return this.query().whereDate(column, operator, value);
+  }
+
+  static orWhereDate<M extends typeof Model>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+    return this.query().orWhereDate(column, operator, value);
+  }
+
+  static whereDay<M extends typeof Model>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+    return this.query().whereDay(column, operator, value);
+  }
+
+  static orWhereDay<M extends typeof Model>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+    return this.query().orWhereDay(column, operator, value);
+  }
+
+  static whereMonth<M extends typeof Model>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+    return this.query().whereMonth(column, operator, value);
+  }
+
+  static orWhereMonth<M extends typeof Model>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+    return this.query().orWhereMonth(column, operator, value);
+  }
+
+  static whereYear<M extends typeof Model>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+    return this.query().whereYear(column, operator, value);
+  }
+
+  static orWhereYear<M extends typeof Model>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+    return this.query().orWhereYear(column, operator, value);
+  }
+
+  static whereTime<M extends typeof Model>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+    return this.query().whereTime(column, operator, value);
+  }
+
+  static orWhereTime<M extends typeof Model>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+    return this.query().orWhereTime(column, operator, value);
+  }
+
+  static latest<M extends typeof Model>(this: M, column?: string): Builder<InstanceType<M>> {
+    return this.query().latest(column);
+  }
+
+  static oldest<M extends typeof Model>(this: M, column?: string): Builder<InstanceType<M>> {
+    return this.query().oldest(column);
+  }
+
+  static when<M extends typeof Model>(this: M, condition: any, callback: (query: Builder<any>) => void | Builder<any>, defaultCallback?: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>> {
+    return this.query().when(condition, callback, defaultCallback);
+  }
+
+  static unless<M extends typeof Model>(this: M, condition: any, callback: (query: Builder<any>) => void | Builder<any>, defaultCallback?: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>> {
+    return this.query().unless(condition, callback, defaultCallback);
+  }
+
+  static tap<M extends typeof Model>(this: M, callback: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>> {
+    return this.query().tap(callback);
+  }
+
+  static take<M extends typeof Model>(this: M, count: number): Builder<InstanceType<M>> {
+    return this.query().take(count);
+  }
+
+  static skip<M extends typeof Model>(this: M, count: number): Builder<InstanceType<M>> {
+    return this.query().skip(count);
+  }
+
+  static inRandomOrder<M extends typeof Model>(this: M): Builder<InstanceType<M>> {
+    return this.query().inRandomOrder();
+  }
+
+  static lockForUpdate<M extends typeof Model>(this: M): Builder<InstanceType<M>> {
+    return this.query().lockForUpdate();
+  }
+
+  static sharedLock<M extends typeof Model>(this: M): Builder<InstanceType<M>> {
+    return this.query().sharedLock();
   }
 
   static with<M extends typeof Model>(this: M, ...relations: string[]): Builder<InstanceType<M>> {
@@ -575,6 +708,22 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
   static async paginate<M extends typeof Model>(this: M, perPage?: number, page?: number): Promise<import("../query/Builder.js").Paginator<InstanceType<M>>> {
     return this.query().paginate(perPage, page);
+  }
+
+  static async chunk<M extends typeof Model>(this: M, count: number, callback: (items: InstanceType<M>[]) => void | Promise<void>): Promise<void> {
+    return this.query().chunk(count, callback);
+  }
+
+  static async each<M extends typeof Model>(this: M, count: number, callback: (item: InstanceType<M>) => void | Promise<void>): Promise<void> {
+    return this.query().each(count, callback);
+  }
+
+  static cursor<M extends typeof Model>(this: M): AsyncGenerator<InstanceType<M>> {
+    return this.query().cursor() as AsyncGenerator<InstanceType<M>>;
+  }
+
+  static lazy<M extends typeof Model>(this: M, count?: number): AsyncGenerator<InstanceType<M>> {
+    return this.query().lazy(count) as AsyncGenerator<InstanceType<M>>;
   }
 
   static async eagerLoadRelations(models: Model[], relations: string[]): Promise<void> {
@@ -802,6 +951,61 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       await ObserverRegistry.dispatch("saved", this);
     }
 
+    return this;
+  }
+
+  updateTimestamps(): void {
+    const constructor = this.constructor as typeof Model;
+    if (!constructor.timestamps) return;
+    const now = this.freshTimestamp();
+    (this.$attributes as any)["updated_at"] = now;
+    if (!this.$exists) {
+      (this.$attributes as any)["created_at"] = now;
+    }
+  }
+
+  async touch(): Promise<boolean> {
+    if (!this.$exists) return false;
+    const constructor = this.constructor as typeof Model;
+    if (!constructor.timestamps) return false;
+    const now = this.freshTimestamp();
+    const pk = this.getAttribute(constructor.primaryKey);
+    await new Builder(constructor.getConnection(), constructor.getTable())
+      .where(constructor.primaryKey, pk)
+      .update({ updated_at: now } as any);
+    (this.$attributes as any)["updated_at"] = now;
+    this.$original = { ...this.$attributes };
+    return true;
+  }
+
+  async increment(column: string, amount: number = 1, extra: Record<string, any> = {}): Promise<this> {
+    const constructor = this.constructor as typeof Model;
+    const pk = this.getAttribute(constructor.primaryKey);
+    if (!pk) return this;
+
+    const builder = new Builder(constructor.getConnection(), constructor.getTable())
+      .where(constructor.primaryKey, pk);
+
+    if (constructor.timestamps) {
+      extra = { ...extra, updated_at: this.freshTimestamp() };
+    }
+
+    await builder.increment(column, amount, extra);
+    (this.$attributes as any)[column] = ((this.$attributes as any)[column] || 0) + amount;
+    for (const [key, value] of Object.entries(extra)) {
+      (this.$attributes as any)[key] = value;
+    }
+    this.$original = { ...this.$attributes };
+    return this;
+  }
+
+  async decrement(column: string, amount: number = 1, extra: Record<string, any> = {}): Promise<this> {
+    return this.increment(column, -amount, extra);
+  }
+
+  async load(...relations: string[]): Promise<this> {
+    const constructor = this.constructor as typeof Model;
+    await constructor.eagerLoadRelations([this], relations);
     return this;
   }
 

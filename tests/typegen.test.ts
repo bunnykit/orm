@@ -1,5 +1,5 @@
 import { expect, test, describe, beforeAll, afterAll } from "bun:test";
-import { readdir, rmdir, unlink } from "fs/promises";
+import { readdir, rm } from "fs/promises";
 import { join } from "path";
 import { Schema, TypeGenerator } from "../src/index.js";
 import { setupTestDb } from "./helpers.js";
@@ -31,15 +31,9 @@ describe("TypeGenerator", () => {
   });
 
   afterAll(async () => {
-    try {
-      for (const dir of [OUT_DIR, DECL_OUT_DIR, MODEL_ROOT_A, MODEL_ROOT_B]) {
-        const files = await readdir(dir);
-        for (const f of files) {
-          await unlink(join(dir, f));
-        }
-        await rmdir(dir);
-      }
-    } catch {}
+    for (const dir of [OUT_DIR, DECL_OUT_DIR, MODEL_ROOT_A, MODEL_ROOT_B]) {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   test("generates interfaces and stubs from database schema", async () => {
@@ -111,11 +105,7 @@ describe("TypeGenerator", () => {
     expect(postContent).toContain('declare module "../models/BlogPost" {');
     expect(postContent).toContain("interface BlogPost extends BlogPostsAttributes {}");
 
-    const files = await readdir(conventionDir);
-    for (const f of files) {
-      await unlink(join(conventionDir, f));
-    }
-    await rmdir(conventionDir);
+    await rm(conventionDir, { recursive: true, force: true });
   });
 
   test("generates declarations into a types folder beside each model root", async () => {

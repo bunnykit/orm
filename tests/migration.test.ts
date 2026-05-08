@@ -1,5 +1,5 @@
 import { expect, test, describe, beforeAll, afterAll } from "bun:test";
-import { mkdir, rmdir, readdir, unlink } from "fs/promises";
+import { mkdir, readdir, unlink, rm } from "fs/promises";
 import { join } from "path";
 import { Connection, Schema, Migration, Migrator, MigrationCreator } from "../src/index.js";
 import { setupTestDb } from "./helpers.js";
@@ -31,10 +31,7 @@ describe("Migrator", () => {
   });
 
   afterAll(async () => {
-    const files = await readdir(TEST_MIGRATIONS_DIR);
-    for (const f of files) {
-      await unlink(join(TEST_MIGRATIONS_DIR, f));
-    }
+    await rm(TEST_MIGRATIONS_DIR, { recursive: true, force: true });
   });
 
   test("creates migrations table on first run", async () => {
@@ -119,11 +116,7 @@ export default class CreateTypeTestTable extends Migration {
 
     // Cleanup
     await unlink(filePath);
-    const typeFiles = await readdir(typesDir);
-    for (const f of typeFiles) {
-      await unlink(join(typesDir, f));
-    }
-    await rmdir(typesDir);
+    await rm(typesDir, { recursive: true, force: true });
   });
 });
 
@@ -138,10 +131,7 @@ describe("Migrator multi-path support", () => {
 
   afterAll(async () => {
     for (const dir of [TEST_MIGRATIONS_DIR_A, TEST_MIGRATIONS_DIR_B]) {
-      const files = await readdir(dir);
-      for (const f of files) {
-        await unlink(join(dir, f));
-      }
+      await rm(dir, { recursive: true, force: true });
     }
   });
 
