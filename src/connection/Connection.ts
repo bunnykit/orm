@@ -1,9 +1,14 @@
 import { SQL } from "bun";
 import type { ConnectionConfig } from "../types/index.js";
+import { Grammar } from "../query/grammars/Grammar.js";
+import { SQLiteGrammar } from "../query/grammars/SQLiteGrammar.js";
+import { MySqlGrammar } from "../query/grammars/MySqlGrammar.js";
+import { PostgresGrammar } from "../query/grammars/PostgresGrammar.js";
 
 export class Connection {
   readonly driver: SQL;
   private driverName: "sqlite" | "mysql" | "postgres";
+  private grammar: Grammar;
 
   constructor(config: ConnectionConfig) {
     let url: string;
@@ -27,10 +32,26 @@ export class Connection {
       : url.startsWith("mysql")
       ? "mysql"
       : "postgres";
+
+    switch (this.driverName) {
+      case "sqlite":
+        this.grammar = new SQLiteGrammar();
+        break;
+      case "mysql":
+        this.grammar = new MySqlGrammar();
+        break;
+      case "postgres":
+        this.grammar = new PostgresGrammar();
+        break;
+    }
   }
 
   getDriverName(): "sqlite" | "mysql" | "postgres" {
     return this.driverName;
+  }
+
+  getGrammar(): Grammar {
+    return this.grammar;
   }
 
   async query(sqlString: string): Promise<any[]> {

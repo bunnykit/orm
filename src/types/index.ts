@@ -65,6 +65,16 @@ export interface OrderClause {
   direction: "asc" | "desc";
 }
 
+export interface HavingClause {
+  sql: string;
+  boolean: "and" | "or";
+}
+
+export interface UnionClause {
+  query: string;
+  all: boolean;
+}
+
 export type ConnectionConfig =
   | { url: string }
   | {

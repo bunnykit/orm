@@ -271,6 +271,14 @@ Event.whereMonth("birthday", 12);
 Event.whereDay("anniversary", 14);
 Event.whereTime("opened_at", "09:00:00");
 
+// or* variants
+User.where("role", "admin").orWhereNull("email");
+User.where("status", "active").orWhereIn("role", ["admin", "mod"]);
+User.where("price", ">=", 100).orWhereBetween("price", [10, 50]);
+User.where("name", "Alice").orWhereExists("SELECT 1 FROM orders WHERE orders.user_id = users.id");
+User.where("a", 1).orWhereColumn("updated_at", ">", "created_at");
+User.where("active", true).orWhereRaw("score > 100");
+
 // Chaining
 const results = await User
   .where("age", ">=", 18)
@@ -289,24 +297,42 @@ User.when(filters.name, (q) => q.where("name", filters.name))
 // Ordering convenience
 Post.latest().first();        // orderBy created_at desc
 Post.oldest("published_at");  // orderBy published_at asc
+Post.orderByDesc("score");    // shorthand
+Post.orderBy("name").reorder();        // clear orders
+Post.orderBy("name").reorder("id");    // replace with new order
 
 // Aggregates
 const count = await User.where("active", true).count();
 const exists = await User.where("email", "test@example.com").exists();
+const doesntExist = await User.where("email", "missing@example.com").doesntExist();
 
 // Joins
 const posts = await Post
   .query()
   .select("posts.*", "users.name as author_name")
   .join("users", "posts.user_id", "=", "users.id")
+  .leftJoin("comments", "comments.post_id", "=", "posts.id")
+  .crossJoin("tags")
   .get();
+
+// Group by / Having
+User.select("role").groupBy("role").having("count", ">", 1);
+User.groupBy("role").havingRaw("COUNT(*) > 1").orHavingRaw("SUM(score) > 100");
+
+// Union
+const q1 = User.where("active", true);
+const q2 = User.where("role", "admin");
+const results = await q1.union(q2).get();
+const allResults = await q1.unionAll(q2).get();
 
 // Pluck
 const emails = await User.pluck("email");
 
-// First / Find
+// First / Find / Sole
 const user = await User.where("email", "alice@example.com").first();
 const byId = await User.find(1);
+const name = await User.where("id", 1).value("name"); // single scalar
+const sole = await User.where("email", "alice@example.com").sole(); // exactly one or throw
 
 // Find-or-Fail (throws if not found)
 const user = await User.findOrFail(1);
@@ -317,7 +343,132 @@ await User.chunk(100, (users) => { ... });
 await User.each(100, (user) => { ... });
 for await (const user of User.cursor()) { ... }
 for await (const user of User.lazy(500)) { ... }
+
+// Raw / Subquery helpers
+User.select("name").selectRaw("price * 2 as doubled");
+User.fromSub(User.where("price", ">", 100), "expensive");
+
+// Debug
+User.where("name", "Alice").dump();   // logs SQL, returns builder
+User.where("name", "Alice").dd();     // logs SQL and throws
 ```
+
+### Query Builder Reference
+
+| Method | Description |
+|--------|-------------|
+| `where(col, op, val)` | Basic equality or operator filter |
+| `where(obj)` | Object of column → value pairs |
+| `where(fn)` | Nested where group via closure |
+| `orWhere(...)` | OR variant of `where` |
+| `whereNot(col, val)` | `!=` filter |
+| `orWhereNot(...)` | OR `!=` |
+| `whereIn(col, vals)` | `IN` set |
+| `orWhereIn(...)` | OR `IN` |
+| `whereNotIn(col, vals)` | `NOT IN` |
+| `orWhereNotIn(...)` | OR `NOT IN` |
+| `whereNull(col)` | `IS NULL` |
+| `orWhereNull(...)` | OR `IS NULL` |
+| `whereNotNull(col)` | `IS NOT NULL` |
+| `orWhereNotNull(...)` | OR `IS NOT NULL` |
+| `whereBetween(col, [a, b])` | `BETWEEN` |
+| `orWhereBetween(...)` | OR `BETWEEN` |
+| `whereNotBetween(col, [a, b])` | `NOT BETWEEN` |
+| `orWhereNotBetween(...)` | OR `NOT BETWEEN` |
+| `whereExists(sql)` | `EXISTS (subquery)` |
+| `orWhereExists(...)` | OR `EXISTS` |
+| `whereNotExists(sql)` | `NOT EXISTS` |
+| `orWhereNotExists(...)` | OR `NOT EXISTS` |
+| `whereColumn(a, op, b)` | Compare two columns |
+| `orWhereColumn(...)` | OR column compare |
+| `whereRaw(sql)` | Raw SQL where clause |
+| `orWhereRaw(...)` | OR raw SQL |
+| `whereDate(col, op, val)` | Cross-database date filter |
+| `whereDay / whereMonth / whereYear / whereTime` | Date part filters |
+| `whereJsonContains(col, val)` | JSON membership (cross-db) |
+| `whereJsonLength(col, op, val)` | JSON array length |
+| `whereLike(col, pattern)` | `LIKE` pattern |
+| `whereNotLike(...)` | `NOT LIKE` |
+| `whereRegexp(col, pattern)` | Regular expression match |
+| `whereFullText(cols, query)` | Full-text search (cross-db) |
+| `whereAll(cols, op, val)` | Multi-column `AND` |
+| `whereAny(cols, op, val)` | Multi-column `OR` |
+| `orderBy(col, dir)` | Sort ascending or descending |
+| `orderByDesc(col)` | Sort descending shorthand |
+| `latest(col?)` | `orderBy(created_at, desc)` |
+| `oldest(col?)` | `orderBy(created_at, asc)` |
+| `inRandomOrder()` | `ORDER BY RANDOM()` / `RAND()` |
+| `reorder(col?, dir?)` | Clear and optionally replace orders |
+| `groupBy(...cols)` | `GROUP BY` |
+| `having(col, op, val)` | `HAVING` filter |
+| `orHaving(...)` | OR `HAVING` |
+| `havingRaw(sql)` | Raw `HAVING` |
+| `orHavingRaw(...)` | OR raw `HAVING` |
+| `join(tbl, a, op, b)` | `INNER JOIN` |
+| `leftJoin(...)` | `LEFT JOIN` |
+| `rightJoin(...)` | `RIGHT JOIN` |
+| `crossJoin(tbl)` | `CROSS JOIN` |
+| `union(query, all?)` | `UNION` another query |
+| `unionAll(query)` | `UNION ALL` |
+| `select(...cols)` | Choose columns |
+| `addSelect(...cols)` | Append columns |
+| `selectRaw(sql)` | Raw SELECT expression |
+| `fromSub(query, alias)` | Derived table from subquery |
+| `distinct()` | `SELECT DISTINCT` |
+| `limit(n)` | Row limit |
+| `offset(n)` | Row offset |
+| `take(n)` | Alias for `limit` |
+| `skip(n)` | Alias for `offset` |
+| `forPage(page, perPage)` | Pagination offset/limit |
+| `lockForUpdate()` | `FOR UPDATE` (MySQL/Postgres) |
+| `sharedLock()` | `LOCK IN SHARE MODE` / `FOR SHARE` |
+| `skipLocked()` | Append `SKIP LOCKED` |
+| `noWait()` | Append `NOWAIT` |
+| `get()` | Fetch all rows |
+| `first()` | Fetch first row |
+| `find(id, col?)` | Find by ID |
+| `findOrFail(id, col?)` | Find or throw |
+| `firstOrFail()` | First or throw |
+| `sole()` | Exactly one row or throw |
+| `value(col)` | Single scalar from first row |
+| `pluck(col)` | Array of column values |
+| `count(col?)` | `COUNT` aggregate |
+| `sum(col)` | `SUM` |
+| `avg(col)` | `AVG` |
+| `min(col)` | `MIN` |
+| `max(col)` | `MAX` |
+| `exists()` | Check any rows exist |
+| `doesntExist()` | Check no rows exist |
+| `paginate(perPage?, page?)` | Paginated result set |
+| `chunk(n, fn)` | Batch iterate |
+| `each(n, fn)` | Per-item iterate |
+| `cursor()` | Lazy async generator |
+| `lazy(n?)` | Chunked lazy generator |
+| `insert(data)` | Insert row(s) |
+| `insertGetId(data, col?)` | Insert and return ID |
+| `insertOrIgnore(data)` | Insert, ignore conflicts |
+| `upsert(data, uniqueBy, updateCols?)` | Insert or update on conflict |
+| `update(data)` | Update matched rows |
+| `updateFrom(tbl, a, op, b)` | Update with JOIN |
+| `delete()` | Delete matched rows |
+| `increment(col, amt?, extra?)` | Add to column |
+| `decrement(col, amt?, extra?)` | Subtract from column |
+| `restore()` | Restore soft-deleted rows |
+| `with(...rels)` | Eager load relations |
+| `has(rel)` / `orHas(rel)` | Relation existence |
+| `whereHas(rel, fn?)` / `orWhereHas(...)` | Filtered relation existence |
+| `doesntHave(rel)` / `whereDoesntHave(...)` | Relation absence |
+| `withCount(rel)` / `withSum / withAvg / withMin / withMax` | Relation aggregates |
+| `scope(name, ...args)` | Apply local scope |
+| `withoutGlobalScope(name)` / `withoutGlobalScopes()` | Remove scopes |
+| `withTrashed()` / `onlyTrashed()` | Soft delete visibility |
+| `when(cond, fn, elseFn?)` / `unless(...)` | Conditional building |
+| `tap(fn)` | Mutate and return |
+| `clone()` | Copy builder state |
+| `toSql()` | Compile to SQL string |
+| `dump()` | Log SQL, return builder |
+| `dd()` | Log SQL and halt |
+| `explain()` | Return query plan |
 
 ---
 
@@ -972,7 +1123,7 @@ Bunny includes a full test suite built with `bun:test`.
 bun test
 ```
 
-139 tests covering connection management, schema grammars, query builder, model CRUD, casts, scopes, soft deletes, relations, observers, migrations, type generation, lazy eager loading, find-or-fail, first-or-create, increment/decrement, touch, chunk/cursor/lazy streaming, date where clauses, conditional query building, whereNot, and latest/oldest.
+195 tests covering connection management, schema grammars, query builder, model CRUD, casts, scopes, soft deletes, relations, observers, migrations, type generation, lazy eager loading, find-or-fail, first-or-create, increment/decrement, touch, chunk/cursor/lazy streaming, date where clauses, conditional query building, whereNot, latest/oldest, or* where variants, having/orHaving, orderByDesc/reorder, crossJoin, union, insertOrIgnore, upsert, delete with limit, skipLocked/noWait, JSON where clauses, like/regexp/fulltext, whereAll/whereAny, sole/value, selectRaw/fromSub, updateFrom, dump/dd, and explain.
 
 ---
 

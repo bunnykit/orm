@@ -1,5 +1,5 @@
 import { Connection } from "../connection/Connection.js";
-import type { WhereClause, OrderClause } from "../types/index.js";
+import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../types/index.js";
 import type { Model } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
 
@@ -22,7 +22,7 @@ export class Builder<T = Record<string, any>> {
   wheres: WhereClause[] = [];
   orders: OrderClause[] = [];
   groups: string[] = [];
-  havings: string[] = [];
+  havings: HavingClause[] = [];
   limitValue?: number;
   offsetValue?: number;
   joins: string[] = [];
@@ -31,10 +31,17 @@ export class Builder<T = Record<string, any>> {
   eagerLoads: string[] = [];
   randomOrderFlag = false;
   lockMode?: string;
+  unions: UnionClause[] = [];
+  fromRaw?: string;
+  updateJoins: string[] = [];
 
   constructor(connection: Connection, table: string) {
     this.connection = connection;
     this.tableName = table;
+  }
+
+  private get grammar() {
+    return this.connection.getGrammar();
   }
 
   setModel(model: typeof Model): this {
@@ -191,6 +198,100 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
+  orWhereNull(column: string, scope?: string): this {
+    return this.whereNull(column, "or", scope);
+  }
+
+  orWhereNotNull(column: string, scope?: string): this {
+    return this.whereNotNull(column, "or", scope);
+  }
+
+  orWhereBetween(column: string, values: [any, any], scope?: string): this {
+    return this.whereBetween(column, values, "or", scope);
+  }
+
+  orWhereNotBetween(column: string, values: [any, any], scope?: string): this {
+    return this.whereNotBetween(column, values, "or", scope);
+  }
+
+  orWhereIn(column: string, values: any[], scope?: string): this {
+    return this.whereIn(column, values, "or", scope);
+  }
+
+  orWhereNotIn(column: string, values: any[], scope?: string): this {
+    return this.whereNotIn(column, values, "or", scope);
+  }
+
+  orWhereExists(sql: string): this {
+    return this.whereExists(sql, "or");
+  }
+
+  orWhereNotExists(sql: string): this {
+    return this.whereExists(sql, "or", true);
+  }
+
+  orWhereColumn(first: string, operator: string, second: string): this {
+    return this.whereColumn(first, operator, second, "or");
+  }
+
+  orWhereRaw(sql: string, scope?: string): this {
+    return this.whereRaw(sql, "or", scope);
+  }
+
+  whereJsonContains(column: string, value: any, boolean: "and" | "or" = "and", not: boolean = false): this {
+    let sql = this.grammar.compileJsonContains(this.grammar.wrap(column), value);
+    if (not) sql = `NOT (${sql})`;
+    this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
+    return this;
+  }
+
+  whereJsonLength(column: string, operator: string | number = "=", value?: number, boolean: "and" | "or" = "and", not: boolean = false): this {
+    if (value === undefined) {
+      value = operator as number;
+      operator = "=";
+    }
+    let sql = this.grammar.compileJsonLength(this.grammar.wrap(column), operator, value);
+    if (not) sql = `NOT (${sql})`;
+    this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
+    return this;
+  }
+
+  whereLike(column: string, value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
+    const sql = this.grammar.compileLike(this.grammar.wrap(column), value, not);
+    this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
+    return this;
+  }
+
+  whereNotLike(column: string, value: string): this {
+    return this.whereLike(column, value, "and", true);
+  }
+
+  whereRegexp(column: string, value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
+    const sql = this.grammar.compileRegexp(this.grammar.wrap(column), value, not);
+    this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
+    return this;
+  }
+
+  whereFullText(columns: string | string[], value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
+    const cols = Array.isArray(columns) ? columns : [columns];
+    let sql = this.grammar.compileFullText(cols.map((c) => this.grammar.wrap(c)), value);
+    if (not) sql = `NOT (${sql})`;
+    this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
+    return this;
+  }
+
+  whereAll(columns: string[], operator: string, value: any, boolean: "and" | "or" = "and"): this {
+    const sql = columns.map((c) => `${this.grammar.wrap(c)} ${operator} ${this.grammar.escape(value)}`).join(" AND ");
+    this.wheres.push({ type: "raw", column: `(${sql})`, boolean, scope: undefined });
+    return this;
+  }
+
+  whereAny(columns: string[], operator: string, value: any, boolean: "and" | "or" = "and"): this {
+    const sql = columns.map((c) => `${this.grammar.wrap(c)} ${operator} ${this.grammar.escape(value)}`).join(" OR ");
+    this.wheres.push({ type: "raw", column: `(${sql})`, boolean, scope: undefined });
+    return this;
+  }
+
   orderBy(column: string, direction: "asc" | "desc" = "asc"): this {
     this.orders.push({ column, direction });
     return this;
@@ -209,14 +310,41 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
+  orderByDesc(column: string): this {
+    return this.orderBy(column, "desc");
+  }
+
+  reorder(column?: string, direction: "asc" | "desc" = "asc"): this {
+    this.orders = [];
+    this.randomOrderFlag = false;
+    if (column) {
+      this.orderBy(column, direction);
+    }
+    return this;
+  }
+
   groupBy(...columns: string[]): this {
     this.groups.push(...columns);
     return this;
   }
 
   having(column: string, operator: string, value: any): this {
-    this.havings.push(`${this.wrap(column)} ${operator} ${this.escape(value)}`);
+    this.havings.push({ sql: `${this.grammar.wrap(column)} ${operator} ${this.grammar.escape(value)}`, boolean: "and" });
     return this;
+  }
+
+  orHaving(column: string, operator: string, value: any): this {
+    this.havings.push({ sql: `${this.grammar.wrap(column)} ${operator} ${this.grammar.escape(value)}`, boolean: "or" });
+    return this;
+  }
+
+  havingRaw(sql: string, boolean: "and" | "or" = "and"): this {
+    this.havings.push({ sql, boolean });
+    return this;
+  }
+
+  orHavingRaw(sql: string): this {
+    return this.havingRaw(sql, "or");
   }
 
   limit(count: number): this {
@@ -234,7 +362,7 @@ export class Builder<T = Record<string, any>> {
   }
 
   join(table: string, first: string, operator: string, second: string, type: string = "INNER"): this {
-    const joinSql = `${type} JOIN ${this.wrap(table)} ON ${this.wrap(first)} ${operator} ${this.wrap(second)}`;
+    const joinSql = `${type} JOIN ${this.grammar.wrap(table)} ON ${this.grammar.wrap(first)} ${operator} ${this.grammar.wrap(second)}`;
     this.joins.push(joinSql);
     return this;
   }
@@ -245,6 +373,21 @@ export class Builder<T = Record<string, any>> {
 
   rightJoin(table: string, first: string, operator: string, second: string): this {
     return this.join(table, first, operator, second, "RIGHT");
+  }
+
+  crossJoin(table: string): this {
+    this.joins.push(`CROSS JOIN ${this.grammar.wrap(table)}`);
+    return this;
+  }
+
+  union(query: Builder<T> | string, all: boolean = false): this {
+    const sql = typeof query === "string" ? query : query.toSql();
+    this.unions.push({ query: sql, all });
+    return this;
+  }
+
+  unionAll(query: Builder<T> | string): this {
+    return this.union(query, true);
   }
 
   with(...relations: string[]): this {
@@ -321,7 +464,7 @@ export class Builder<T = Record<string, any>> {
     if ((operator === "<" || operator === "=") && count <= 0) {
       return this.whereExists(relation.getRelationExistenceSql(this, callback), "and", true);
     }
-    return this.whereRaw(`(${relation.getRelationCountSql(this, callback)}) ${operator} ${this.escape(count)}`);
+    return this.whereRaw(`(${relation.getRelationCountSql(this, callback)}) ${operator} ${this.grammar.escape(count)}`);
   }
 
   orHas(relationName: string, operator: string | RelationConstraint = ">=", count: number = 1, callback?: RelationConstraint): this {
@@ -337,7 +480,7 @@ export class Builder<T = Record<string, any>> {
     if ((operator === "<" || operator === "=") && count <= 0) {
       return this.whereExists(relation.getRelationExistenceSql(this, callback), "or", true);
     }
-    return this.whereRaw(`(${relation.getRelationCountSql(this, callback)}) ${operator} ${this.escape(count)}`, "or");
+    return this.whereRaw(`(${relation.getRelationCountSql(this, callback)}) ${operator} ${this.grammar.escape(count)}`, "or");
   }
 
   whereHas(relationName: string, callback?: RelationConstraint, operator: string = ">=", count: number = 1): this {
@@ -386,6 +529,22 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
+  selectRaw(sql: string): this {
+    this.columns.push(sql);
+    return this;
+  }
+
+  fromSub(query: Builder<any> | string, as: string): this {
+    const sql = typeof query === "string" ? query : query.toSql();
+    this.fromRaw = `(${sql}) AS ${this.grammar.wrap(as)}`;
+    return this;
+  }
+
+  updateFrom(table: string, first: string, operator: string, second: string): this {
+    this.updateJoins.push(`INNER JOIN ${this.grammar.wrap(table)} ON ${this.grammar.wrap(first)} ${operator} ${this.grammar.wrap(second)}`);
+    return this;
+  }
+
   clone(): Builder<T> {
     const cloned = new Builder<T>(this.connection, this.tableName);
     cloned.columns = [...this.columns];
@@ -401,59 +560,36 @@ export class Builder<T = Record<string, any>> {
     cloned.eagerLoads = [...this.eagerLoads];
     cloned.randomOrderFlag = this.randomOrderFlag;
     cloned.lockMode = this.lockMode;
+    cloned.unions = [...this.unions];
+    cloned.fromRaw = this.fromRaw;
+    cloned.updateJoins = [...this.updateJoins];
     return cloned;
   }
 
   wrapColumn(value: string): string {
-    return this.wrap(value);
+    return this.grammar.wrap(value);
   }
 
   escapeValue(value: any): string {
-    return this.escape(value);
-  }
-
-  private wrap(value: string): string {
-    if (value.includes(" as ")) {
-      const [column, alias] = value.split(/\s+as\s+/i);
-      return `${this.wrap(column)} AS ${this.wrapValue(alias)}`;
-    }
-    if (value.includes(".")) {
-      return value.split(".").map((v) => this.wrapValue(v)).join(".");
-    }
-    return this.wrapValue(value);
-  }
-
-  private wrapValue(value: string): string {
-    const driver = this.connection.getDriverName();
-    const char = driver === "mysql" ? "`" : '"';
-    if (value === "*") return value;
-    return `${char}${value}${char}`;
-  }
-
-  private escape(value: any): string {
-    if (value === null) return "NULL";
-    if (typeof value === "boolean") return value ? "1" : "0";
-    if (typeof value === "number") return String(value);
-    if (typeof value === "string" && value.toUpperCase().includes("CURRENT_TIMESTAMP")) return value;
-    return `'${String(value).replace(/'/g, "''")}'`;
+    return this.grammar.escape(value);
   }
 
   private compileWhereClause(where: WhereClause, prefix: string): string {
     if (where.type === "basic") {
-      return `${prefix} ${this.wrap(where.column)} ${where.operator} ${this.escape(where.value)}`;
+      return `${prefix} ${this.grammar.wrap(where.column)} ${where.operator} ${this.grammar.escape(where.value)}`;
     } else if (where.type === "in") {
       const op = where.operator === "NOT IN" ? "NOT IN" : "IN";
-      return `${prefix} ${this.wrap(where.column)} ${op} (${where.value.map((v: any) => this.escape(v)).join(", ")})`;
+      return `${prefix} ${this.grammar.wrap(where.column)} ${op} (${where.value.map((v: any) => this.grammar.escape(v)).join(", ")})`;
     } else if (where.type === "null") {
       const op = where.operator === "NOT NULL" ? "IS NOT NULL" : "IS NULL";
-      return `${prefix} ${this.wrap(where.column)} ${op}`;
+      return `${prefix} ${this.grammar.wrap(where.column)} ${op}`;
     } else if (where.type === "between") {
       const op = where.operator === "NOT BETWEEN" ? "NOT BETWEEN" : "BETWEEN";
-      return `${prefix} ${this.wrap(where.column)} ${op} ${this.escape(where.value[0])} AND ${this.escape(where.value[1])}`;
+      return `${prefix} ${this.grammar.wrap(where.column)} ${op} ${this.grammar.escape(where.value[0])} AND ${this.grammar.escape(where.value[1])}`;
     } else if (where.type === "raw") {
       return `${prefix} ${where.column}`;
     } else if (where.type === "column") {
-      return `${prefix} ${this.wrap(where.column)} ${where.operator} ${this.wrap(where.value)}`;
+      return `${prefix} ${this.grammar.wrap(where.column)} ${where.operator} ${this.grammar.wrap(where.value)}`;
     } else if (where.type === "exists") {
       return `${prefix} ${where.operator} (${where.column})`;
     }
@@ -480,22 +616,24 @@ export class Builder<T = Record<string, any>> {
 
   private compileOrders(): string {
     if (this.randomOrderFlag) {
-      const driver = this.connection.getDriverName();
-      const fn = driver === "mysql" ? "RAND()" : "RANDOM()";
-      return `ORDER BY ${fn}`;
+      return this.grammar.compileRandomOrder();
     }
     if (this.orders.length === 0) return "";
-    return `ORDER BY ${this.orders.map((o) => `${this.wrap(o.column)} ${o.direction.toUpperCase()}`).join(", ")}`;
+    return `ORDER BY ${this.orders.map((o) => `${this.grammar.wrap(o.column)} ${o.direction.toUpperCase()}`).join(", ")}`;
   }
 
   private compileGroups(): string {
     if (this.groups.length === 0) return "";
-    return `GROUP BY ${this.groups.map((c) => this.wrap(c)).join(", ")}`;
+    return `GROUP BY ${this.groups.map((c) => this.grammar.wrap(c)).join(", ")}`;
   }
 
   private compileHavings(): string {
     if (this.havings.length === 0) return "";
-    return `HAVING ${this.havings.join(" AND ")}`;
+    const clauses = this.havings.map((h, index) => {
+      const prefix = index === 0 ? "" : h.boolean.toUpperCase() + " ";
+      return prefix + h.sql;
+    });
+    return `HAVING ${clauses.join(" ")}`;
   }
 
   private compileLimit(): string {
@@ -505,14 +643,11 @@ export class Builder<T = Record<string, any>> {
 
   private compileOffset(): string {
     if (this.offsetValue === undefined) return "";
-    const limitSql = this.limitValue === undefined && this.connection.getDriverName() === "sqlite"
-      ? "LIMIT -1 "
-      : "";
-    return `${limitSql}OFFSET ${this.offsetValue}`;
+    return this.grammar.compileOffset(this.offsetValue, this.limitValue);
   }
 
   private compileColumns(): string {
-    return this.columns.map((c) => (this.isRawColumn(c) ? c : this.wrap(c))).join(", ");
+    return this.columns.map((c) => (this.isRawColumn(c) ? c : this.grammar.wrap(c))).join(", ");
   }
 
   private isRawColumn(column: string): boolean {
@@ -521,7 +656,8 @@ export class Builder<T = Record<string, any>> {
 
   toSql(): string {
     const distinct = this.distinctFlag ? "DISTINCT " : "";
-    let sql = `SELECT ${distinct}${this.compileColumns()} FROM ${this.wrap(this.tableName)}`;
+    const from = this.fromRaw || this.grammar.wrap(this.tableName);
+    let sql = `SELECT ${distinct}${this.compileColumns()} FROM ${from}`;
     if (this.joins.length > 0) sql += " " + this.joins.join(" ");
     sql += " " + this.compileWheres();
     sql += " " + this.compileGroups();
@@ -529,7 +665,10 @@ export class Builder<T = Record<string, any>> {
     sql += " " + this.compileOrders();
     sql += " " + this.compileLimit();
     sql += " " + this.compileOffset();
-    if (this.lockMode) sql += " " + this.lockMode;
+    sql += this.grammar.compileLock(this.lockMode);
+    for (const union of this.unions) {
+      sql += ` UNION${union.all ? " ALL" : ""} ${union.query}`;
+    }
     return sql.replace(/\s+/g, " ").trim();
   }
 
@@ -700,10 +839,10 @@ export class Builder<T = Record<string, any>> {
 
     const columns = Object.keys(records[0]);
     const values = records.map((record) => {
-      return `(${columns.map((col) => this.escape((record as any)[col])).join(", ")})`;
+      return `(${columns.map((col) => this.grammar.escape((record as any)[col])).join(", ")})`;
     });
 
-    const sql = `INSERT INTO ${this.wrap(this.tableName)} (${columns.map((c) => this.wrap(c)).join(", ")}) VALUES ${values.join(", ")}`;
+    const sql = `INSERT INTO ${this.grammar.wrap(this.tableName)} (${columns.map((c) => this.grammar.wrap(c)).join(", ")}) VALUES ${values.join(", ")}`;
     return await this.connection.run(sql);
   }
 
@@ -712,25 +851,74 @@ export class Builder<T = Record<string, any>> {
     return (result as any)?.lastInsertRowid ?? (result as any)?.insertId ?? null;
   }
 
+  async insertOrIgnore(data: Partial<T> | Partial<T>[]): Promise<any> {
+    const records = Array.isArray(data) ? data : [data];
+    if (records.length === 0) return;
+
+    const columns = Object.keys(records[0]);
+    const values = records.map((record) => {
+      return `(${columns.map((col) => this.grammar.escape((record as any)[col])).join(", ")})`;
+    });
+
+    const sql = this.grammar.compileInsertOrIgnore(
+      this.grammar.wrap(this.tableName),
+      columns,
+      values
+    );
+    return await this.connection.run(sql);
+  }
+
+  async upsert(data: Partial<T> | Partial<T>[], uniqueBy: string | string[], updateColumns?: string[]): Promise<any> {
+    const records = Array.isArray(data) ? data : [data];
+    if (records.length === 0) return;
+
+    const columns = Object.keys(records[0]);
+    const values = records.map((record) => {
+      return `(${columns.map((col) => this.grammar.escape((record as any)[col])).join(", ")})`;
+    });
+
+    const uniqueCols = Array.isArray(uniqueBy) ? uniqueBy : [uniqueBy];
+    const updateCols = updateColumns ?? columns.filter((c) => !uniqueCols.includes(c));
+
+    const sql = this.grammar.compileUpsert(
+      this.grammar.wrap(this.tableName),
+      columns,
+      values,
+      uniqueCols,
+      updateCols
+    );
+    return await this.connection.run(sql);
+  }
+
   async update(data: Partial<T>): Promise<any> {
     const sets = Object.entries(data)
-      .map(([key, value]) => `${this.wrap(key)} = ${this.escape(value)}`)
+      .map(([key, value]) => `${this.grammar.wrap(key)} = ${this.grammar.escape(value)}`)
       .join(", ");
-    const sql = `UPDATE ${this.wrap(this.tableName)} SET ${sets} ${this.compileWheres()}`;
-    return await this.connection.run(sql.trim());
+    const sql = this.grammar.compileUpdate(
+      this.grammar.wrap(this.tableName),
+      sets.split(", "),
+      this.compileWheres(),
+      this.updateJoins
+    );
+    return await this.connection.run(sql);
   }
 
   async delete(): Promise<any> {
-    const sql = `DELETE FROM ${this.wrap(this.tableName)} ${this.compileWheres()}`;
-    return await this.connection.run(sql.trim());
+    const sql = this.grammar.compileDelete(
+      this.grammar.wrap(this.tableName),
+      this.compileWheres(),
+      this.updateJoins,
+      this.limitValue
+    );
+    return await this.connection.run(sql);
   }
 
   async increment(column: string, amount: number = 1, extra: Record<string, any> = {}): Promise<any> {
-    const sets = [`${this.wrap(column)} = ${this.wrap(column)} + ${amount}`];
+    const sets = [`${this.grammar.wrap(column)} = ${this.grammar.wrap(column)} + ${amount}`];
     for (const [key, value] of Object.entries(extra)) {
-      sets.push(`${this.wrap(key)} = ${this.escape(value)}`);
+      sets.push(`${this.grammar.wrap(key)} = ${this.grammar.escape(value)}`);
     }
-    const sql = `UPDATE ${this.wrap(this.tableName)} SET ${sets.join(", ")} ${this.compileWheres()}`;
+    const sql = `UPDATE ${this.grammar.wrap(this.tableName)} SET ${sets.join(", ")} ${this.compileWheres()}`;
     return await this.connection.run(sql.trim());
   }
 
@@ -755,6 +943,38 @@ export class Builder<T = Record<string, any>> {
     return !(await this.exists());
   }
 
+  async sole(): Promise<T> {
+    const results = await this.limit(2).get();
+    if (results.length === 0) {
+      throw new ModelNotFoundError(this.model?.name || "Model");
+    }
+    if (results.length > 1) {
+      throw new Error("Multiple records found when only one was expected.");
+    }
+    return results[0];
+  }
+
+  async value(column: string): Promise<any> {
+    const result = await this.first();
+    return result ? (result as any)[column] : null;
+  }
+
+  dump(): this {
+    console.log(this.toSql());
+    return this;
+  }
+
+  dd(): never {
+    console.log(this.toSql());
+    throw new Error("dd() called — execution halted.");
+  }
+
+  async explain(): Promise<any[]> {
+    const sql = this.grammar.compileExplain(this.toSql());
+    const results = await this.connection.query(sql);
+    return Array.from(results);
+  }
+
   take(count: number): this {
     return this.limit(count);
   }
@@ -766,7 +986,7 @@ export class Builder<T = Record<string, any>> {
   lockForUpdate(): this {
     const driver = this.connection.getDriverName();
     if (driver !== "sqlite") {
-      this.lockMode = driver === "mysql" ? "FOR UPDATE" : "FOR UPDATE";
+      this.lockMode = "FOR UPDATE";
     }
     return this;
   }
@@ -781,45 +1001,26 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
+  skipLocked(): this {
+    if (this.lockMode) {
+      this.lockMode += " SKIP LOCKED";
+    }
+    return this;
+  }
+
+  noWait(): this {
+    if (this.lockMode) {
+      this.lockMode += " NOWAIT";
+    }
+    return this;
+  }
+
   private addDateWhere(type: string, column: string, operator?: string | any, value?: any, boolean: "and" | "or" = "and"): this {
     if (value === undefined) {
       value = operator;
       operator = "=";
     }
-    const driver = this.connection.getDriverName();
-    const wrapped = this.wrap(column);
-    let sql: string;
-
-    switch (type) {
-      case "date":
-        if (driver === "sqlite") sql = `date(${wrapped}) ${operator} ${this.escape(value)}`;
-        else if (driver === "mysql") sql = `DATE(${wrapped}) ${operator} ${this.escape(value)}`;
-        else sql = `(${wrapped})::date ${operator} ${this.escape(value)}`;
-        break;
-      case "day":
-        if (driver === "sqlite") sql = `CAST(strftime('%d', ${wrapped}) AS INTEGER) ${operator} ${this.escape(value)}`;
-        else if (driver === "mysql") sql = `DAY(${wrapped}) ${operator} ${this.escape(value)}`;
-        else sql = `EXTRACT(DAY FROM ${wrapped}) ${operator} ${this.escape(value)}`;
-        break;
-      case "month":
-        if (driver === "sqlite") sql = `CAST(strftime('%m', ${wrapped}) AS INTEGER) ${operator} ${this.escape(value)}`;
-        else if (driver === "mysql") sql = `MONTH(${wrapped}) ${operator} ${this.escape(value)}`;
-        else sql = `EXTRACT(MONTH FROM ${wrapped}) ${operator} ${this.escape(value)}`;
-        break;
-      case "year":
-        if (driver === "sqlite") sql = `CAST(strftime('%Y', ${wrapped}) AS INTEGER) ${operator} ${this.escape(value)}`;
-        else if (driver === "mysql") sql = `YEAR(${wrapped}) ${operator} ${this.escape(value)}`;
-        else sql = `EXTRACT(YEAR FROM ${wrapped}) ${operator} ${this.escape(value)}`;
-        break;
-      case "time":
-        if (driver === "sqlite") sql = `time(${wrapped}) ${operator} ${this.escape(value)}`;
-        else if (driver === "mysql") sql = `TIME(${wrapped}) ${operator} ${this.escape(value)}`;
-        else sql = `(${wrapped})::time ${operator} ${this.escape(value)}`;
-        break;
-      default:
-        sql = `${wrapped} ${operator} ${this.escape(value)}`;
-    }
-
+    const sql = this.grammar.compileDateWhere(type, this.grammar.wrap(column), operator, value);
     this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
     return this;
   }
