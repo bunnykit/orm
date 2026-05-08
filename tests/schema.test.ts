@@ -77,4 +77,45 @@ describe("Schema Builder", () => {
     expect(await Schema.hasColumn("meta_test", "name")).toBe(true);
     expect(await Schema.hasColumn("meta_test", "nope")).toBe(false);
   });
+
+  test("sqlite grammar compileCreate with uuid primary key", () => {
+    const grammar = new SQLiteGrammar();
+    const blueprint = new Blueprint("users");
+    blueprint.uuid("id").primary();
+    blueprint.string("name");
+    const sql = grammar.compileCreate(blueprint, "users");
+    expect(sql).toContain('"id" TEXT PRIMARY KEY NOT NULL');
+    expect(sql).toContain('"name" TEXT NOT NULL');
+  });
+
+  test("mysql grammar compileCreate with uuid primary key", () => {
+    const grammar = new MySqlGrammar();
+    const blueprint = new Blueprint("users");
+    blueprint.uuid("id").primary();
+    blueprint.string("name");
+    const sql = grammar.compileCreate(blueprint, "users");
+    expect(sql).toContain("`id` CHAR(36) NOT NULL PRIMARY KEY");
+    expect(sql).toContain("`name` VARCHAR(255) NOT NULL");
+  });
+
+  test("postgres grammar compileCreate with uuid primary key", () => {
+    const grammar = new PostgresGrammar();
+    const blueprint = new Blueprint("users");
+    blueprint.uuid("id").primary();
+    blueprint.string("name");
+    const sql = grammar.compileCreate(blueprint, "users");
+    expect(sql).toContain('"id" UUID NOT NULL PRIMARY KEY');
+    expect(sql).toContain('"name" VARCHAR(255) NOT NULL');
+  });
+
+  test("creates table with uuid primary key via Schema", async () => {
+    connection = setupTestDb();
+    await Schema.create("uuid_test", (table) => {
+      table.uuid("id").primary();
+      table.string("name");
+    });
+    expect(await Schema.hasTable("uuid_test")).toBe(true);
+    expect(await Schema.hasColumn("uuid_test", "id")).toBe(true);
+    expect(await Schema.hasColumn("uuid_test", "name")).toBe(true);
+  });
 });

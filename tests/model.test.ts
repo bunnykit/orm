@@ -193,4 +193,43 @@ describe("Model", () => {
     expect(found).not.toBeNull();
     expect(found!.name).toBe("Uuid User");
   });
+
+  test("auto-generates uuid primary key when saving a new instance", async () => {
+    const user = new UuidUser();
+    user.name = "Saved Uuid User";
+    await user.save();
+
+    expect(user.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    );
+    expect(user.$exists).toBe(true);
+
+    const found = await UuidUser.find(user.id);
+    expect(found).not.toBeNull();
+    expect(found!.name).toBe("Saved Uuid User");
+  });
+
+  test("uses provided uuid primary key when explicitly set", async () => {
+    const explicitId = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+    const user = await UuidUser.create({ id: explicitId, name: "Explicit Uuid" });
+
+    expect(user.id).toBe(explicitId);
+
+    const found = await UuidUser.find(explicitId);
+    expect(found).not.toBeNull();
+    expect(found!.name).toBe("Explicit Uuid");
+  });
+
+  test("creates uuid user with name 'test'", async () => {
+    const user = await UuidUser.create({ name: "test" });
+    expect(user.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    );
+    expect(user.name).toBe("test");
+    expect(user.$exists).toBe(true);
+
+    const found = await UuidUser.find(user.id);
+    expect(found).not.toBeNull();
+    expect(found!.name).toBe("test");
+  });
 });
