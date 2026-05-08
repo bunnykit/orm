@@ -144,4 +144,39 @@ export class Schema {
     const result = await this.getConnection().query(sql);
     return result.length > 0;
   }
+
+  static async getColumn(
+    table: string,
+    column: string
+  ): Promise<{ name: string; type: string; primary: boolean; autoIncrement: boolean } | null> {
+    const driver = this.getConnection().getDriverName();
+    if (driver === "sqlite") {
+      const rows = await this.getConnection().query(`PRAGMA table_info(${table})`);
+      const row = rows.find((item: any) => item.name === column);
+      return row ? { name: row.name, type: row.type, primary: row.pk > 0, autoIncrement: false } as any : null;
+    }
+
+    if (driver === "mysql") {
+      const rows = await this.getConnection().query(`SHOW COLUMNS FROM ${table} LIKE '${column}'`);
+      const row = rows[0];
+      return row ? { name: row.Field, type: row.Type, primary: row.Key === "PRI", autoIncrement: String(row.Extra || "").toLowerCase().includes("auto_increment") } as any : null;
+    }
+
+    const rows = await this.getConnection().query(
+      `SELECT c.column_name, c.data_type, COALESCE(tc.constraint_type = 'PRIMARY KEY', false) AS primary_key
+       FROM information_schema.columns c
+       LEFT JOIN information_schema.key_column_usage kcu
+         ON c.table_schema = kcu.table_schema
+        AND c.table_name = kcu.table_name
+        AND c.column_name = kcu.column_name
+       LEFT JOIN information_schema.table_constraints tc
+         ON kcu.table_schema = tc.table_schema
+        AND kcu.constraint_name = tc.constraint_name
+       WHERE c.table_schema = 'public'
+         AND c.table_name = '${table}'
+         AND c.column_name = '${column}'`
+    );
+    const row = rows[0];
+    return row ? { name: row.column_name, type: row.data_type, primary: !!row.primary_key, autoIncrement: false } as any : null;
+  }
 }

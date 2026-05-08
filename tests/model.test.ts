@@ -18,6 +18,10 @@ class DefaultUser extends Model {
   };
 }
 
+class UuidUser extends Model {
+  static table = "uuid_users";
+}
+
 describe("Model", () => {
   beforeAll(async () => {
     setupTestDb();
@@ -32,6 +36,11 @@ describe("Model", () => {
       table.string("name");
       table.boolean("active");
       table.string("role");
+      table.timestamps();
+    });
+    await Schema.create("uuid_users", (table) => {
+      table.uuid("id").primary();
+      table.string("name");
       table.timestamps();
     });
   });
@@ -172,5 +181,16 @@ describe("Model", () => {
     expect(found!.id).toBe(created.id);
     expect(found!.name).toBe("Hydrated");
     expect(found!.active).toBe(true);
+  });
+
+  test("auto-generates uuid primary keys", async () => {
+    const created = await UuidUser.create({ name: "Uuid User" });
+    expect(created.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    );
+
+    const found = await UuidUser.find(created.id);
+    expect(found).not.toBeNull();
+    expect(found!.name).toBe("Uuid User");
   });
 });

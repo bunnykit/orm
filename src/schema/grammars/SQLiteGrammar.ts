@@ -51,6 +51,7 @@ export class SQLiteGrammar extends Grammar {
   protected getColumn(_blueprint: any, column: ColumnDefinition): string {
     let sql = `${this.wrap(column.name)} ${this.getType(column)}`;
     if (column.autoIncrement) sql += this.modifyAutoIncrement(column);
+    else if (column.primary) sql += " PRIMARY KEY";
     if (!column.nullable) sql += " NOT NULL";
     if (column.default !== undefined) sql += ` DEFAULT ${this.getDefaultValue(column.default)}`;
     if (column.unique && !column.autoIncrement) sql += " UNIQUE";
