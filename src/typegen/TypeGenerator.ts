@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import { Connection } from "../connection/Connection.js";
 import { TypeMapper } from "./TypeMapper.js";
-import { snakeCase } from "../utils.js";
+import { normalizePathList, snakeCase } from "../utils.js";
 
 interface ColumnInfo {
   name: string;
@@ -22,8 +22,10 @@ export interface TypeGeneratorOptions {
   declarations?: boolean;
   modelDeclarations?: Record<string, string | ModelDeclaration>;
   modelDirectory?: string;
+  modelDirectories?: string[];
   modelImportPrefix?: string;
   singularModels?: boolean;
+  declarationDirName?: string;
 }
 
 export class TypeGenerator {
@@ -33,81 +35,90 @@ export class TypeGenerator {
   ) {}
 
   async generate(): Promise<void> {
-    await mkdir(this.options.outDir, { recursive: true });
     const tables = await this.getTables();
+    const declarationOnly = this.options.declarations ?? !this.options.stubs;
+    const targets: { outDir: string; modelImportPrefix?: string }[] = declarationOnly
+      ? this.getDeclarationTargets()
+      : [{ outDir: this.options.outDir }];
 
-    for (const table of tables) {
-      const columns = await this.getColumns(table);
-      const className = this.toClassName(table);
-      const interfaceName = `${className}Attributes`;
+    for (const target of targets) {
+      await mkdir(target.outDir, { recursive: true });
 
-      const lines: string[] = [];
-      const declarationOnly = this.options.declarations ?? !this.options.stubs;
-      if (!declarationOnly) {
-        lines.push(`import { Model } from "@bunnykit/orm";`);
-        lines.push("");
-      }
+      for (const table of tables) {
+        const columns = await this.getColumns(table);
+        const className = this.toClassName(table);
+        const interfaceName = `${className}Attributes`;
 
-      lines.push(`export interface ${interfaceName} {`);
-      for (const col of columns) {
-        const tsType = TypeMapper.sqlToTsType(col.type, col.nullable);
-        lines.push(`  ${col.name}${col.nullable ? "?" : ""}: ${tsType};`);
-      }
-      lines.push("}");
-      lines.push("");
-
-      const modelDeclaration = this.getModelDeclaration(table, className);
-      if (declarationOnly && modelDeclaration) {
-        lines.push(`declare module "${modelDeclaration.path}" {`);
-        lines.push(`  interface ${modelDeclaration.className} extends ${interfaceName} {}`);
-        lines.push("}");
-        lines.push("");
-      }
-
-      if (!declarationOnly && this.options.stubs) {
-        lines.push(`export class ${className}Base extends Model<${interfaceName}> {`);
-        lines.push(`  static table = "${table}";`);
-        lines.push("");
-
-        for (const col of columns) {
-          const tsType = TypeMapper.sqlToTsType(col.type, col.nullable);
-          lines.push(`  get ${col.name}(): ${tsType} {`);
-          lines.push(`    return this.getAttribute("${col.name}");`);
-          lines.push(`  }`);
-          lines.push(`  set ${col.name}(value: ${tsType}) {`);
-          lines.push(`    this.setAttribute("${col.name}", value);`);
-          lines.push(`  }`);
+        const lines: string[] = [];
+        if (!declarationOnly) {
+          lines.push(`import { Model } from "@bunnykit/orm";`);
           lines.push("");
         }
 
+        lines.push(`export interface ${interfaceName} {`);
+        for (const col of columns) {
+          const tsType = TypeMapper.sqlToTsType(col.type, col.nullable);
+          lines.push(`  ${col.name}${col.nullable ? "?" : ""}: ${tsType};`);
+        }
         lines.push("}");
+        lines.push("");
+
+        const modelDeclaration = this.getModelDeclaration(table, className, target.modelImportPrefix);
+        if (declarationOnly && modelDeclaration) {
+          lines.push(`declare module "${modelDeclaration.path}" {`);
+          lines.push(`  interface ${modelDeclaration.className} extends ${interfaceName} {}`);
+          lines.push("}");
+          lines.push("");
+        }
+
+        if (!declarationOnly && this.options.stubs) {
+          lines.push(`export class ${className}Base extends Model<${interfaceName}> {`);
+          lines.push(`  static table = "${table}";`);
+          lines.push("");
+
+          for (const col of columns) {
+            const tsType = TypeMapper.sqlToTsType(col.type, col.nullable);
+            lines.push(`  get ${col.name}(): ${tsType} {`);
+            lines.push(`    return this.getAttribute("${col.name}");`);
+            lines.push(`  }`);
+            lines.push(`  set ${col.name}(value: ${tsType}) {`);
+            lines.push(`    this.setAttribute("${col.name}", value);`);
+            lines.push(`  }`);
+            lines.push("");
+          }
+
+          lines.push("}");
+        }
+
+        const fileName = `${snakeCase(className)}.${declarationOnly ? "d.ts" : "ts"}`;
+        const filePath = join(target.outDir, fileName);
+        await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
       }
 
-      const fileName = `${snakeCase(className)}.${declarationOnly ? "d.ts" : "ts"}`;
-      const filePath = join(this.options.outDir, fileName);
-      await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
+      const indexLines = tables.map((table) => {
+        const className = this.toClassName(table);
+        const fileName = snakeCase(className);
+        return `export * from "./${fileName}";`;
+      });
+      await writeFile(join(target.outDir, `index.${declarationOnly ? "d.ts" : "ts"}`), indexLines.join("\n") + "\n", "utf-8");
     }
-
-    const declarationOnly = this.options.declarations ?? !this.options.stubs;
-    const indexLines = tables.map((table) => {
-      const className = this.toClassName(table);
-      const fileName = snakeCase(className);
-      return `export * from "./${fileName}";`;
-    });
-    await writeFile(join(this.options.outDir, `index.${declarationOnly ? "d.ts" : "ts"}`), indexLines.join("\n") + "\n", "utf-8");
   }
 
-  private getModelDeclaration(table: string, fallbackClassName: string): { path: string; className: string } | null {
+  private getModelDeclaration(
+    table: string,
+    fallbackClassName: string,
+    modelImportPrefix?: string
+  ): { path: string; className: string } | null {
     const declaration = this.options.modelDeclarations?.[table];
-    if (!declaration) return this.getConventionModelDeclaration(table);
+    if (!declaration) return this.getConventionModelDeclaration(table, modelImportPrefix);
     if (typeof declaration === "string") {
       return { path: declaration, className: this.toModelClassName(table, fallbackClassName) };
     }
     return { path: declaration.path, className: declaration.className || this.toModelClassName(table, fallbackClassName) };
   }
 
-  private getConventionModelDeclaration(table: string): { path: string; className: string } | null {
-    const prefix = this.options.modelImportPrefix || this.options.modelDirectory;
+  private getConventionModelDeclaration(table: string, modelImportPrefix?: string): { path: string; className: string } | null {
+    const prefix = modelImportPrefix || this.options.modelImportPrefix || this.options.modelDirectory;
     if (!prefix) return null;
     const className = this.toModelClassName(table);
     return {
@@ -161,6 +172,24 @@ export class TypeGenerator {
     } else {
       return rows.map((r: any) => r.table_name);
     }
+  }
+
+  private getDeclarationTargets(): { outDir: string; modelImportPrefix: string }[] {
+    const modelDirectories = normalizePathList(this.options.modelDirectories || this.options.modelDirectory);
+    if (modelDirectories.length === 0) {
+      return [
+        {
+          outDir: this.options.outDir,
+          modelImportPrefix: this.options.modelImportPrefix || this.options.modelDirectory || "",
+        },
+      ];
+    }
+
+    const declarationDirName = this.options.declarationDirName || "types";
+    return modelDirectories.map((dir) => ({
+      outDir: join(dir, declarationDirName),
+      modelImportPrefix: this.options.modelImportPrefix || "..",
+    }));
   }
 
   private async getCurrentDatabase(): Promise<string> {

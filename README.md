@@ -52,7 +52,15 @@ export default {
     // username: "root",
     // password: "secret",
   },
-  migrationsPath: "./database/migrations",
+  migrationsPath: ["./database/migrations", "./database/tenant-migrations"],
+  modelsPath: ["./src/models", "./src/admin/models"],
+  // Optional legacy type output directory
+  typesOutDir: "./src/generated/model-types",
+  // Optional typegen overrides
+  typeDeclarationImportPrefix: "../models",
+  typeDeclarations: {
+    admin_users: { path: "../AdminAccount", className: "AdminAccount" },
+  },
 };
 ```
 
@@ -60,7 +68,9 @@ Or use environment variables:
 
 ```bash
 export DATABASE_URL="sqlite://app.db"
-export MIGRATIONS_PATH="./database/migrations"
+export MIGRATIONS_PATH="./database/migrations,./database/tenant-migrations"
+export MODELS_PATH="./src/models,./src/admin/models"
+export TYPES_OUT_DIR="./src/generated/model-types"
 ```
 
 ---
@@ -151,7 +161,7 @@ Start an interactive Bunny session with the ORM already loaded:
 bunny repl
 ```
 
-The REPL exposes `Model`, `Schema`, `Connection`, and `db`. If no project config is present, it starts against an in-memory SQLite database so you can still experiment immediately.
+The REPL exposes `Model`, `Schema`, `Connection`, `db`, and a `Models` map. Any model files under `modelsPath` are loaded automatically and also registered by class name on the global scope. If no project config is present, it starts against an in-memory SQLite database so you can still experiment immediately.
 
 ---
 
@@ -699,6 +709,9 @@ ObserverRegistry.register(User, {
 # Create a new migration file
 bun run bunny migrate:make CreateUsersTable
 
+# Create in a specific folder
+bun run bunny migrate:make CreateUsersTable ./database/tenant-migrations
+
 # Run all pending migrations
 bun run bunny migrate
 
@@ -734,12 +747,14 @@ Migrations are tracked in a `migrations` table (auto-created on first run).
 
 ### Auto Type Generation
 
-If you set `typesOutDir` in your config, types are **automatically regenerated** after every `migrate` and `migrate:rollback`:
+If you set `typesOutDir` in your config, types are **automatically regenerated** after every `migrate` and `migrate:rollback`.
+
+If you set `modelsPath`, Bunny writes declaration files into a `types/` folder next to each model root and regenerates those files after migrations too:
 
 ```bash
 bun run bunny migrate
 # → Migrated: 2026xxxx_create_users_table.ts
-# → Regenerated types in ./src/generated/models
+# → Regenerated types in ./src/models/types, ./src/admin/models/types
 ```
 
 No extra step needed — your models stay in sync with the schema automatically.
@@ -814,6 +829,9 @@ user.email = "a@example.com";  // ✅ typed setter
 # Generate into default directory (./generated/models)
 bun run bunny types:generate
 
+# Generate into model-local ./types folders when modelsPath is configured
+bun run bunny types:generate
+
 # Generate into a custom directory
 bun run bunny types:generate ./src/generated
 ```
@@ -823,23 +841,26 @@ Or configure in `bunny.config.ts`:
 ```ts
 export default {
   connection: { url: "sqlite://app.db" },
-  migrationsPath: "./database/migrations",
-  typesOutDir: "./src/generated/model-types", // auto-regenerate .d.ts files on every migration
+  migrationsPath: ["./database/migrations", "./database/tenant-migrations"],
+  modelsPath: ["./src/models", "./src/admin/models"],
+  // Optional legacy output directory, still supported when you do not want
+  // the generated files beside each model root:
+  typesOutDir: "./src/generated/model-types",
+  // Optional override for custom module resolution when using typesOutDir:
   typeDeclarationImportPrefix: "../models",
-  // Optional overrides for non-conventional model names or paths:
   typeDeclarations: {
-    admin_users: { path: "../models/AdminAccount", className: "AdminAccount" },
+    admin_users: { path: "../AdminAccount", className: "AdminAccount" },
   },
 };
 ```
 
-With `typeDeclarationImportPrefix`, Bunny conventionally maps tables to singular PascalCase model modules:
+With `modelsPath`, Bunny conventionally maps tables to singular PascalCase model modules and writes the generated declarations into `types/` beside each model root:
 
 | Table | Generated augmentation |
 |-------|------------------------|
-| `users` | `../models/User` / `User` |
-| `blog_posts` | `../models/BlogPost` / `BlogPost` |
-| `categories` | `../models/Category` / `Category` |
+| `users` | `../User` / `User` |
+| `blog_posts` | `../BlogPost` / `BlogPost` |
+| `categories` | `../Category` / `Category` |
 
 Set `typeDeclarationSingularModels: false` if your model classes use plural names.
 
@@ -848,7 +869,7 @@ Set `typeDeclarationSingularModels: false` if your model classes use plural name
 For each table, Bunny generates an `Attributes` interface. If you configure `typeDeclarations`, it also augments your real model class:
 
 ```ts
-// generated/model-types/users.d.ts
+// src/models/types/users.d.ts
 export interface UsersAttributes {
   id: number;
   name: string;
@@ -856,7 +877,7 @@ export interface UsersAttributes {
   created_at: string;
 }
 
-declare module "../models/User" {
+declare module "../User" {
   interface User extends UsersAttributes {}
 }
 ```

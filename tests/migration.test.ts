@@ -5,6 +5,8 @@ import { Connection, Schema, Migration, Migrator, MigrationCreator } from "../sr
 import { setupTestDb } from "./helpers.js";
 
 const TEST_MIGRATIONS_DIR = join(process.cwd(), "tests", "temp_migrations");
+const TEST_MIGRATIONS_DIR_A = join(process.cwd(), "tests", "temp_migrations_a");
+const TEST_MIGRATIONS_DIR_B = join(process.cwd(), "tests", "temp_migrations_b");
 
 describe("MigrationCreator", () => {
   test("creates migration file with class", async () => {
@@ -122,5 +124,67 @@ export default class CreateTypeTestTable extends Migration {
       await unlink(join(typesDir, f));
     }
     await rmdir(typesDir);
+  });
+});
+
+describe("Migrator multi-path support", () => {
+  let connection: Connection;
+
+  beforeAll(async () => {
+    connection = setupTestDb();
+    await mkdir(TEST_MIGRATIONS_DIR_A, { recursive: true });
+    await mkdir(TEST_MIGRATIONS_DIR_B, { recursive: true });
+  });
+
+  afterAll(async () => {
+    for (const dir of [TEST_MIGRATIONS_DIR_A, TEST_MIGRATIONS_DIR_B]) {
+      const files = await readdir(dir);
+      for (const f of files) {
+        await unlink(join(dir, f));
+      }
+    }
+  });
+
+  test("runs migrations from multiple configured folders", async () => {
+    await Bun.write(
+      join(TEST_MIGRATIONS_DIR_A, "20260401000000_create_alpha_table.ts"),
+      `
+import { Migration, Schema } from "../../src/index.js";
+export default class CreateAlphaTable extends Migration {
+  async up(): Promise<void> {
+    await Schema.create("alpha_table", (table) => {
+      table.increments("id");
+    });
+  }
+  async down(): Promise<void> {
+    await Schema.dropIfExists("alpha_table");
+  }
+}`
+    );
+
+    await Bun.write(
+      join(TEST_MIGRATIONS_DIR_B, "20260402000000_create_beta_table.ts"),
+      `
+import { Migration, Schema } from "../../src/index.js";
+export default class CreateBetaTable extends Migration {
+  async up(): Promise<void> {
+    await Schema.create("beta_table", (table) => {
+      table.increments("id");
+    });
+  }
+  async down(): Promise<void> {
+    await Schema.dropIfExists("beta_table");
+  }
+}`
+    );
+
+    const migrator = new Migrator(connection, [TEST_MIGRATIONS_DIR_A, TEST_MIGRATIONS_DIR_B]);
+    await migrator.run();
+
+    expect(await Schema.hasTable("alpha_table")).toBe(true);
+    expect(await Schema.hasTable("beta_table")).toBe(true);
+
+    const status = await migrator.status();
+    expect(status.filter((row) => row.status === "Ran").length).toBeGreaterThanOrEqual(2);
   });
 });

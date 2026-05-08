@@ -6,6 +6,8 @@ import { setupTestDb } from "./helpers.js";
 
 const OUT_DIR = join(process.cwd(), "tests", "temp_types");
 const DECL_OUT_DIR = join(process.cwd(), "tests", "temp_type_declarations");
+const MODEL_ROOT_A = join(process.cwd(), "tests", "temp_models_a");
+const MODEL_ROOT_B = join(process.cwd(), "tests", "temp_models_b");
 
 describe("TypeGenerator", () => {
   let connection: ReturnType<typeof setupTestDb>;
@@ -30,7 +32,7 @@ describe("TypeGenerator", () => {
 
   afterAll(async () => {
     try {
-      for (const dir of [OUT_DIR, DECL_OUT_DIR]) {
+      for (const dir of [OUT_DIR, DECL_OUT_DIR, MODEL_ROOT_A, MODEL_ROOT_B]) {
         const files = await readdir(dir);
         for (const f of files) {
           await unlink(join(dir, f));
@@ -114,5 +116,27 @@ describe("TypeGenerator", () => {
       await unlink(join(conventionDir, f));
     }
     await rmdir(conventionDir);
+  });
+
+  test("generates declarations into a types folder beside each model root", async () => {
+    await Schema.create("team_members", (table) => {
+      table.increments("id");
+      table.string("name");
+    });
+
+    const generator = new TypeGenerator(connection, {
+      outDir: join(MODEL_ROOT_A, "types"),
+      declarations: true,
+      modelDirectories: [MODEL_ROOT_A, MODEL_ROOT_B],
+    });
+    await generator.generate();
+
+    const filesA = await readdir(join(MODEL_ROOT_A, "types"));
+    const filesB = await readdir(join(MODEL_ROOT_B, "types"));
+    expect(filesA).toContain("team_members.d.ts");
+    expect(filesB).toContain("team_members.d.ts");
+
+    const content = await Bun.file(join(MODEL_ROOT_A, "types", "team_members.d.ts")).text();
+    expect(content).toContain('declare module "../TeamMember" {');
   });
 });

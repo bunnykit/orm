@@ -5,10 +5,10 @@ import { MigrationCreator } from "../src/migration/MigrationCreator.js";
 import { TypeGenerator } from "../src/typegen/TypeGenerator.js";
 import type { ConnectionConfig } from "../src/types/index.js";
 import { existsSync } from "fs";
-import { mkdir, writeFile, rm } from "fs/promises";
-import { join } from "path";
-import { tmpdir } from "os";
+import { mkdir, readdir, rm, writeFile } from "fs/promises";
+import { basename, extname, join, resolve } from "path";
 import type { ModelDeclaration } from "../src/typegen/TypeGenerator.js";
+import { normalizePathList } from "../src/utils.js";
 import {
   BelongsTo,
   BelongsToMany,
@@ -36,7 +36,8 @@ import {
 
 interface BunnyConfig {
   connection: ConnectionConfig;
-  migrationsPath: string;
+  migrationsPath: string | string[];
+  modelsPath?: string | string[];
   typesOutDir?: string;
   typeDeclarations?: Record<string, string | ModelDeclaration>;
   typeDeclarationModelsDir?: string;
@@ -45,10 +46,22 @@ interface BunnyConfig {
   typeStubs?: boolean;
 }
 
+function parseEnvPathSetting(value?: string): string | string[] | undefined {
+  if (!value) return undefined;
+  const paths = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  if (paths.length === 0) return undefined;
+  return paths.length === 1 ? paths[0] : paths;
+}
+
 async function createReplBootstrap(config: BunnyConfig): Promise<string> {
-  const dir = join(tmpdir(), "bunny-repl");
+  const tmpRoot = process.env.BUNNY_REPL_TMPDIR || "/private/tmp";
+  const dir = join(tmpRoot, "bunny-repl");
   await mkdir(dir, { recursive: true });
   const bootstrapPath = join(dir, `bootstrap-${Date.now()}-${Math.random().toString(36).slice(2)}.ts`);
+  const modelRoots = normalizePathList(config.modelsPath || config.typeDeclarationModelsDir);
   const source = `
     import {
       BelongsTo,
@@ -78,10 +91,64 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
       TypeMapper,
       Model
     } from "@bunnykit/orm";
+    import { existsSync } from "fs";
+    import { readdir } from "fs/promises";
+    import { basename, extname, join, resolve } from "path";
+    import { pathToFileURL } from "url";
 
     const connection = new Connection(${JSON.stringify(config.connection)});
     Model.setConnection(connection);
     Schema.setConnection(connection);
+
+    const modelRoots = ${JSON.stringify(modelRoots)};
+
+    async function walkFiles(dir) {
+      const entries = await readdir(dir, { withFileTypes: true });
+      const files = [];
+      for (const entry of entries) {
+        if (entry.name === "types") continue;
+        const fullPath = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          files.push(...await walkFiles(fullPath));
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        const name = entry.name;
+        if (name.endsWith(".d.ts") || name.endsWith(".test.ts") || name.endsWith(".spec.ts")) continue;
+        if (![".ts", ".js", ".mts", ".mjs", ".cts", ".cjs"].includes(extname(name))) continue;
+        files.push(fullPath);
+      }
+      return files;
+    }
+
+    async function loadModels(roots) {
+      const loaded = {};
+      for (const root of roots) {
+        const resolvedRoot = resolve(process.cwd(), root);
+        if (!existsSync(resolvedRoot)) continue;
+        const files = await walkFiles(resolvedRoot);
+        for (const file of files.sort()) {
+          const mod = await import(pathToFileURL(file).href);
+          for (const [exportName, exported] of Object.entries(mod)) {
+            if (exportName === "default") continue;
+            if (typeof exported === "function" && exported.prototype instanceof Model) {
+              const modelName = exportName;
+              loaded[modelName] = exported;
+              globalThis[modelName] = exported;
+            }
+          }
+          if (typeof mod.default === "function" && mod.default.prototype instanceof Model) {
+            const modelName = mod.default.name || basename(file, extname(file));
+            loaded[modelName] = mod.default;
+            globalThis[modelName] = mod.default;
+          }
+        }
+      }
+      globalThis.Models = loaded;
+      return loaded;
+    }
+
+    const loadedModels = await loadModels(modelRoots);
 
     Object.assign(globalThis, {
       Connection,
@@ -112,9 +179,10 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
       Schema,
       db: connection,
       connection,
+      Models: loadedModels,
     });
 
-    console.log('Bunny REPL ready. Use Model, Schema, db, and your own imports.');
+    console.log(\`Bunny REPL ready. Loaded \${Object.keys(loadedModels).length} model classes from modelsPath.\`);
   `;
   await writeFile(bootstrapPath, source, "utf-8");
   return bootstrapPath;
@@ -122,7 +190,15 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
 
 async function runRepl(config: BunnyConfig, replArgs: string[]): Promise<number> {
   const bootstrapPath = await createReplBootstrap(config);
+  await mkdir("/private/tmp/bunny-repl-cache", { recursive: true });
   const proc = Bun.spawn(["bun", "repl", ...replArgs], {
+    env: {
+      ...process.env,
+      TMPDIR: "/private/tmp",
+      TEMP: "/private/tmp",
+      TMP: "/private/tmp",
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: "/private/tmp/bunny-repl-cache",
+    },
     terminal: {
       cols: process.stdout.columns || 80,
       rows: process.stdout.rows || 24,
@@ -187,7 +263,8 @@ async function loadConfig(allowFallback = false): Promise<BunnyConfig> {
   if (url) {
     return {
       connection: { url },
-      migrationsPath: process.env.MIGRATIONS_PATH || "./database/migrations",
+      migrationsPath: parseEnvPathSetting(process.env.MIGRATIONS_PATH) || "./database/migrations",
+      modelsPath: parseEnvPathSetting(process.env.MODELS_PATH),
     };
   }
 
@@ -203,14 +280,16 @@ async function loadConfig(allowFallback = false): Promise<BunnyConfig> {
         password: process.env.DB_PASSWORD,
         filename: process.env.DB_DATABASE,
       },
-      migrationsPath: process.env.MIGRATIONS_PATH || "./database/migrations",
+      migrationsPath: parseEnvPathSetting(process.env.MIGRATIONS_PATH) || "./database/migrations",
+      modelsPath: parseEnvPathSetting(process.env.MODELS_PATH),
     };
   }
 
   if (allowFallback) {
     return {
       connection: { url: "sqlite://:memory:" },
-      migrationsPath: process.env.MIGRATIONS_PATH || "./database/migrations",
+      migrationsPath: parseEnvPathSetting(process.env.MIGRATIONS_PATH) || "./database/migrations",
+      modelsPath: parseEnvPathSetting(process.env.MODELS_PATH),
     };
   }
 
@@ -226,12 +305,14 @@ async function main() {
   if (command === "migrate:make") {
     const name = args[1];
     if (!name) {
-      console.error("Usage: bun run bunny migrate:make <name>");
+      console.error("Usage: bun run bunny migrate:make <name> [directory]");
       process.exit(1);
     }
     const config = await loadConfig();
     const creator = new MigrationCreator();
-    const path = await creator.create(name, config.migrationsPath);
+    const migrationRoots = normalizePathList(config.migrationsPath);
+    const targetPath = args[2] || migrationRoots[0] || "./database/migrations";
+    const path = await creator.create(name, targetPath);
     console.log(`Created migration: ${path}`);
     return;
   }
@@ -239,18 +320,24 @@ async function main() {
   if (command === "types:generate") {
     const config = await loadConfig();
     const connection = new Connection(config.connection);
-    const outDir = args[1] || config.typesOutDir || "./generated/models";
+    const modelRoots = normalizePathList(config.modelsPath || config.typeDeclarationModelsDir);
+    const explicitOutDir = args[1];
+    const useModelTypesFolder = !explicitOutDir && !config.typesOutDir && modelRoots.length > 0;
+    const outDir = explicitOutDir || config.typesOutDir || (useModelTypesFolder ? join(modelRoots[0], "types") : "./generated/models");
     const generator = new TypeGenerator(connection, {
       outDir,
       stubs: config.typeStubs,
       declarations: !config.typeStubs,
       modelDeclarations: config.typeDeclarations,
-      modelDirectory: config.typeDeclarationModelsDir,
+      modelDirectory: !useModelTypesFolder ? modelRoots[0] : undefined,
+      modelDirectories: useModelTypesFolder ? modelRoots : undefined,
       modelImportPrefix: config.typeDeclarationImportPrefix,
       singularModels: config.typeDeclarationSingularModels,
+      declarationDirName: "types",
     });
     await generator.generate();
-    console.log(`Generated model type declarations in ${outDir}`);
+    const outputLabel = useModelTypesFolder ? modelRoots.map((root) => join(root, "types")).join(", ") : outDir;
+    console.log(`Generated model type declarations in ${outputLabel}`);
     return;
   }
 
@@ -263,13 +350,16 @@ async function main() {
 
   const config = await loadConfig();
   const connection = new Connection(config.connection);
+  const modelRoots = normalizePathList(config.modelsPath || config.typeDeclarationModelsDir);
   const migrator = new Migrator(connection, config.migrationsPath, config.typesOutDir, {
     declarations: !config.typeStubs,
     stubs: config.typeStubs,
     modelDeclarations: config.typeDeclarations,
-    modelDirectory: config.typeDeclarationModelsDir,
+    modelDirectory: modelRoots[0],
+    modelDirectories: modelRoots.length > 1 ? modelRoots : undefined,
     modelImportPrefix: config.typeDeclarationImportPrefix,
     singularModels: config.typeDeclarationSingularModels,
+    declarationDirName: "types",
   });
 
   if (command === "migrate") {
@@ -282,7 +372,7 @@ async function main() {
   } else {
     console.log("Usage:");
     console.log("  bun run bunny migrate              Run pending migrations");
-    console.log("  bun run bunny migrate:make <name>  Create a new migration");
+    console.log("  bun run bunny migrate:make <name> [dir] Create a new migration");
     console.log("  bun run bunny migrate:rollback     Rollback the last batch");
     console.log("  bun run bunny migrate:status       Show migration status");
     console.log("  bun run bunny types:generate [dir] Generate model type declarations from DB schema");
