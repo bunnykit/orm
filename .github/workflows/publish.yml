@@ -41,14 +41,32 @@ jobs:
       - name: Determine next version
         id: version
         run: |
-          current="$(node -p "require('./package.json').version")"
-          latest="$(npm view @bunnykit/orm version --json 2>/dev/null || true)"
-          if [ -z "$latest" ] || [ "$latest" = "null" ]; then
-            latest="$current"
-          fi
-          next="$(node -e "const [major, minor, patch] = process.argv[1].split('.').map(Number); console.log([major, minor, patch + 1].join('.'));" "$latest")"
-          echo "current=$current" >> "$GITHUB_OUTPUT"
-          echo "next=$next" >> "$GITHUB_OUTPUT"
+          node <<'NODE' >> "$GITHUB_OUTPUT"
+          const { readFileSync } = require("fs");
+          const { execSync } = require("child_process");
+
+          const current = JSON.parse(readFileSync("package.json", "utf8")).version;
+          let latest = current;
+
+          try {
+            const output = execSync("npm view @bunnykit/orm version --json", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+            if (output) {
+              latest = JSON.parse(output);
+            }
+          } catch {
+            latest = current;
+          }
+
+          const source = latest || current;
+          const parts = String(source).split(".").map((part) => Number(part));
+          const major = Number.isFinite(parts[0]) ? parts[0] : 0;
+          const minor = Number.isFinite(parts[1]) ? parts[1] : 0;
+          const patch = Number.isFinite(parts[2]) ? parts[2] : 0;
+          const next = `${major}.${minor}.${patch + 1}`;
+
+          console.log(`current=${current}`);
+          console.log(`next=${next}`);
+          NODE
 
       - name: Update package version
         run: npm version "${{ steps.version.outputs.next }}" --no-git-tag-version
