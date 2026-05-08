@@ -11,8 +11,8 @@ An **Eloquent-inspired ORM** built specifically for [Bun](https://bun.sh)'s nati
 - 🔷 **Fully Typed** — Written in TypeScript with generics everywhere
 - 🏗️ **Schema Builder** — Programmatic table creation, indexes, foreign keys
 - 🔍 **Query Builder** — Chainable `where`, `join`, `orderBy`, `groupBy`, etc.
-- 🧬 **Eloquent-style Models** — `create`, `find`, `save`, `delete`, with dirty tracking
-- 🔗 **Relations** — `hasOne`, `hasMany`, `belongsTo`, `morphOne`, `morphMany`, `morphTo`, `morphToMany`
+- 🧬 **Eloquent-style Models** — Property attributes, defaults, casts, dirty tracking, soft deletes, scopes
+- 🔗 **Relations** — Standard, many-to-many, polymorphic, through, one-of-many, and relation queries
 - 👁️ **Observers** — Lifecycle hooks (`creating`, `created`, `updating`, `updated`, etc.)
 - 🚀 **Migrations & CLI** — Create, run, and rollback migrations from the command line
 
@@ -130,7 +130,7 @@ const adults = await User.where("age", ">=", 18)
   .get();
 
 // Update
-user.setAttribute("name", "Alice Smith");
+user.name = "Alice Smith";
 await user.save();
 
 // Delete
@@ -283,6 +283,18 @@ class Product extends Model {
   static table = "products";       // override table name
   static primaryKey = "sku";       // override primary key
   static timestamps = false;        // disable timestamps
+  static softDeletes = true;        // use deleted_at instead of hard deletes
+
+  static attributes = {
+    active: true,
+    status: "draft",
+  };
+
+  static casts = {
+    active: "boolean",
+    price: "decimal:2",
+    metadata: "json",
+  };
 }
 ```
 
@@ -298,14 +310,145 @@ const builder = User.where("active", true);
 
 // Instance
 user.fill({ name: "Bob", email: "bob@example.com" });
-user.getAttribute("name");
-user.setAttribute("name", "Charlie");
+user.name;                 // property access
+user.name = "Charlie";     // property assignment
+user.getAttribute("name"); // explicit access still works
+user.setAttribute("name", "Dana");
 user.isDirty();           // true if attributes changed
 user.getDirty();          // { name: "Charlie" }
 await user.save();
 await user.delete();
 await user.refresh();
 user.toJSON();            // plain object
+```
+
+### Default Attributes
+
+Use `static attributes` to give new model instances in-memory defaults before saving:
+
+```ts
+class User extends Model {
+  static attributes = {
+    active: true,
+    role: "member",
+  };
+}
+
+const user = new User({ name: "Ada" });
+user.active; // true
+user.role;   // "member"
+```
+
+These are model defaults, not database defaults. Values provided by the caller override them.
+
+### Attribute Casting
+
+`static casts` transforms values on read and serializes them on write:
+
+```ts
+class User extends Model {
+  static casts = {
+    active: "boolean",
+    login_count: "integer",
+    price: "decimal:2",
+    settings: "json",
+    secret: "encrypted",
+  };
+}
+
+const user = new User({
+  active: true,
+  settings: { theme: "dark" },
+});
+
+user.$attributes.active;   // 1
+user.active;               // true
+user.settings.theme;       // "dark"
+```
+
+Supported built-in casts:
+
+| Cast | Behavior |
+|------|----------|
+| `boolean`, `bool` | Stores `1` / `0`, reads boolean |
+| `number`, `integer`, `int`, `float`, `double` | Reads/writes numbers |
+| `decimal:2` | Stores fixed precision string |
+| `string` | Reads/writes string |
+| `date`, `datetime` | Reads as `Date`, stores ISO string for `Date` input |
+| `json`, `array`, `object` | Stores JSON string, reads parsed value |
+| `enum` | Stores enum `.value` when present |
+| `encrypted` | Base64 encodes on write and decodes on read |
+
+Custom casts can implement `CastsAttributes`:
+
+```ts
+import type { CastsAttributes, Model } from "@bunnykit/orm";
+
+class UppercaseCast implements CastsAttributes {
+  get(_model: Model, _key: string, value: unknown) {
+    return String(value).toLowerCase();
+  }
+
+  set(_model: Model, _key: string, value: unknown) {
+    return String(value).toUpperCase();
+  }
+}
+
+class User extends Model {
+  static casts = {
+    code: UppercaseCast,
+  };
+}
+```
+
+You can also add instance-only casts at runtime:
+
+```ts
+user.mergeCasts({ count: "string" });
+```
+
+### Soft Deletes
+
+Enable soft deletes with `static softDeletes = true` and a `deleted_at` column:
+
+```ts
+class User extends Model {
+  static softDeletes = true;
+}
+
+await user.delete();       // sets deleted_at
+await user.restore();      // clears deleted_at
+await user.forceDelete();  // permanently deletes
+
+await User.all();                  // excludes trashed rows
+await User.withTrashed().get();    // includes trashed rows
+await User.onlyTrashed().get();    // only trashed rows
+await User.onlyTrashed().restore();
+```
+
+### Scopes
+
+Local scopes are static methods named `scopeName`:
+
+```ts
+class User extends Model {
+  static scopeActive(query) {
+    return query.where("active", true);
+  }
+}
+
+const users = await User.scope("active").get();
+```
+
+Global scopes apply automatically to all queries:
+
+```ts
+User.addGlobalScope("tenant", (query) => {
+  query.where("tenant_id", 1);
+});
+
+await User.withoutGlobalScope("tenant").get();
+await User.withoutGlobalScopes().get();
 ```
 
 ---
@@ -337,6 +480,102 @@ Keys are **automatically inferred** from the model names. You can override them:
 ```ts
 this.hasMany(Post, "author_id", "uuid");
 this.belongsTo(User, "author_id", "uuid");
+```
+
+### Belongs To Helpers
+
+Use `associate` and `dissociate` to update the foreign key for a `belongsTo` relation:
+
+```ts
+const post = new Post({ title: "Draft" });
+post.author().associate(user);
+post.user_id; // user's id
+
+post.author().dissociate();
+post.user_id; // null
+```
+
+### Through Relations
+
+Use `hasManyThrough` and `hasOneThrough` for distant relations through an intermediate model:
+
+```ts
+class Country extends Model {
+  posts() {
+    return this.hasManyThrough(Post, User);
+  }
+
+  profile() {
+    return this.hasOneThrough(Profile, User);
+  }
+}
+```
+
+By convention, Bunny expects:
+
+- intermediate table foreign key to parent: `country_id`
+- final table foreign key to intermediate: `user_id`
+
+You can override keys:
+
+```ts
+this.hasManyThrough(Post, User, "country_uuid", "author_id", "uuid", "id");
+this.hasOneThrough(Profile, User, "country_id", "user_id");
+```
+
+### One-of-Many Relations
+
+Convert a `hasMany` relation into a single latest, oldest, or aggregate-selected relation:
+
+```ts
+class User extends Model {
+  posts() {
+    return this.hasMany(Post);
+  }
+
+  latestPost() {
+    return this.posts().latestOfMany("id");
+  }
+
+  oldestPost() {
+    return this.posts().oldestOfMany("id");
+  }
+
+  highestScoringPost() {
+    return this.posts().ofMany("score", "max");
+  }
+}
+
+const post = await user.latestPost().getResults();
+```
+
+### Relation Queries and Aggregates
+
+Filter models by related records:
+
+```ts
+const usersWithPosts = await User.has("posts").get();
+
+const usersWithPublishedPosts = await User.whereHas("posts", (query) => {
+  query.where("status", "published");
+}).get();
+
+const usersWithoutPosts = await User.doesntHave("posts").get();
+```
+
+Add relation aggregate columns:
+
+```ts
+const users = await User
+  .withCount("posts")
+  .withSum("posts", "views")
+  .withAvg("posts", "score")
+  .withMin("posts", "created_at")
+  .withMax("posts", "created_at")
+  .get();
+
+users[0].posts_count;
+users[0].posts_sum_views;
 ```
 
 ### Polymorphic Relations
@@ -656,7 +895,7 @@ Bunny includes a full test suite built with `bun:test`.
 bun test
 ```
 
-53 tests covering connection management, schema grammars, query builder, model CRUD, relations (standard + polymorphic), observers, migrations, and type generation.
+92 tests covering connection management, schema grammars, query builder, model CRUD, casts, scopes, soft deletes, relations, observers, migrations, and type generation.
 
 ---
 
