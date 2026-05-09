@@ -33,6 +33,7 @@ export { ObserverRegistry, type ObserverContract } from "./model/Observer.js";
 export { MorphMap } from "./model/MorphMap.js";
 export { MorphTo, MorphOne, MorphMany, MorphToMany } from "./model/MorphRelations.js";
 export { BelongsToMany } from "./model/BelongsToMany.js";
+export { IdentityMap } from "./model/IdentityMap.js";
 
 export { Migration } from "./migration/Migration.js";
 export { Migrator } from "./migration/Migrator.js";

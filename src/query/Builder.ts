@@ -2,6 +2,7 @@ import { Connection } from "../connection/Connection.js";
 import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../types/index.js";
 import type { Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
+import { IdentityMap } from "../model/IdentityMap.js";
 
 type RelationConstraint = (query: Builder<any>) => void | Builder<any>;
 
@@ -705,13 +706,35 @@ export class Builder<T = Record<string, any>> {
     const rows = Array.from(results);
 
     if (this.model) {
+      const identityMap = IdentityMap.current();
+      const table = (this.model as any).getTable();
+      const primaryKey = (this.model as any).primaryKey || "id";
+
       const models = rows.map((row: any) => {
+        if (identityMap) {
+          const pk = row[primaryKey];
+          if (pk !== null && pk !== undefined) {
+            const cached = IdentityMap.get(table, pk);
+            if (cached) {
+              return cached as T;
+            }
+          }
+        }
+
         const instance = new (this.model as any)(row);
         instance.$exists = true;
         instance.$original = { ...row };
         if (typeof instance.setConnection === "function") {
           instance.setConnection(this.connection);
         }
+
+        if (identityMap) {
+          const pk = row[primaryKey];
+          if (pk !== null && pk !== undefined) {
+            IdentityMap.set(table, pk, instance);
+          }
+        }
+
         return instance as T;
       });
 

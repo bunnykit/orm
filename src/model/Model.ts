@@ -9,6 +9,7 @@ import { Schema } from "../schema/Schema.js";
 import { ModelNotFoundError } from "./ModelNotFoundError.js";
 import { ConnectionManager } from "../connection/ConnectionManager.js";
 import { TenantContext } from "../connection/TenantContext.js";
+import { IdentityMap } from "./IdentityMap.js";
 
 export type ModelConstructor<T extends Model = Model> = (new (...args: any[]) => T) & Omit<typeof Model, "prototype">;
 export type GlobalScope = (builder: Builder<any>, model: ModelConstructor) => void;
@@ -504,6 +505,10 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   static setConnection(connection: Connection): void {
     this.connection = connection;
     ConnectionManager.setDefault(connection);
+  }
+
+  static useIdentityMap<T>(callback: () => T | Promise<T>): Promise<T> {
+    return IdentityMap.run(callback);
   }
 
   static on<M extends ModelConstructor>(this: M, connection: string | Connection): Builder<InstanceType<M>> {
@@ -1056,6 +1061,14 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
       await ObserverRegistry.dispatch("created", this);
       await ObserverRegistry.dispatch("saved", this);
+    }
+
+    const identityMap = IdentityMap.current();
+    if (identityMap) {
+      const pk = this.getAttribute(constructor.primaryKey);
+      if (pk !== null && pk !== undefined && pk !== "") {
+        IdentityMap.set(constructor.getTable(), pk, this);
+      }
     }
 
     return this;
