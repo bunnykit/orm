@@ -84,7 +84,6 @@ export class Connection {
   }
 
   async query(sqlString: string): Promise<any[]> {
-    // Use unsafe for generated SQL strings
     return (await this.driver.unsafe(sqlString)) as any[];
   }
 

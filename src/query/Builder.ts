@@ -34,6 +34,7 @@ export class Builder<T = Record<string, any>> {
   unions: UnionClause[] = [];
   fromRaw?: string;
   updateJoins: string[] = [];
+  bindings: any[] = [];
 
   constructor(connection: Connection, table: string) {
     this.connection = connection;
@@ -569,6 +570,7 @@ export class Builder<T = Record<string, any>> {
     cloned.unions = [...this.unions];
     cloned.fromRaw = this.fromRaw;
     cloned.updateJoins = [...this.updateJoins];
+    cloned.bindings = [...this.bindings];
     return cloned;
   }
 
@@ -585,13 +587,13 @@ export class Builder<T = Record<string, any>> {
       return `${prefix} ${this.grammar.wrap(where.column)} ${where.operator} ${this.grammar.escape(where.value)}`;
     } else if (where.type === "in") {
       const op = where.operator === "NOT IN" ? "NOT IN" : "IN";
-      return `${prefix} ${this.grammar.wrap(where.column)} ${op} (${where.value.map((v: any) => this.grammar.escape(v)).join(", ")})`;
+      return `${prefix} ${this.grammar.wrap(where.column)} ${op} (${(where.value as any[]).map((v: any) => this.grammar.escape(v)).join(", ")})`;
     } else if (where.type === "null") {
       const op = where.operator === "NOT NULL" ? "IS NOT NULL" : "IS NULL";
       return `${prefix} ${this.grammar.wrap(where.column)} ${op}`;
     } else if (where.type === "between") {
       const op = where.operator === "NOT BETWEEN" ? "NOT BETWEEN" : "BETWEEN";
-      return `${prefix} ${this.grammar.wrap(where.column)} ${op} ${this.grammar.escape(where.value[0])} AND ${this.grammar.escape(where.value[1])}`;
+      return `${prefix} ${this.grammar.wrap(where.column)} ${op} ${this.grammar.escape((where.value as any[])[0])} AND ${this.grammar.escape((where.value as any[])[1])}`;
     } else if (where.type === "raw") {
       return `${prefix} ${where.column}`;
     } else if (where.type === "column") {
@@ -829,13 +831,39 @@ export class Builder<T = Record<string, any>> {
     });
   }
 
-  async *cursor(): AsyncGenerator<T> {
-    let offset = 0;
-    while (true) {
-      const items = await this.clone().offset(offset).limit(1).get();
-      if (items.length === 0) break;
-      yield items[0];
-      offset++;
+  async *cursor(keyset?: Record<string, any>): AsyncGenerator<T> {
+    const model = this.model;
+    const primaryKey = model ? (model as any).primaryKey || "id" : "id";
+    const orderColumn = this.orders[0]?.column || primaryKey;
+    const orderDirection = this.orders[0]?.direction || "asc";
+
+    const builder = this.clone();
+    builder.orders = [{ column: orderColumn, direction: orderDirection as "asc" | "desc" }];
+    builder.offsetValue = undefined;
+
+    if (keyset) {
+      const op = orderDirection === "asc" ? ">" : "<";
+      builder.wheres.push({
+        type: "basic",
+        column: orderColumn,
+        operator: op,
+        value: keyset[orderColumn],
+        boolean: "and",
+        scope: undefined,
+      });
+    }
+
+    const items = await builder.limit(1).get();
+    if (items.length === 0) return;
+
+    yield items[0];
+
+    const nextKeyset = items[0] && typeof items[0] === "object"
+      ? { [orderColumn]: (items[0] as any)[orderColumn] }
+      : undefined;
+
+    if (nextKeyset) {
+      yield* this.cursor(nextKeyset);
     }
   }
 
