@@ -1,6 +1,6 @@
 import { Connection } from "../connection/Connection.js";
 import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../types/index.js";
-import type { Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor } from "../model/Model.js";
+import type { Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
 
 type RelationConstraint = (query: Builder<any>) => void | Builder<any>;
@@ -396,7 +396,7 @@ export class Builder<T = Record<string, any>> {
     return this.union(query, true);
   }
 
-  with(...relations: string[]): this {
+  with(...relations: ModelRelationName<T>[]): this {
     this.eagerLoads.push(...relations);
     return this;
   }

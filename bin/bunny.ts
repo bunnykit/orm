@@ -489,7 +489,17 @@ async function main() {
   const config = await loadConfig();
   const { connection } = configureBunny(config);
 
-  if (command === "migrate") {
+  if (command === "schema:dump" || command === "schema:squash") {
+    const outputPath = args[1] || "./database/schema.sql";
+    const migrator = new Migrator(connection, getDefaultMigrationsPath(config), config.typesOutDir, createTypeGeneratorOptions(config));
+    if (command === "schema:dump") {
+      await migrator.dumpSchema(outputPath);
+      console.log(`Schema dumped to ${outputPath}`);
+    } else {
+      await migrator.squash(outputPath);
+      console.log(`Schema squashed to ${outputPath}`);
+    }
+  } else if (command === "migrate") {
     await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
   } else if (command === "migrate:rollback") {
     await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
@@ -504,6 +514,8 @@ async function main() {
     console.log("  bun run bunny migrate:make <name> [dir] Create a new migration");
     console.log("  bun run bunny migrate:rollback     Rollback the last batch");
     console.log("  bun run bunny migrate:status       Show migration status");
+    console.log("  bun run bunny schema:dump [path]   Dump the current database schema");
+    console.log("  bun run bunny schema:squash [path] Dump schema and mark configured migrations as ran");
     console.log("  bun run bunny types:generate [dir] Generate model type declarations from DB schema");
     console.log("  bun run bunny repl                 Start a Bunny REPL with Model, Schema, and db loaded");
     console.log("                                     Falls back to in-memory SQLite when no config is present");

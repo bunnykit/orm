@@ -113,6 +113,21 @@ describe("Polymorphic Relations", () => {
     expect(owner!.getAttribute("title")).toBe("Post 2");
   });
 
+  test("with eager loads morphTo relations across types", async () => {
+    const post = await MPost.create({ title: "Eager Post" });
+    const video = await MVideo.create({ title: "Eager Video" });
+    await MComment.create({ body: "Post eager comment", commentable_id: post.getAttribute("id"), commentable_type: "MPost" });
+    await MComment.create({ body: "Video eager comment", commentable_id: video.getAttribute("id"), commentable_type: "MVideo" });
+
+    const comments = await MComment.with("commentable").whereIn("body", ["Post eager comment", "Video eager comment"]).orderBy("body").get();
+
+    expect(comments).toHaveLength(2);
+    expect(comments[0].getRelation("commentable")).toBeInstanceOf(MPost);
+    expect(comments[0].getRelation("commentable").getAttribute("title")).toBe("Eager Post");
+    expect(comments[1].getRelation("commentable")).toBeInstanceOf(MVideo);
+    expect(comments[1].getRelation("commentable").getAttribute("title")).toBe("Eager Video");
+  });
+
   test("morphOne returns single related model", async () => {
     const video = await MVideo.create({ title: "Video 2" });
     await MImage.create({ url: "thumb.jpg", imageable_id: video.getAttribute("id"), imageable_type: "MVideo" });

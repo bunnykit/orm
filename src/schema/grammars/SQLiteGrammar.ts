@@ -67,6 +67,10 @@ export class SQLiteGrammar extends Grammar {
     return columns.map((col) => `ALTER TABLE ${this.wrap(table)} DROP COLUMN ${this.wrap(col)}`);
   }
 
+  compileChange(_table: string, _column: ColumnDefinition): string | string[] {
+    throw new Error("Changing existing columns is not supported by the SQLite grammar.");
+  }
+
   compileForeignKeys(blueprint: any, table: string): string[] {
     // SQLite supports foreign keys inside CREATE TABLE only.
     // For simplicity, ALTER TABLE ADD CONSTRAINT is not supported in SQLite.

@@ -29,6 +29,22 @@ export class ForeignKeyBuilder {
     this.fk.onUpdate = action;
     return this;
   }
+
+  cascadeOnDelete(): this {
+    return this.onDelete("cascade");
+  }
+
+  restrictOnDelete(): this {
+    return this.onDelete("restrict");
+  }
+
+  nullOnDelete(): this {
+    return this.onDelete("set null");
+  }
+
+  cascadeOnUpdate(): this {
+    return this.onUpdate("cascade");
+  }
 }
 
 export class Blueprint {
@@ -158,6 +174,14 @@ export class Blueprint {
     return this.addColumn("uuid", name);
   }
 
+  foreignId(name: string): this {
+    return this.bigInteger(name).unsigned();
+  }
+
+  foreignUuid(name: string): this {
+    return this.uuid(name);
+  }
+
   enum(name: string, values: string[]): this {
     this.addColumn("enum", name);
     this.currentColumn!.values = values;
@@ -181,10 +205,27 @@ export class Blueprint {
     return this;
   }
 
-  index(): this {
-    if (this.currentColumn) {
-      this.currentColumn.index = true;
+  index(): this;
+  index(columns: string | string[], name?: string): this;
+  index(columns?: string | string[], name?: string): this {
+    if (columns === undefined) {
+      if (this.currentColumn) {
+        this.currentColumn.index = true;
+        this.indexes.push({
+          name: `${this.table}_${this.currentColumn.name}_index`,
+          columns: [this.currentColumn.name],
+          unique: false,
+        });
+      }
+      return this;
     }
+
+    const cols = Array.isArray(columns) ? columns : [columns];
+    this.indexes.push({
+      name: name || `${this.table}_${cols.join("_")}_index`,
+      columns: cols,
+      unique: false,
+    });
     return this;
   }
 
@@ -209,6 +250,13 @@ export class Blueprint {
     return this;
   }
 
+  change(): void {
+    if (!this.currentColumn) {
+      throw new Error("change() must be called after a column definition.");
+    }
+    this.commands.push({ name: "change", parameters: { column: this.currentColumn } });
+  }
+
   timestamps(): void {
     this.timestamp("created_at").nullable();
     this.timestamp("updated_at").nullable();
@@ -218,9 +266,61 @@ export class Blueprint {
     this.timestamp("deleted_at").nullable();
   }
 
+  morphs(name: string): void {
+    this.string(`${name}_type`);
+    this.bigInteger(`${name}_id`).unsigned();
+    this.index([`${name}_type`, `${name}_id`], `${this.table}_${name}_type_${name}_id_index`);
+  }
+
+  nullableMorphs(name: string): void {
+    this.string(`${name}_type`).nullable();
+    this.bigInteger(`${name}_id`).unsigned().nullable();
+    this.index([`${name}_type`, `${name}_id`], `${this.table}_${name}_type_${name}_id_index`);
+  }
+
+  uuidMorphs(name: string): void {
+    this.string(`${name}_type`);
+    this.uuid(`${name}_id`);
+    this.index([`${name}_type`, `${name}_id`], `${this.table}_${name}_type_${name}_id_index`);
+  }
+
+  nullableUuidMorphs(name: string): void {
+    this.string(`${name}_type`).nullable();
+    this.uuid(`${name}_id`).nullable();
+    this.index([`${name}_type`, `${name}_id`], `${this.table}_${name}_type_${name}_id_index`);
+  }
+
   foreign(columns: string | string[], name?: string): ForeignKeyBuilder {
     const cols = Array.isArray(columns) ? columns : [columns];
     return new ForeignKeyBuilder(this, cols, name);
+  }
+
+  constrained(table?: string, column: string = "id"): ForeignKeyBuilder {
+    if (!this.currentColumn) {
+      throw new Error("constrained() must be called after a column definition.");
+    }
+    const localColumn = this.currentColumn.name;
+    const foreignTable = table || this.guessConstrainedTable(localColumn);
+    return this.foreign(localColumn).references(column).on(foreignTable);
+  }
+
+  cascadeOnDelete(): ForeignKeyBuilder {
+    return this.constrained().cascadeOnDelete();
+  }
+
+  uniqueIndex(columns: string | string[], name?: string): this {
+    const cols = Array.isArray(columns) ? columns : [columns];
+    this.indexes.push({
+      name: name || `${this.table}_${cols.join("_")}_unique`,
+      columns: cols,
+      unique: true,
+    });
+    return this;
+  }
+
+  private guessConstrainedTable(column: string): string {
+    const base = column.endsWith("_id") ? column.slice(0, -3) : column;
+    return `${base}s`;
   }
 
   dropColumn(column: string | string[]): void {

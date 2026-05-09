@@ -120,6 +120,46 @@ export default class CreateTypeTestTable extends Migration {
     await unlink(filePath);
     await rm(typesDir, { recursive: true, force: true });
   });
+
+  test("dispatches migration events and dumps schema", async () => {
+    const fileName = `20260302000000_create_event_test_table.ts`;
+    const filePath = join(TEST_MIGRATIONS_DIR, fileName);
+    const dumpPath = join(process.cwd(), "tests", "temp_schema_dump.sql");
+    const events: string[] = [];
+    const content = `
+import { Migration, Schema } from "../../src/index.js";
+export default class CreateEventTestTable extends Migration {
+  async up(): Promise<void> {
+    await Schema.create("event_test_table", (table) => {
+      table.increments("id");
+    });
+  }
+  async down(): Promise<void> {
+    await Schema.dropIfExists("event_test_table");
+  }
+}`;
+    await Bun.write(filePath, content);
+
+    Migrator.clearListeners();
+    Migrator.on("migrating", ({ migration }) => events.push(`migrating:${migration}`));
+    Migrator.on("migrated", ({ migration }) => events.push(`migrated:${migration}`));
+    Migrator.on("schemaDumped", ({ path }) => events.push(`dumped:${path}`));
+
+    const migrator = new Migrator(connection, TEST_MIGRATIONS_DIR);
+    await migrator.run();
+    await migrator.dumpSchema(dumpPath);
+
+    const dump = await Bun.file(dumpPath).text();
+    expect(events).toContain(`migrating:tests/temp_migrations/${fileName}`);
+    expect(events).toContain(`migrated:tests/temp_migrations/${fileName}`);
+    expect(events).toContain(`dumped:${dumpPath}`);
+    expect(dump).toContain("CREATE TABLE");
+    expect(dump).toContain("event_test_table");
+
+    Migrator.clearListeners();
+    await unlink(filePath);
+    await rm(dumpPath, { force: true });
+  });
 });
 
 describe("Migrator multi-path support", () => {

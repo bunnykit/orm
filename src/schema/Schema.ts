@@ -48,6 +48,11 @@ export class Schema {
     for (const indexSql of indexes) {
       await this.getConnection().run(indexSql);
     }
+
+    const fks = grammar.compileForeignKeys(blueprint, connection.qualifyTable(table));
+    for (const fkSql of fks) {
+      await this.getConnection().run(fkSql);
+    }
   }
 
   static async createIfNotExists(table: string, callback: (blueprint: Blueprint) => void): Promise<void> {
@@ -61,6 +66,11 @@ export class Schema {
     const indexes = grammar.compileIndexes(blueprint, connection.qualifyTable(table));
     for (const indexSql of indexes) {
       await this.getConnection().run(indexSql);
+    }
+
+    const fks = grammar.compileForeignKeys(blueprint, connection.qualifyTable(table));
+    for (const fkSql of fks) {
+      await this.getConnection().run(fkSql);
     }
   }
 
@@ -90,6 +100,13 @@ export class Schema {
         await this.getConnection().run(
           `ALTER TABLE ${grammar.wrap(table)} DROP CONSTRAINT ${grammar.wrap(command.parameters!.name)}`
         );
+      } else if (command.name === "change") {
+        const sql = grammar.compileChange(qualifiedTable, command.parameters!.column);
+        if (Array.isArray(sql)) {
+          for (const s of sql) await this.getConnection().run(s);
+        } else {
+          await this.getConnection().run(sql);
+        }
       }
     }
 

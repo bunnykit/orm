@@ -118,4 +118,35 @@ describe("Schema Builder", () => {
     expect(await Schema.hasColumn("uuid_test", "id")).toBe(true);
     expect(await Schema.hasColumn("uuid_test", "name")).toBe(true);
   });
+
+  test("schema builder supports foreign and morph shortcuts", () => {
+    const grammar = new SQLiteGrammar();
+    const blueprint = new Blueprint("posts");
+    blueprint.increments("id");
+    blueprint.foreignId("user_id").constrained().cascadeOnDelete();
+    blueprint.foreignUuid("team_id");
+    blueprint.uuidMorphs("taggable");
+    blueprint.nullableMorphs("commentable");
+
+    const sql = grammar.compileCreate(blueprint, "posts");
+    expect(sql).toContain('"user_id" INTEGER NOT NULL');
+    expect(sql).toContain('FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE cascade');
+    expect(sql).toContain('"team_id" TEXT NOT NULL');
+    expect(sql).toContain('"taggable_id" TEXT NOT NULL');
+    expect(sql).toContain('"taggable_type" TEXT NOT NULL');
+    expect(sql).toContain('"commentable_id" INTEGER');
+    expect(sql).toContain('"commentable_type" TEXT');
+    expect(grammar.compileIndexes(blueprint, "posts")).toContain('CREATE INDEX "posts_taggable_type_taggable_id_index" ON "posts" ("taggable_type", "taggable_id")');
+  });
+
+  test("grammar compiles column changes where supported", () => {
+    const mysql = new MySqlGrammar();
+    const postgres = new PostgresGrammar();
+    const blueprint = new Blueprint("users");
+    blueprint.string("name", 150).nullable().change();
+    const column = blueprint.commands[0].parameters!.column;
+
+    expect(mysql.compileChange("users", column)).toContain("ALTER TABLE `users` MODIFY COLUMN `name` VARCHAR(150)");
+    expect(postgres.compileChange("users", column)).toContain('ALTER TABLE "users" ALTER COLUMN "name" TYPE VARCHAR(150)');
+  });
 });

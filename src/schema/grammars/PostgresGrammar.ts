@@ -74,6 +74,17 @@ export class PostgresGrammar extends Grammar {
     return `ALTER TABLE ${this.wrap(table)} ${columns.map((col) => `DROP COLUMN ${this.wrap(col)}`).join(", ")}`;
   }
 
+  compileChange(table: string, column: ColumnDefinition): string[] {
+    const statements = [
+      `ALTER TABLE ${this.wrap(table)} ALTER COLUMN ${this.wrap(column.name)} TYPE ${this.getType(column)}`,
+      `ALTER TABLE ${this.wrap(table)} ALTER COLUMN ${this.wrap(column.name)} ${column.nullable ? "DROP" : "SET"} NOT NULL`,
+    ];
+    if (column.default !== undefined) {
+      statements.push(`ALTER TABLE ${this.wrap(table)} ALTER COLUMN ${this.wrap(column.name)} SET DEFAULT ${this.getDefaultValue(column.default)}`);
+    }
+    return statements;
+  }
+
   compileIndex(table: string, index: any): string {
     const type = index.unique ? "UNIQUE INDEX" : "INDEX";
     return `CREATE ${type} ${this.wrap(index.name)} ON ${this.wrap(table)} (${this.wrapArray(index.columns).join(", ")})`;

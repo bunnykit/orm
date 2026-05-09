@@ -82,6 +82,10 @@ export class MySqlGrammar extends Grammar {
     return `ALTER TABLE ${this.wrap(table)} ${columns.map((col) => `DROP COLUMN ${this.wrap(col)}`).join(", ")}`;
   }
 
+  compileChange(table: string, column: ColumnDefinition): string {
+    return `ALTER TABLE ${this.wrap(table)} MODIFY COLUMN ${this.getColumn({} as any, column)}`;
+  }
+
   compileIndex(table: string, index: any): string {
     const type = index.unique ? "UNIQUE INDEX" : "INDEX";
     return `ALTER TABLE ${this.wrap(table)} ADD ${type} ${this.wrap(index.name)} (${this.wrapArray(index.columns).join(", ")})`;

@@ -98,7 +98,8 @@ export abstract class Grammar {
   }
 
   protected compileForeignKey(table: string, fk: ForeignKeyDefinition): string {
-    const sql = `ALTER TABLE ${this.wrap(table)} ADD CONSTRAINT ${this.wrap(fk.name || "")} FOREIGN KEY (${this.wrapArray(fk.columns).join(", ")}) REFERENCES ${this.wrap(fk.onTable)} (${this.wrapArray(fk.references).join(", ")})`;
+    const constraint = fk.name ? ` CONSTRAINT ${this.wrap(fk.name)}` : "";
+    const sql = `ALTER TABLE ${this.wrap(table)} ADD${constraint} FOREIGN KEY (${this.wrapArray(fk.columns).join(", ")}) REFERENCES ${this.wrap(fk.onTable)} (${this.wrapArray(fk.references).join(", ")})`;
     let full = sql;
     if (fk.onDelete) full += ` ON DELETE ${fk.onDelete}`;
     if (fk.onUpdate) full += ` ON UPDATE ${fk.onUpdate}`;
@@ -107,4 +108,5 @@ export abstract class Grammar {
 
   abstract compileColumnRename(table: string, from: string, to: string): string;
   abstract compileDropColumn(table: string, columns: string[]): string | string[];
+  abstract compileChange(table: string, column: ColumnDefinition): string | string[];
 }

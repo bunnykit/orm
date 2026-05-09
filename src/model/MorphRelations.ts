@@ -9,6 +9,7 @@ export class MorphTo<T extends Model = Model> {
   protected typeColumn: string;
   protected idColumn: string;
   protected typeMap?: Record<string, ModelConstructor>;
+  protected eagerModels: Model[] = [];
 
   constructor(parent: Model, name: string, typeMap?: Record<string, ModelConstructor>) {
     this.parent = parent;
@@ -25,7 +26,7 @@ export class MorphTo<T extends Model = Model> {
     return this.resolveAndFind(type, id);
   }
 
-  private async resolveAndFind(type: string, id: any): Promise<T | null> {
+  private resolveRelated(type: string): ModelConstructor | undefined {
     let Related: ModelConstructor | undefined;
     if (this.typeMap) {
       Related = this.typeMap[type];
@@ -33,45 +34,63 @@ export class MorphTo<T extends Model = Model> {
     if (!Related) {
       Related = MorphMap.get(type);
     }
-    if (!Related) {
-      throw new Error(
-        `No morph mapping found for type: ${type}. Register it with MorphMap.register() or pass a typeMap.`
-      );
-    }
+    return Related;
+  }
+
+  private async resolveAndFind(type: string, id: any): Promise<T | null> {
+    const Related = this.resolveRelated(type);
+    if (!Related) this.throwMissingMorph(type);
     return (Related as any).on(this.parent.getConnection()).find(id) as Promise<T | null>;
   }
 
+  private throwMissingMorph(type: string): never {
+    throw new Error(
+      `No morph mapping found for type: ${type}. Register it with MorphMap.register() or pass a typeMap.`
+    );
+  }
+
   addEagerConstraints(models: Model[]): void {
-    // MorphTo eager loading is handled separately in getEager
+    this.eagerModels = models;
   }
 
   async getEager(): Promise<any[]> {
-    return []; // Results are assembled in match
-  }
+    const results: Array<{ __morphType: string; model: Model }> = [];
+    const groups: Record<string, Model[]> = {};
 
-  match(models: Model[], _results: any[], relationName: string): void {
-    // Group models by type
-    const typeGroups: Record<string, Model[]> = {};
-    for (const model of models) {
+    for (const model of this.eagerModels) {
       const type = model.getAttribute(this.typeColumn) as string;
       if (!type) continue;
-      if (!typeGroups[type]) typeGroups[type] = [];
-      typeGroups[type].push(model);
+      if (!groups[type]) groups[type] = [];
+      groups[type].push(model);
     }
 
-    // For each type, find the related models
-    for (const [type, groupModels] of Object.entries(typeGroups)) {
-      const ids = groupModels.map((m) => m.getAttribute(this.idColumn)).filter((id) => id !== null && id !== undefined);
+    for (const [type, models] of Object.entries(groups)) {
+      const Related = this.resolveRelated(type);
+      if (!Related) this.throwMissingMorph(type);
+
+      const ids = [...new Set(models.map((model) => model.getAttribute(this.idColumn)).filter((id) => id !== null && id !== undefined))];
       if (ids.length === 0) continue;
 
-      let Related: ModelConstructor | undefined;
-      if (this.typeMap) Related = this.typeMap[type];
-      if (!Related) Related = MorphMap.get(type);
-      if (!Related) continue;
+      const relatedModels = await (Related as any).on(models[0].getConnection()).whereIn(Related.primaryKey, ids).get();
+      for (const model of relatedModels as Model[]) {
+        results.push({ __morphType: type, model });
+      }
+    }
 
-      const relatedModels = (Related as any).whereIn((Related as any).primaryKey, ids).get();
-      // We need to execute this synchronously-ish... but it's async
-      // Actually, we can't do async in for...of without awaiting
+    return results;
+  }
+
+  match(models: Model[], results: Array<{ __morphType: string; model: Model }>, relationName: string): void {
+    const dictionary: Record<string, Model> = {};
+    for (const result of results) {
+      const key = result.model.getAttribute((result.model.constructor as ModelConstructor).primaryKey);
+      dictionary[`${result.__morphType}:${String(key)}`] = result.model;
+    }
+
+    for (const model of models) {
+      const type = model.getAttribute(this.typeColumn) as string;
+      const id = model.getAttribute(this.idColumn);
+      model.setRelation(relationName, dictionary[`${type}:${String(id)}`] || null);
     }
   }
 }

@@ -23,6 +23,7 @@ export type {
   ModelColumn,
   ModelColumnValue,
   ModelConstructor,
+  ModelRelationName,
   GlobalScope,
   CastDefinition,
   CastsAttributes,
@@ -35,6 +36,7 @@ export { BelongsToMany } from "./model/BelongsToMany.js";
 
 export { Migration } from "./migration/Migration.js";
 export { Migrator } from "./migration/Migrator.js";
+export type { MigrationEvent, MigrationEventListener, MigrationEventPayload } from "./migration/Migrator.js";
 export { MigrationCreator } from "./migration/MigrationCreator.js";
 export { TypeGenerator } from "./typegen/TypeGenerator.js";
 export { TypeMapper } from "./typegen/TypeMapper.js";

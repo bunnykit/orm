@@ -354,6 +354,8 @@ await Schema.create("products", (table) => {
 | `jsonb(name)`              | JSONB (Postgres)                      |
 | `binary(name)`             | BLOB / BYTEA                          |
 | `uuid(name)`               | UUID                                  |
+| `foreignId(name)`          | Unsigned big integer foreign key      |
+| `foreignUuid(name)`        | UUID foreign key                      |
 | `enum(name, values)`       | ENUM                                  |
 
 ### Column Modifiers
@@ -374,6 +376,11 @@ table.integer("user_id").unsigned();
 await Schema.table("users", (table) => {
   table.string("phone").nullable();
   table.timestamp("last_login").nullable();
+});
+
+// Change columns on MySQL/PostgreSQL
+await Schema.table("users", (table) => {
+  table.string("name", 150).nullable().change();
 });
 
 // Rename
@@ -410,6 +417,32 @@ await Schema.create("posts", (table) => {
   table.string("title");
   table.text("content");
   table.timestamps();
+});
+```
+
+Shortcut form:
+
+```ts
+await Schema.create("posts", (table) => {
+  table.increments("id");
+  table.foreignId("user_id").constrained().cascadeOnDelete();
+  table.string("title");
+  table.timestamps();
+});
+```
+
+Polymorphic column shortcuts:
+
+```ts
+await Schema.create("comments", (table) => {
+  table.increments("id");
+  table.uuidMorphs("commentable"); // commentable_type + UUID commentable_id + index
+  table.text("body");
+});
+
+await Schema.create("activity", (table) => {
+  table.increments("id");
+  table.nullableMorphs("subject"); // nullable subject_type + subject_id + index
 });
 ```
 
@@ -996,6 +1029,20 @@ class Video extends Model {
 }
 ```
 
+`morphTo` relations can be eager loaded:
+
+```ts
+const comments = await Comment.with("commentable").get();
+
+comments[0].getRelation("commentable"); // Post | Video | null
+```
+
+Relation names are inferred for `with(...)` when your model methods return relation objects, while raw strings still work for dynamic relation names:
+
+```ts
+await Post.with("comments").get();
+```
+
 ### Many-to-Many Polymorphic
 
 ```ts
@@ -1080,6 +1127,12 @@ bun run bunny migrate:rollback
 
 # Show migration status
 bun run bunny migrate:status
+
+# Dump the current database schema
+bun run bunny schema:dump ./database/schema.sql
+
+# Dump schema and mark configured migrations as ran
+bun run bunny schema:squash ./database/schema.sql
 ```
 
 ### Migration File Structure
@@ -1104,6 +1157,37 @@ export default class CreateUsersTable extends Migration {
 ```
 
 Migrations are tracked in a `migrations` table (auto-created on first run).
+
+### Migration Events
+
+Listen to migration lifecycle events when running migrations programmatically:
+
+```ts
+import { Migrator } from "@bunnykit/orm";
+
+Migrator.on("migrating", ({ migration }) => {
+  console.log(`Starting ${migration}`);
+});
+
+Migrator.on("migrated", ({ migration }) => {
+  console.log(`Finished ${migration}`);
+});
+```
+
+Available events: `migrating`, `migrated`, `rollingBack`, `rolledBack`, `schemaDumped`, and `schemaSquashed`.
+
+### Schema Dumps
+
+Programmatic schema dumps are available through the migrator:
+
+```ts
+const migrator = new Migrator(connection, "./database/migrations");
+
+await migrator.dumpSchema("./database/schema.sql");
+await migrator.squash("./database/schema.sql");
+```
+
+`squash()` writes the schema dump and marks the configured migration files as already ran in the migrations table.
 
 ### Auto Type Generation
 

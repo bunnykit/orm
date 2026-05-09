@@ -66,6 +66,16 @@ export type ModelAttributes<T> = T extends { $attributes: Record<string, any> }
 export type ModelColumn<T> = LiteralUnion<Extract<keyof ModelAttributes<T>, string>>;
 export type ModelColumnValue<T, K> = K extends keyof ModelAttributes<T> ? ModelAttributes<T>[K] : any;
 export type ModelAttributeInput<T> = Partial<ModelAttributes<T>> & Record<string, any>;
+export type ModelRelationValue =
+  | Relation<any>
+  | MorphTo<any>
+  | MorphOne<any>
+  | MorphMany<any>
+  | MorphToMany<any>
+  | BelongsToMany<any>;
+export type ModelRelationName<T> = LiteralUnion<Extract<{
+  [K in keyof T]-?: T[K] extends (...args: any[]) => ModelRelationValue ? K : never;
+}[keyof T], string>>;
 export type CastDefinition =
   | string
   | CastsAttributes
@@ -732,7 +742,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().sharedLock();
   }
 
-  static with<M extends ModelConstructor>(this: M, ...relations: string[]): Builder<InstanceType<M>> {
+  static with<M extends ModelConstructor>(this: M, ...relations: ModelRelationName<InstanceType<M>>[]): Builder<InstanceType<M>> {
     return this.query().with(...relations);
   }
 
