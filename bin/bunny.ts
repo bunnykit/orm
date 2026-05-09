@@ -312,6 +312,31 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
     }
 
     const loadedModels = await loadModels(modelRoots);
+    const originalTenantContextCurrent = TenantContext.current.bind(TenantContext);
+    let activeTenantContext;
+
+    function tenant() {
+      return activeTenantContext;
+    }
+
+    async function clearTenant() {
+      activeTenantContext = undefined;
+      return undefined;
+    }
+
+    async function useTenant(tenantId) {
+      const context = await ConnectionManager.resolveTenant(tenantId);
+      if (context.strategy === "schema" && context.schemaMode === "search_path") {
+        throw new Error("Persistent REPL tenant context does not support search_path tenants. Use await TenantContext.run(tenantId, () => ...) instead.");
+      }
+      if (context.strategy === "rls") {
+        throw new Error("Persistent REPL tenant context does not support RLS tenants. Use await TenantContext.run(tenantId, () => ...) instead.");
+      }
+      activeTenantContext = context;
+      return context;
+    }
+
+    TenantContext.current = () => originalTenantContextCurrent() || activeTenantContext;
 
     Object.assign(globalThis, {
       Connection,
@@ -348,6 +373,9 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
       bunny,
       config: replConfig,
       Models: loadedModels,
+      useTenant,
+      clearTenant,
+      tenant,
     });
 
     console.log(\`Bunny REPL ready. Loaded \${Object.keys(loadedModels).length} model classes from modelsPath.\`);
