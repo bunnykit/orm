@@ -119,6 +119,18 @@ export abstract class Relation<T extends Model = Model> {
     this.builder = (related as any).on(parent.getConnection());
     this.foreignKey = foreignKey || this.defaultForeignKey();
     this.localKey = localKey || related.primaryKey;
+
+    // Wrap getResults with lazy-loading guard
+    const originalGetResults = (this as any).getResults.bind(this);
+    (this as any).getResults = async () => {
+      if ((this.parent.constructor as typeof Model).preventLazyLoading) {
+        throw new Error(
+          `Lazy loading is prevented on ${(this.parent.constructor as typeof Model).name}. ` +
+            `Eager load the relation using with().`
+        );
+      }
+      return await originalGetResults();
+    };
   }
 
   abstract addConstraints(): void;
@@ -437,6 +449,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   static attributes: Record<string, any> = {};
   static softDeletes = false;
   static deletedAtColumn = "deleted_at";
+  static preventLazyLoading = false;
 
   $attributes = {} as T;
   $original = {} as Partial<T>;
@@ -453,7 +466,10 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     if (attributes) {
       this.fill(attributes);
     }
+    this.syncAttributeProperties();
 
+    // Minimal Proxy fallback for dynamic property access on undefined keys.
+    // Pre-defined attribute getters/setters bypass the Proxy entirely.
     return new Proxy(this, {
       get(target, prop, receiver) {
         if (typeof prop === "string" && !(prop in target) && prop in target.$attributes) {
@@ -468,24 +484,23 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
         }
         return Reflect.set(target, prop, value, receiver);
       },
-      has(target, prop) {
-        return prop in target || (typeof prop === "string" && prop in target.$attributes);
-      },
-      getOwnPropertyDescriptor(target, prop) {
-        if (typeof prop === "string" && !(prop in target) && prop in target.$attributes) {
-          return {
-            enumerable: true,
-            configurable: true,
-            writable: true,
-            value: target.getAttribute(prop),
-          };
-        }
-        return Reflect.getOwnPropertyDescriptor(target, prop);
-      },
-      ownKeys(target) {
-        return [...new Set([...Reflect.ownKeys(target), ...Object.keys(target.$attributes)])];
-      },
     });
+  }
+
+  private defineAttributeProperty(key: string): void {
+    if (key in this) return;
+    Object.defineProperty(this, key, {
+      get: () => this.getAttribute(key),
+      set: (value) => this.setAttribute(key, value),
+      enumerable: true,
+      configurable: true,
+    });
+  }
+
+  private syncAttributeProperties(): void {
+    for (const key of Object.keys(this.$attributes)) {
+      this.defineAttributeProperty(key);
+    }
   }
 
   static getTable(): string {
@@ -896,6 +911,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   setAttribute(key: string, value: any): void;
   setAttribute(key: string | keyof T, value: any): void {
     (this.$attributes as any)[key] = this.serializeCastAttribute(key as string, value);
+    this.defineAttributeProperty(key as string);
   }
 
   castAttribute(key: string, value: any): any {
@@ -1063,6 +1079,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       await ObserverRegistry.dispatch("saved", this);
     }
 
+    this.syncAttributeProperties();
+
     const identityMap = IdentityMap.current();
     if (identityMap) {
       const pk = this.getAttribute(constructor.primaryKey);
@@ -1082,6 +1100,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     if (!this.$exists) {
       (this.$attributes as any)["created_at"] = now;
     }
+    this.syncAttributeProperties();
   }
 
   async touch(): Promise<boolean> {
@@ -1096,6 +1115,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       .update({ updated_at: now } as any);
     (this.$attributes as any)["updated_at"] = now;
     this.$original = { ...this.$attributes };
+    this.syncAttributeProperties();
     return true;
   }
 
@@ -1118,6 +1138,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       (this.$attributes as any)[key] = value;
     }
     this.$original = { ...this.$attributes };
+    this.syncAttributeProperties();
     return this;
   }
 
@@ -1146,6 +1167,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
         .update({ [constructor.deletedAtColumn]: deletedAt } as any);
       (this.$attributes as any)[constructor.deletedAtColumn] = deletedAt;
       this.$original = { ...this.$attributes };
+      this.syncAttributeProperties();
     } else {
       const connection = this.getConnection();
       await new Builder(connection, connection.qualifyTable(constructor.getTable()))
@@ -1171,6 +1193,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     (this.$attributes as any)[constructor.deletedAtColumn] = null;
     this.$original = { ...this.$attributes };
     this.$exists = true;
+    this.syncAttributeProperties();
     return true;
   }
 
@@ -1195,6 +1218,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     if (result) {
       this.$attributes = result.$attributes as T;
       this.$original = { ...result.$attributes } as Partial<T>;
+      this.syncAttributeProperties();
     }
     return this;
   }
