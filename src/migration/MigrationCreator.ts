@@ -13,14 +13,14 @@ import { Schema } from "@bunnykit/orm";
 
 export default class ${this.toClassName(name)} extends Migration {
   async up(): Promise<void> {
-    // Schema.create("table_name", (table) => {
+    // await Schema.create("table_name", (table) => {
     //   table.increments("id");
     //   table.timestamps();
     // });
   }
 
   async down(): Promise<void> {
-    // Schema.dropIfExists("table_name");
+    // await Schema.dropIfExists("table_name");
   }
 }
 `;
