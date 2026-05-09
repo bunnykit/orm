@@ -612,9 +612,29 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     this: M,
     records: ModelAttributeInput<InstanceType<M>>[]
   ): Promise<Record<string, any>[]> {
+    const generatePk = await this.shouldAutoGeneratePrimaryKey();
+    const now = this.timestamps ? new Date().toISOString() : null;
     const prepared: Record<string, any>[] = [];
+
     for (const record of records) {
-      prepared.push(await this.prepareBulkRecord(record));
+      const instance = new this() as InstanceType<M>;
+      instance.fill(record as any);
+      const attributes = { ...(instance.$attributes as Record<string, any>) };
+
+      if (now) {
+        if (attributes.created_at === undefined) attributes.created_at = now;
+        if (attributes.updated_at === undefined) attributes.updated_at = now;
+      }
+
+      if (generatePk) {
+        const pk = this.primaryKey;
+        const pkValue = attributes[pk];
+        if (pkValue === null || pkValue === undefined || pkValue === "") {
+          attributes[pk] = crypto.randomUUID();
+        }
+      }
+
+      prepared.push(attributes);
     }
     return prepared;
   }
@@ -708,8 +728,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     attributes: ModelAttributeInput<InstanceType<M>>,
     values: ModelAttributeInput<InstanceType<M>> = {}
   ): Promise<boolean> {
-    const existing = await this.where(attributes).first();
-    if (existing) {
+    const exists = await this.where(attributes).exists();
+    if (exists) {
       const update = await this.prepareBulkRecord(values, { touchUpdatedAt: true, touchCreatedAt: false, generatePrimaryKey: false });
       await this.where(attributes).update(update as any);
       return true;

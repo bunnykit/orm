@@ -832,8 +832,7 @@ export class Builder<T = Record<string, any>> {
   }
 
   async first(): Promise<T | null> {
-    const results = await this.limit(1).get();
-    return results[0] || null;
+    return (await this.limit(1).get())[0] || null;
   }
 
   async find(id: any, column: ModelColumn<T> = "id"): Promise<T | null> {
@@ -892,8 +891,15 @@ export class Builder<T = Record<string, any>> {
   }
 
   async pluck<K extends ModelColumn<T>>(column: K): Promise<ModelColumnValue<T, K>[]> {
-    const results = await this.select(column).get();
-    return results.map((row: any) => row[column]);
+    const model = this.model;
+    this.model = undefined as any;
+    this.bindings = [];
+    this.parameterize = true;
+    const sql = this.select(column as any).toSql();
+    this.parameterize = false;
+    const rows = await this.connection.query(sql, this.bindings);
+    this.model = model;
+    return Array.from(rows).map((row: any) => row[column as string]);
   }
 
   private async aggregate(sql: string, alias: string): Promise<any> {
@@ -911,23 +917,59 @@ export class Builder<T = Record<string, any>> {
   }
 
   async count(column: ModelColumn<T> | "*" = "*"): Promise<number> {
-    return Number(await this.aggregate(`COUNT(${column})`, "count") ?? 0);
+    const countSql = column === "*" ? "COUNT(*)" : `COUNT(${this.grammar.wrap(column as string)})`;
+    this.bindings = [];
+    this.parameterize = true;
+    const from = this.fromRaw || this.grammar.wrap(this.tableName);
+    const whereSql = this.compileWheres();
+    this.parameterize = false;
+    const sql = `SELECT ${countSql} as cnt FROM ${from}${whereSql ? " " + whereSql : ""}`;
+    const rows = await this.connection.query(sql, this.bindings);
+    return rows.length > 0 ? Number((rows[0] as any).cnt) : 0;
   }
 
   async sum(column: ModelColumn<T>): Promise<number> {
-    return Number(await this.aggregate(`SUM(${column})`, "sum") ?? 0);
+    const sql = `SELECT SUM(${this.grammar.wrap(column as string)}) as sum_val FROM ${this.fromRaw || this.grammar.wrap(this.tableName)}`;
+    this.bindings = [];
+    this.parameterize = true;
+    const whereSql = this.compileWheres();
+    this.parameterize = false;
+    const fullSql = whereSql ? `${sql}${whereSql}` : sql;
+    const rows = await this.connection.query(fullSql, this.bindings);
+    return rows.length > 0 ? Number((rows[0] as any).sum_val || 0) : 0;
   }
 
   async avg(column: ModelColumn<T>): Promise<number> {
-    return Number(await this.aggregate(`AVG(${column})`, "avg") ?? 0);
+    const sql = `SELECT AVG(${this.grammar.wrap(column as string)}) as avg_val FROM ${this.fromRaw || this.grammar.wrap(this.tableName)}`;
+    this.bindings = [];
+    this.parameterize = true;
+    const whereSql = this.compileWheres();
+    this.parameterize = false;
+    const fullSql = whereSql ? `${sql}${whereSql}` : sql;
+    const rows = await this.connection.query(fullSql, this.bindings);
+    return rows.length > 0 ? Number((rows[0] as any).avg_val || 0) : 0;
   }
 
   async min<K extends ModelColumn<T>>(column: K): Promise<ModelColumnValue<T, K> | null> {
-    return await this.aggregate(`MIN(${column})`, "min");
+    const sql = `SELECT MIN(${this.grammar.wrap(column as string)}) as min_val FROM ${this.fromRaw || this.grammar.wrap(this.tableName)}`;
+    this.bindings = [];
+    this.parameterize = true;
+    const whereSql = this.compileWheres();
+    this.parameterize = false;
+    const fullSql = whereSql ? `${sql}${whereSql}` : sql;
+    const rows = await this.connection.query(fullSql, this.bindings);
+    return rows.length > 0 ? (rows[0] as any).min_val : null;
   }
 
   async max<K extends ModelColumn<T>>(column: K): Promise<ModelColumnValue<T, K> | null> {
-    return await this.aggregate(`MAX(${column})`, "max");
+    const sql = `SELECT MAX(${this.grammar.wrap(column as string)}) as max_val FROM ${this.fromRaw || this.grammar.wrap(this.tableName)}`;
+    this.bindings = [];
+    this.parameterize = true;
+    const whereSql = this.compileWheres();
+    this.parameterize = false;
+    const fullSql = whereSql ? `${sql}${whereSql}` : sql;
+    const rows = await this.connection.query(fullSql, this.bindings);
+    return rows.length > 0 ? (rows[0] as any).max_val : null;
   }
 
   async paginate(perPage: number = 15, page: number = 1): Promise<Paginator<T>> {
@@ -1212,8 +1254,14 @@ export class Builder<T = Record<string, any>> {
   }
 
   async exists(): Promise<boolean> {
-    const result = await this.select("1 as exists_check").limit(1).get();
-    return result.length > 0;
+    this.bindings = [];
+    this.parameterize = true;
+    const from = this.fromRaw || this.grammar.wrap(this.tableName);
+    const whereSql = this.compileWheres();
+    this.parameterize = false;
+    const sql = `SELECT 1 FROM ${from}${whereSql ? whereSql : ""} LIMIT 1`;
+    const rows = await this.connection.query(sql, this.bindings);
+    return rows.length > 0;
   }
 
   async doesntExist(): Promise<boolean> {
