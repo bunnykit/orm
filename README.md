@@ -8,13 +8,14 @@
 >
 > npm, yarn, pnpm, and Node.js runtime usage are not supported.
 
-An **Eloquent-inspired ORM** built specifically for [Bun](https://bun.sh)'s native `bun:sql` client. Supports **SQLite**, **MySQL**, and **PostgreSQL** with full TypeScript typing, a chainable query builder, schema migrations, model observers, and polymorphic relations.
+An **Eloquent-inspired ORM** built specifically for [Bun](https://bun.sh)'s native `bun:sql` client. It ships with **zero runtime dependencies** and supports **SQLite**, **MySQL**, and **PostgreSQL** with full TypeScript typing, a chainable query builder, schema migrations, model observers, polymorphic relations, and an interactive REPL.
 
 ---
 
 ## Features
 
 - 🔥 **Bun-native** — Built on top of `bun:sql` for maximum performance
+- 🪶 **Zero runtime dependencies** — No package lock-in beyond Bun itself
 - 📦 **Multi-database** — SQLite, MySQL, and PostgreSQL support
 - 🔷 **Fully Typed** — Written in TypeScript with generics everywhere
 - 🏗️ **Schema Builder** — Programmatic table creation, indexes, foreign keys
@@ -23,6 +24,7 @@ An **Eloquent-inspired ORM** built specifically for [Bun](https://bun.sh)'s nati
 - 🔗 **Relations** — Standard, many-to-many, polymorphic, through, one-of-many, and relation queries
 - 👁️ **Observers** — Lifecycle hooks (`creating`, `created`, `updating`, `updated`, etc.)
 - 🚀 **Migrations & CLI** — Create, run, and rollback migrations from the command line
+- 💬 **REPL** — Inspect models and run queries interactively with `bunny repl`
 - ⚡ **Streaming** — `chunk`, `cursor`, `each`, and `lazy` for memory-efficient large dataset processing
 
 ---
@@ -305,7 +307,7 @@ Start an interactive Bunny session with the ORM already loaded:
 bunny repl
 ```
 
-The REPL exposes `Model`, `Schema`, `Connection`, `db`, and a `Models` map. Any model files under `modelsPath` are loaded automatically and also registered by class name on the global scope. If no project config is present, it starts against an in-memory SQLite database so you can still experiment immediately.
+The REPL exposes `Model`, `Schema`, `Connection`, `db`, and a `Models` map. Any model files under `modelsPath` are loaded automatically and also registered by class name on the global scope. If no project config is present, it starts against an in-memory SQLite database so you can still experiment immediately. This makes it useful for quick inspection, ad hoc queries, and schema experiments without adding any dependencies to your app.
 
 ---
 
