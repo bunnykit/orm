@@ -851,39 +851,45 @@ export class Builder<T = Record<string, any>> {
     });
   }
 
-  async *cursor(keyset?: Record<string, any>): AsyncGenerator<T> {
+  async *cursor(chunkSize: number = 1000): AsyncGenerator<T> {
     const model = this.model;
     const primaryKey = model ? (model as any).primaryKey || "id" : "id";
     const orderColumn = this.orders[0]?.column || primaryKey;
     const orderDirection = this.orders[0]?.direction || "asc";
 
-    const builder = this.clone();
-    builder.orders = [{ column: orderColumn, direction: orderDirection as "asc" | "desc" }];
-    builder.offsetValue = undefined;
+    let lastValue: any = undefined;
 
-    if (keyset) {
-      const op = orderDirection === "asc" ? ">" : "<";
-      builder.wheres.push({
-        type: "basic",
-        column: orderColumn,
-        operator: op,
-        value: keyset[orderColumn],
-        boolean: "and",
-        scope: undefined,
-      });
-    }
+    while (true) {
+      const builder = this.clone();
+      builder.orders = [{ column: orderColumn, direction: orderDirection as "asc" | "desc" }];
+      builder.offsetValue = undefined;
+      builder.limitValue = chunkSize;
 
-    const items = await builder.limit(1).get();
-    if (items.length === 0) return;
+      if (lastValue !== undefined) {
+        const op = orderDirection === "asc" ? ">" : "<";
+        builder.wheres.push({
+          type: "basic",
+          column: orderColumn,
+          operator: op,
+          value: lastValue,
+          boolean: "and",
+          scope: undefined,
+        });
+      }
 
-    yield items[0];
+      const items = await builder.get();
+      if (items.length === 0) break;
 
-    const nextKeyset = items[0] && typeof items[0] === "object"
-      ? { [orderColumn]: (items[0] as any)[orderColumn] }
-      : undefined;
+      for (const item of items) {
+        yield item;
+      }
 
-    if (nextKeyset) {
-      yield* this.cursor(nextKeyset);
+      if (items.length < chunkSize) break;
+
+      const lastItem = items[items.length - 1];
+      lastValue = lastItem && typeof lastItem === "object"
+        ? (lastItem as any)[orderColumn]
+        : undefined;
     }
   }
 

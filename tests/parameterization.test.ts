@@ -215,4 +215,31 @@ describe("Parameterized Queries", () => {
     expect(calls[0].sql).toContain("VALUES (?, ?)");
     expect(calls[0].bindings).toEqual(["a@b.com", "Alice"]);
   });
+
+  test("cursor() fetches in batches instead of one row per query", async () => {
+    const connection = setupTestDb();
+    await connection.run("CREATE TABLE nums (id INTEGER PRIMARY KEY)");
+    await connection.run("INSERT INTO nums (id) VALUES (1), (2), (3), (4), (5)");
+
+    const calls = captureExecution(connection);
+    const builder = new Builder(connection, "nums").orderBy("id");
+    const results: number[] = [];
+
+    for await (const row of builder.cursor(2)) {
+      results.push((row as any).id);
+    }
+
+    expect(results).toEqual([1, 2, 3, 4, 5]);
+    // With chunkSize=2 and 5 rows, we expect 3 queries (2+2+1), not 5 queries
+    const queryCalls = calls.filter((c) => c.method === "query");
+    expect(queryCalls).toHaveLength(3);
+
+    // Verify keyset pagination is used (no OFFSET)
+    expect(queryCalls[1].sql).not.toContain("OFFSET");
+    expect(queryCalls[1].sql).toContain('"id" > ?');
+    expect(queryCalls[1].bindings).toEqual([2]);
+
+    expect(queryCalls[2].sql).toContain('"id" > ?');
+    expect(queryCalls[2].bindings).toEqual([4]);
+  });
 });
