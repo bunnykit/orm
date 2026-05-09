@@ -21,6 +21,12 @@ interface PooledConnection {
   inUse: boolean;
 }
 
+interface PoolWaiter {
+  resolve: (connection: Connection) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 export class ConnectionManager {
   private static defaultConnection?: Connection;
   private static connections = new Map<string, Connection>();
@@ -28,6 +34,7 @@ export class ConnectionManager {
   private static poolConfigs = new Map<string, PoolConfig>();
   private static tenantResolver?: TenantResolver;
   private static tenantCache = new Map<string, ActiveTenantContext>();
+  private static waiters = new Map<string, PoolWaiter[]>();
 
   static setDefault(connection: Connection): void {
     this.defaultConnection = connection;
@@ -65,7 +72,7 @@ export class ConnectionManager {
       pool.splice(idx, 1);
 
       try {
-        pooled.connection.query("SELECT 1").catch(() => null);
+        await pooled.connection.query("SELECT 1");
         pooled.inUse = true;
         return pooled.connection;
       } catch {
@@ -80,32 +87,56 @@ export class ConnectionManager {
     }
 
     return new Promise((resolve, reject) => {
-      const checkInterval = setInterval(() => {
-        const available = pool!.find((c) => !c.inUse);
-        if (available) {
-          clearInterval(checkInterval);
-          available.inUse = true;
-          available.lastUsed = Date.now();
-          resolve(available.connection);
-        }
-      }, 50);
-
-      setTimeout(() => {
-        clearInterval(checkInterval);
+      const timer = setTimeout(() => {
+        this.removeWaiter(name, waiter);
         reject(new Error(`Connection pool exhausted for "${name}"`));
       }, 30000);
+
+      const waiter: PoolWaiter = { resolve, reject, timer };
+      let poolWaiters = this.waiters.get(name);
+      if (!poolWaiters) {
+        poolWaiters = [];
+        this.waiters.set(name, poolWaiters);
+      }
+      poolWaiters.push(waiter);
     });
   }
 
-  private static releasePooledConnection(name: string, connection: Connection): void {
+  private static removeWaiter(name: string, waiter: PoolWaiter): void {
+    const poolWaiters = this.waiters.get(name);
+    if (!poolWaiters) return;
+    const idx = poolWaiters.indexOf(waiter);
+    if (idx !== -1) poolWaiters.splice(idx, 1);
+  }
+
+  private static async releasePooledConnection(name: string, connection: Connection): Promise<void> {
     const pool = this.pools.get(name);
     if (!pool) return;
 
     const pooled = pool.find((p) => p.connection === connection);
-    if (pooled) {
-      pooled.inUse = false;
-      pooled.lastUsed = Date.now();
+    if (!pooled) return;
+
+    // Safety: roll back any leaked transaction before returning to pool
+    if (pooled.connection.isInTransaction()) {
+      try {
+        await pooled.connection.rollback();
+      } catch {
+        // Connection may already be dead; ignore rollback errors
+      }
     }
+
+    // Hand off directly to a waiter if one exists
+    const poolWaiters = this.waiters.get(name);
+    if (poolWaiters && poolWaiters.length > 0) {
+      const waiter = poolWaiters.shift()!;
+      clearTimeout(waiter.timer);
+      pooled.lastUsed = Date.now();
+      waiter.resolve(connection);
+      return;
+    }
+
+    pooled.inUse = false;
+    pooled.lastUsed = Date.now();
   }
 
   static add(name: string, connection: Connection | ConnectionConfig): Connection {
@@ -127,8 +158,8 @@ export class ConnectionManager {
     throw new Error(`No connection registered for "${name}". Use add() first or provide config.`);
   }
 
-  static release(name: string, connection: Connection): void {
-    this.releasePooledConnection(name, connection);
+  static async release(name: string, connection: Connection): Promise<void> {
+    await this.releasePooledConnection(name, connection);
   }
 
   static require(name: string): Connection {

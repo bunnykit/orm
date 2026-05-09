@@ -12,6 +12,7 @@ export class Connection {
   private config: ConnectionConfig;
   private schema?: string;
   private ownsDriver: boolean;
+  private transactionDepth = 0;
 
   constructor(config: ConnectionConfig, options: { driver?: SQL; schema?: string; ownsDriver?: boolean } = {}) {
     this.config = config;
@@ -93,14 +94,21 @@ export class Connection {
 
   async beginTransaction(): Promise<void> {
     await this.driver.unsafe("BEGIN");
+    this.transactionDepth++;
   }
 
   async commit(): Promise<void> {
     await this.driver.unsafe("COMMIT");
+    this.transactionDepth = Math.max(0, this.transactionDepth - 1);
   }
 
   async rollback(): Promise<void> {
     await this.driver.unsafe("ROLLBACK");
+    this.transactionDepth = Math.max(0, this.transactionDepth - 1);
+  }
+
+  isInTransaction(): boolean {
+    return this.transactionDepth > 0;
   }
 
   async transaction<T>(callback: (connection: Connection) => T | Promise<T>): Promise<T> {
