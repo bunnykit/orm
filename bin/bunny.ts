@@ -144,7 +144,7 @@ async function runTenantMigrationCommand(
         throw new Error(`Tenant "${tenantId}" did not resolve to an active context.`);
       }
       console.log(`Tenant: ${tenantId}`);
-      const migrator = new Migrator(context.connection, tenantPath, typesOutDir, createTypeGeneratorOptions(config));
+      const migrator = new Migrator(context.connection, tenantPath, typesOutDir, createTypeGeneratorOptions(config), { tenantId });
       await runMigratorCommand(command, migrator);
     });
   } finally {
