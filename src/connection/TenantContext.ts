@@ -15,6 +15,7 @@ export interface ActiveTenantContext {
   schemaMode?: "qualify" | "search_path";
   rlsTenantId?: string;
   rlsSetting?: string;
+  rlsRole?: string;
 }
 
 const storage = new AsyncLocalStorage<ActiveTenantContext>();
@@ -22,6 +23,14 @@ const storage = new AsyncLocalStorage<ActiveTenantContext>();
 export class TenantContext {
   static current(): ActiveTenantContext | undefined {
     return storage.getStore();
+  }
+
+  static async withConnection<T>(connection: Connection, callback: () => T | Promise<T>): Promise<T> {
+    const context = this.current();
+    if (!context) {
+      return await callback();
+    }
+    return await storage.run({ ...context, connection }, callback);
   }
 
   static async run<T>(tenantId: string, callback: () => T | Promise<T>): Promise<T> {
@@ -34,7 +43,7 @@ export class TenantContext {
     if (context.strategy === "rls") {
       return await context.connection.withTenant(context.rlsTenantId || context.tenantId, async (connection) => {
         return await storage.run({ ...context, connection }, callback);
-      }, context.rlsSetting);
+      }, context.rlsSetting, context.rlsRole);
     }
     return await storage.run(context, callback);
   }

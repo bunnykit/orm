@@ -14,6 +14,7 @@ export class Connection {
   private ownsDriver: boolean;
   private transactionDepth = 0;
   private savepointId = 0;
+  private reservedDriver?: SQL & { release?: () => void };
 
   constructor(config: ConnectionConfig, options: { driver?: SQL; schema?: string; ownsDriver?: boolean } = {}) {
     this.config = config;
@@ -109,30 +110,51 @@ export class Connection {
     return `"${value.replace(/"/g, '""')}"`;
   }
 
+  private getDriver(): SQL {
+    return this.reservedDriver || this.driver;
+  }
+
   async query(sqlString: string, bindings?: any[]): Promise<any[]> {
-    return (await this.driver.unsafe(sqlString, bindings)) as any[];
+    return (await this.getDriver().unsafe(sqlString, bindings)) as any[];
   }
 
   async run(sqlString: string, bindings?: any[]): Promise<any> {
-    return await this.driver.unsafe(sqlString, bindings);
+    return await this.getDriver().unsafe(sqlString, bindings);
   }
 
   async beginTransaction(): Promise<void> {
     if (this.transactionDepth === 0) {
-      await this.driver.unsafe("BEGIN");
+      if (this.driverName === "postgres") {
+        this.reservedDriver = await (this.driver as any).reserve();
+      }
+      try {
+        await this.getDriver().unsafe("BEGIN");
+      } catch (error) {
+        this.releaseReservedDriver();
+        throw error;
+      }
     } else {
-      await this.driver.unsafe(`SAVEPOINT bunny_trans_${++this.savepointId}`);
+      await this.getDriver().unsafe(`SAVEPOINT bunny_trans_${++this.savepointId}`);
     }
     this.transactionDepth++;
+  }
+
+  private releaseReservedDriver(): void {
+    this.reservedDriver?.release?.();
+    this.reservedDriver = undefined;
   }
 
   async commit(): Promise<void> {
     if (this.transactionDepth <= 0) return;
     if (this.transactionDepth === 1) {
-      await this.driver.unsafe("COMMIT");
-      this.transactionDepth = 0;
+      try {
+        await this.getDriver().unsafe("COMMIT");
+      } finally {
+        this.transactionDepth = 0;
+        this.releaseReservedDriver();
+      }
     } else {
-      await this.driver.unsafe(`RELEASE SAVEPOINT bunny_trans_${this.savepointId--}`);
+      await this.getDriver().unsafe(`RELEASE SAVEPOINT bunny_trans_${this.savepointId--}`);
       this.transactionDepth--;
     }
   }
@@ -140,11 +162,15 @@ export class Connection {
   async rollback(): Promise<void> {
     if (this.transactionDepth <= 0) return;
     if (this.transactionDepth === 1) {
-      await this.driver.unsafe("ROLLBACK");
-      this.transactionDepth = 0;
+      try {
+        await this.getDriver().unsafe("ROLLBACK");
+      } finally {
+        this.transactionDepth = 0;
+        this.releaseReservedDriver();
+      }
     } else {
-      await this.driver.unsafe(`ROLLBACK TO SAVEPOINT bunny_trans_${this.savepointId}`);
-      await this.driver.unsafe(`RELEASE SAVEPOINT bunny_trans_${this.savepointId--}`);
+      await this.getDriver().unsafe(`ROLLBACK TO SAVEPOINT bunny_trans_${this.savepointId}`);
+      await this.getDriver().unsafe(`RELEASE SAVEPOINT bunny_trans_${this.savepointId--}`);
       this.transactionDepth--;
     }
   }
@@ -167,7 +193,8 @@ export class Connection {
   async withTenant<T>(
     tenantId: string,
     callback: (connection: Connection) => T | Promise<T>,
-    setting: string = "app.tenant_id"
+    setting: string = "app.tenant_id",
+    role?: string
   ): Promise<T> {
     if (this.driverName !== "postgres") {
       return await this.transaction(callback);
@@ -175,8 +202,14 @@ export class Connection {
     if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(setting)) {
       throw new Error(`Invalid PostgreSQL setting name: ${setting}`);
     }
+    if (role) {
+      Connection.assertSafeIdentifier(role, "role name");
+    }
     return await this.transaction(async (connection) => {
-      await connection.run(`SET LOCAL ${setting} = ${connection.getGrammar().placeholder(1)}`, [tenantId]);
+      if (role) {
+        await connection.run(`SET LOCAL ROLE ${connection.quoteIdentifier(role)}`);
+      }
+      await connection.run(`SELECT set_config(${connection.getGrammar().placeholder(1)}, ${connection.getGrammar().placeholder(2)}, true)`, [setting, tenantId]);
       return await callback(connection);
     });
   }
@@ -193,6 +226,7 @@ export class Connection {
   }
 
   async close(): Promise<void> {
+    this.releaseReservedDriver();
     if (this.ownsDriver) {
       await this.driver.close();
     }

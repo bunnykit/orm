@@ -14,7 +14,7 @@ type TenantResolutionOptions = TenantCachePolicy & {
 export type TenantResolution =
   | ({ strategy: "database"; name: string; config: ConnectionConfig } & TenantResolutionOptions)
   | ({ strategy: "schema"; name: string; config?: ConnectionConfig; connection?: string | Connection; schema: string; mode?: "qualify" | "search_path" } & TenantResolutionOptions)
-  | ({ strategy: "rls"; name: string; config?: ConnectionConfig; connection?: string | Connection; tenantId?: string; setting?: string } & TenantResolutionOptions);
+  | ({ strategy: "rls"; name: string; config?: ConnectionConfig; connection?: string | Connection; tenantId?: string; setting?: string; role?: string } & TenantResolutionOptions);
 
 export type TenantResolver = (tenantId: string) => TenantResolution | Promise<TenantResolution>;
 
@@ -247,6 +247,7 @@ export class ConnectionManager {
       schemaMode,
       rlsTenantId: resolution.strategy === "rls" ? resolution.tenantId || tenantId : undefined,
       rlsSetting: resolution.strategy === "rls" ? resolution.setting || "app.tenant_id" : undefined,
+      rlsRole: resolution.strategy === "rls" ? resolution.role : undefined,
     };
     this.tenantCache.set(tenantId, context);
     return context;

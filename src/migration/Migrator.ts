@@ -3,6 +3,8 @@ import { existsSync } from "fs";
 import { mkdir, readdir, readFile, writeFile } from "fs/promises";
 import { basename, join, relative, resolve } from "path";
 import { Connection } from "../connection/Connection.js";
+import { ConnectionManager } from "../connection/ConnectionManager.js";
+import { TenantContext } from "../connection/TenantContext.js";
 import { Schema } from "../schema/Schema.js";
 import { Blueprint } from "../schema/Blueprint.js";
 import { Builder } from "../query/Builder.js";
@@ -203,6 +205,31 @@ export class Migrator {
     return createHash("sha256").update(contents).digest("hex");
   }
 
+  private async withRuntimeConnection<T>(connection: Connection, callback: () => T | Promise<T>): Promise<T> {
+    const previousSchemaConnection = (Schema as any).connection as Connection | undefined;
+    const previousDefaultConnection = ConnectionManager.getDefault();
+
+    Schema.setConnection(connection);
+    try {
+      return await TenantContext.withConnection(connection, callback);
+    } finally {
+      if (previousSchemaConnection) {
+        Schema.setConnection(previousSchemaConnection);
+      } else {
+        delete (Schema as any).connection;
+      }
+      if (previousDefaultConnection) {
+        ConnectionManager.setDefault(previousDefaultConnection);
+      }
+    }
+  }
+
+  private async inTransaction<T>(callback: (connection: Connection) => T | Promise<T>): Promise<T> {
+    return await this.connection.transaction(async (connection) => {
+      return await this.withRuntimeConnection(connection, () => callback(connection));
+    });
+  }
+
   async run(): Promise<void> {
     await this.ensureMigrationsTable();
     const locked = await this.acquireLock();
@@ -218,25 +245,24 @@ export class Migrator {
 
       const batch = (await this.getLastBatchNumber()) + 1;
 
-      await this.connection.beginTransaction();
-      for (const file of pending) {
-        const migration = await this.resolve(file.id);
-        console.log(`Migrating: ${file.id}`);
-        await this.emit("migrating", { migration: file.id, batch });
-        await migration.up();
-        await new Builder(this.connection, "migrations").insert({
-          migration: file.id,
-          tenant: this.getTenantId(),
-          checksum: file.checksum,
-          batch,
-        });
-        await this.emit("migrated", { migration: file.id, batch });
-        console.log(`Migrated:  ${file.id}`);
-      }
-      await this.connection.commit();
+      await this.inTransaction(async (connection) => {
+        for (const file of pending) {
+          const migration = await this.resolve(file.id);
+          console.log(`Migrating: ${file.id}`);
+          await this.emit("migrating", { migration: file.id, batch });
+          await migration.up();
+          await new Builder(connection, "migrations").insert({
+            migration: file.id,
+            tenant: this.getTenantId(),
+            checksum: file.checksum,
+            batch,
+          });
+          await this.emit("migrated", { migration: file.id, batch });
+          console.log(`Migrated:  ${file.id}`);
+        }
+      });
       await this.generateTypesIfNeeded();
     } catch (error) {
-      await this.connection.rollback();
       throw error;
     } finally {
       if (locked) await this.releaseLock();
@@ -263,22 +289,21 @@ export class Migrator {
         return;
       }
 
-      await this.connection.beginTransaction();
-      for (const record of records) {
-        const migration = await this.resolve(record.migration);
-        console.log(`Rolling back: ${record.migration}`);
-        await this.emit("rollingBack", { migration: record.migration, batch: record.batch });
-        await migration.down();
-        await new Builder(this.connection, "migrations")
-          .where("id", record.id)
-          .delete();
-        await this.emit("rolledBack", { migration: record.migration, batch: record.batch });
-        console.log(`Rolled back:  ${record.migration}`);
-      }
-      await this.connection.commit();
+      await this.inTransaction(async (connection) => {
+        for (const record of records) {
+          const migration = await this.resolve(record.migration);
+          console.log(`Rolling back: ${record.migration}`);
+          await this.emit("rollingBack", { migration: record.migration, batch: record.batch });
+          await migration.down();
+          await new Builder(connection, "migrations")
+            .where("id", record.id)
+            .delete();
+          await this.emit("rolledBack", { migration: record.migration, batch: record.batch });
+          console.log(`Rolled back:  ${record.migration}`);
+        }
+      });
       await this.generateTypesIfNeeded();
     } catch (error) {
-      await this.connection.rollback();
       throw error;
     } finally {
       if (locked) await this.releaseLock();
