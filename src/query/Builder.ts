@@ -1,6 +1,6 @@
 import { Connection } from "../connection/Connection.js";
 import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../types/index.js";
-import type { Model } from "../model/Model.js";
+import type { Model, ModelConstructor } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
 
 type RelationConstraint = (query: Builder<any>) => void | Builder<any>;
@@ -27,7 +27,7 @@ export class Builder<T = Record<string, any>> {
   offsetValue?: number;
   joins: string[] = [];
   distinctFlag = false;
-  model?: typeof Model;
+  model?: ModelConstructor;
   eagerLoads: string[] = [];
   randomOrderFlag = false;
   lockMode?: string;
@@ -44,7 +44,7 @@ export class Builder<T = Record<string, any>> {
     return this.connection.getGrammar();
   }
 
-  setModel(model: typeof Model): this {
+  setModel(model: ModelConstructor): this {
     this.model = model;
     return this;
   }

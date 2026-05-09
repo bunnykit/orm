@@ -79,7 +79,7 @@ export class MorphTo<T extends Model = Model> {
 export class MorphOne<T extends Model = Model> {
   protected builder: Builder<T>;
   protected parent: Model;
-  protected related: typeof Model;
+  protected related: ModelConstructor;
   protected name: string;
   protected typeColumn: string;
   protected idColumn: string;
@@ -87,7 +87,7 @@ export class MorphOne<T extends Model = Model> {
 
   constructor(
     parent: Model,
-    related: typeof Model,
+    related: ModelConstructor,
     name: string,
     typeColumn?: string,
     idColumn?: string,
@@ -167,7 +167,7 @@ export class MorphOne<T extends Model = Model> {
 export class MorphMany<T extends Model = Model> {
   protected builder: Builder<T>;
   protected parent: Model;
-  protected related: typeof Model;
+  protected related: ModelConstructor;
   protected name: string;
   protected typeColumn: string;
   protected idColumn: string;
@@ -175,7 +175,7 @@ export class MorphMany<T extends Model = Model> {
 
   constructor(
     parent: Model,
-    related: typeof Model,
+    related: ModelConstructor,
     name: string,
     typeColumn?: string,
     idColumn?: string,
@@ -256,7 +256,7 @@ export class MorphMany<T extends Model = Model> {
 export class MorphToMany<T extends Model = Model> {
   protected builder: Builder<T>;
   protected parent: Model;
-  protected related: typeof Model;
+  protected related: ModelConstructor;
   protected name: string;
   protected table: string;
   protected foreignPivotKey: string;
@@ -267,7 +267,7 @@ export class MorphToMany<T extends Model = Model> {
 
   constructor(
     parent: Model,
-    related: typeof Model,
+    related: ModelConstructor,
     name: string,
     table?: string,
     foreignPivotKey?: string,

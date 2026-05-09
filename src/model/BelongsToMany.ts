@@ -2,14 +2,14 @@ import { Builder } from "../query/Builder.js";
 import { snakeCase } from "../utils.js";
 import type { Model, ModelConstructor } from "./Model.js";
 
-function defaultPivotTable(parent: Model, related: typeof Model): string {
+function defaultPivotTable(parent: Model, related: ModelConstructor): string {
   const names = [snakeCase(parent.constructor.name), snakeCase(related.name)].sort();
   return `${names[0]}_${names[1]}`;
 }
 
 export class BelongsToMany<T extends Model = Model> {
   protected parent: Model;
-  protected related: typeof Model;
+  protected related: ModelConstructor;
   protected table: string;
   protected foreignPivotKey: string;
   protected relatedPivotKey: string;
@@ -19,7 +19,7 @@ export class BelongsToMany<T extends Model = Model> {
 
   constructor(
     parent: Model,
-    related: typeof Model,
+    related: ModelConstructor,
     table?: string,
     foreignPivotKey?: string,
     relatedPivotKey?: string,
