@@ -160,6 +160,25 @@ export default class CreateEventTestTable extends Migration {
     await unlink(filePath);
     await rm(dumpPath, { force: true });
   });
+
+  test("postgres schema dump parameterizes schema metadata queries", async () => {
+    const postgres = new Connection({ url: "postgres://user:pass@localhost:5432/db", schema: "public'; DROP SCHEMA public; --" });
+    const calls: { sql: string; bindings: any[] }[] = [];
+    postgres.query = async (sql: string, bindings?: any[]) => {
+      calls.push({ sql, bindings: bindings || [] });
+      return [];
+    };
+
+    const dumpPath = join(process.cwd(), "tests", "temp_postgres_schema_dump.sql");
+    const migrator = new Migrator(postgres, TEST_MIGRATIONS_DIR);
+    await migrator.dumpSchema(dumpPath);
+
+    expect(calls[0].sql).toContain("table_schema = $1");
+    expect(calls[0].sql).not.toContain("DROP SCHEMA");
+    expect(calls[0].bindings).toEqual(["public'; DROP SCHEMA public; --"]);
+
+    await rm(dumpPath, { force: true });
+  });
 });
 
 describe("Migrator multi-path support", () => {

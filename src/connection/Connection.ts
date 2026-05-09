@@ -13,6 +13,7 @@ export class Connection {
   private schema?: string;
   private ownsDriver: boolean;
   private transactionDepth = 0;
+  private savepointId = 0;
 
   constructor(config: ConnectionConfig, options: { driver?: SQL; schema?: string; ownsDriver?: boolean } = {}) {
     this.config = config;
@@ -93,18 +94,33 @@ export class Connection {
   }
 
   async beginTransaction(): Promise<void> {
-    await this.driver.unsafe("BEGIN");
+    if (this.transactionDepth === 0) {
+      await this.driver.unsafe("BEGIN");
+    } else {
+      await this.driver.unsafe(`SAVEPOINT bunny_trans_${++this.savepointId}`);
+    }
     this.transactionDepth++;
   }
 
   async commit(): Promise<void> {
-    await this.driver.unsafe("COMMIT");
-    this.transactionDepth = Math.max(0, this.transactionDepth - 1);
+    if (this.transactionDepth <= 0) return;
+    if (this.transactionDepth === 1) {
+      await this.driver.unsafe("COMMIT");
+    } else {
+      await this.driver.unsafe(`RELEASE SAVEPOINT bunny_trans_${this.savepointId--}`);
+    }
+    this.transactionDepth--;
   }
 
   async rollback(): Promise<void> {
-    await this.driver.unsafe("ROLLBACK");
-    this.transactionDepth = Math.max(0, this.transactionDepth - 1);
+    if (this.transactionDepth <= 0) return;
+    if (this.transactionDepth === 1) {
+      await this.driver.unsafe("ROLLBACK");
+    } else {
+      await this.driver.unsafe(`ROLLBACK TO SAVEPOINT bunny_trans_${this.savepointId}`);
+      await this.driver.unsafe(`RELEASE SAVEPOINT bunny_trans_${this.savepointId--}`);
+    }
+    this.transactionDepth--;
   }
 
   isInTransaction(): boolean {

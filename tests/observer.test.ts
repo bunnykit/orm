@@ -6,10 +6,23 @@ class ObservedUser extends Model {
   static table = "observed_users";
 }
 
+class CleanSaveUser extends Model {
+  static table = "clean_save_users";
+}
+
+class UnsavedDeleteUser extends Model {
+  static table = "unsaved_delete_users";
+}
+
 describe("Observers", () => {
   beforeAll(async () => {
     setupTestDb();
     await Schema.create("observed_users", (table) => {
+      table.increments("id");
+      table.string("name");
+      table.timestamps();
+    });
+    await Schema.create("clean_save_users", (table) => {
       table.increments("id");
       table.string("name");
       table.timestamps();
@@ -86,5 +99,47 @@ describe("Observers", () => {
     await user.delete();
     expect(events).toContain("deleting");
     expect(events).toContain("deleted");
+  });
+
+  test("does not fire updating events or touch timestamp when clean model is saved", async () => {
+    const events: string[] = [];
+    ObserverRegistry.register(CleanSaveUser, {
+      saving() {
+        events.push("saving");
+      },
+      updating() {
+        events.push("updating");
+      },
+      updated() {
+        events.push("updated");
+      },
+      saved() {
+        events.push("saved");
+      },
+    });
+
+    const user = await CleanSaveUser.create({ name: "Erin" });
+    const originalUpdatedAt = user.updated_at;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await user.save();
+
+    expect(user.updated_at).toBe(originalUpdatedAt);
+    expect(events).toEqual(["saving", "saved", "saving", "saved"]);
+  });
+
+  test("does not fire delete events for unsaved models", async () => {
+    const events: string[] = [];
+    ObserverRegistry.register(UnsavedDeleteUser, {
+      deleting() {
+        events.push("deleting");
+      },
+      deleted() {
+        events.push("deleted");
+      },
+    });
+
+    const user = new UnsavedDeleteUser({ name: "No row" });
+    expect(await user.delete()).toBe(false);
+    expect(events).toEqual([]);
   });
 });

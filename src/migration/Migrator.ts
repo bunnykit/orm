@@ -241,7 +241,7 @@ export class Migrator {
       const statements: string[] = [];
       for (const row of tables as any[]) {
         const table = row[key];
-        const createRows = await this.connection.query(`SHOW CREATE TABLE ${table}`);
+        const createRows = await this.connection.query(`SHOW CREATE TABLE ${this.connection.getGrammar().wrap(table)}`);
         statements.push(`${createRows[0]["Create Table"]};`);
       }
       return statements.join("\n\n") + "\n";
@@ -249,7 +249,8 @@ export class Migrator {
 
     const schema = this.connection.getSchema() || "public";
     const tables = await this.connection.query(
-      `SELECT table_name FROM information_schema.tables WHERE table_schema = '${schema}' AND table_type = 'BASE TABLE' ORDER BY table_name`
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE' ORDER BY table_name",
+      [schema]
     );
     const statements: string[] = [];
 
@@ -258,8 +259,9 @@ export class Migrator {
       const columns = await this.connection.query(
         `SELECT column_name, data_type, is_nullable, column_default, character_maximum_length, numeric_precision, numeric_scale
          FROM information_schema.columns
-         WHERE table_schema = '${schema}' AND table_name = '${table}'
-         ORDER BY ordinal_position`
+         WHERE table_schema = $1 AND table_name = $2
+         ORDER BY ordinal_position`,
+        [schema, table]
       );
       const primaryKeys = await this.connection.query(
         `SELECT kcu.column_name
@@ -268,10 +270,11 @@ export class Migrator {
            ON tc.constraint_name = kcu.constraint_name
           AND tc.table_schema = kcu.table_schema
           AND tc.table_name = kcu.table_name
-         WHERE tc.table_schema = '${schema}'
-           AND tc.table_name = '${table}'
+         WHERE tc.table_schema = $1
+           AND tc.table_name = $2
            AND tc.constraint_type = 'PRIMARY KEY'
-         ORDER BY kcu.ordinal_position`
+         ORDER BY kcu.ordinal_position`,
+        [schema, table]
       );
       const pkColumns = primaryKeys.map((row: any) => row.column_name);
       const columnSql = columns.map((column: any) => {
@@ -282,15 +285,15 @@ export class Migrator {
           type = `${type}(${column.numeric_precision}${column.numeric_scale ? `, ${column.numeric_scale}` : ""})`;
         }
 
-        let sql = `  "${column.column_name}" ${type}`;
+        let sql = `  ${this.connection.getGrammar().wrap(column.column_name)} ${type}`;
         if (column.is_nullable === "NO") sql += " NOT NULL";
         if (column.column_default !== null && column.column_default !== undefined) sql += ` DEFAULT ${column.column_default}`;
         return sql;
       });
       if (pkColumns.length > 0) {
-        columnSql.push(`  PRIMARY KEY (${pkColumns.map((column: string) => `"${column}"`).join(", ")})`);
+        columnSql.push(`  PRIMARY KEY (${pkColumns.map((column: string) => this.connection.getGrammar().wrap(column)).join(", ")})`);
       }
-      statements.push(`CREATE TABLE "${schema}"."${table}" (\n${columnSql.join(",\n")}\n);`);
+      statements.push(`CREATE TABLE ${this.connection.getGrammar().wrap(`${schema}.${table}`)} (\n${columnSql.join(",\n")}\n);`);
     }
 
     return statements.join("\n\n") + "\n";

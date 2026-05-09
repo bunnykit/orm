@@ -53,6 +53,13 @@ describe("Pagination", () => {
     expect(result.data.length).toBeLessThanOrEqual(5);
   });
 
+  test("paginate total ignores existing limit and offset", async () => {
+    const result = await PUser.query().limit(2).offset(10).paginate(5, 1);
+    expect(result.total).toBe(25);
+    expect(result.data).toHaveLength(5);
+    expect(result.last_page).toBe(5);
+  });
+
   test("paginate empty result", async () => {
     const result = await PUser.where("name", "NonExistent").paginate(10, 1);
     expect(result.data).toHaveLength(0);

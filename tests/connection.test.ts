@@ -46,6 +46,21 @@ describe("Connection", () => {
     expect(rows).toHaveLength(0);
   });
 
+  test("supports nested transactions with savepoints", async () => {
+    const conn = new Connection({ url: "sqlite://:memory:" });
+    await conn.run("CREATE TABLE nested_tx_test (id INTEGER PRIMARY KEY)");
+
+    await conn.beginTransaction();
+    await conn.run("INSERT INTO nested_tx_test (id) VALUES (1)");
+    await conn.beginTransaction();
+    await conn.run("INSERT INTO nested_tx_test (id) VALUES (2)");
+    await conn.rollback();
+    await conn.commit();
+
+    const rows = await conn.query("SELECT * FROM nested_tx_test ORDER BY id");
+    expect(rows.map((row) => row.id)).toEqual([1]);
+  });
+
   test("rejects unsafe PostgreSQL tenant setting names", async () => {
     const conn = new Connection({ url: "postgres://user:pass@localhost:5432/db" });
 

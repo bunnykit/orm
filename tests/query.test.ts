@@ -69,6 +69,32 @@ describe("Query Builder", () => {
     expect(count).toBe(3);
   });
 
+  test("aggregate methods do not mutate selected columns", async () => {
+    const connection = setupTestDb();
+    await connection.run("CREATE TABLE agg_state (id INTEGER PRIMARY KEY, name TEXT)");
+    await connection.run("INSERT INTO agg_state (name) VALUES ('a'), ('b')");
+    const builder = new Builder(connection, "agg_state").where("id", ">", 0);
+
+    expect(await builder.count()).toBe(2);
+    const rows = await builder.get();
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveProperty("name", "a");
+    expect(rows[0]).not.toHaveProperty("count");
+  });
+
+  test("bulk insert requires every record to have the same columns", async () => {
+    const connection = setupTestDb();
+    await connection.run("CREATE TABLE bulk_shape (id INTEGER PRIMARY KEY, name TEXT, email TEXT)");
+
+    await expect(
+      new Builder(connection, "bulk_shape").insert([
+        { name: "Alice" },
+        { name: "Bob", email: "bob@example.com" },
+      ])
+    ).rejects.toThrow("Bulk insert records must have the same columns.");
+  });
+
   test("pluck returns array of values", async () => {
     const connection = setupTestDb();
     await connection.run("CREATE TABLE plk (name TEXT)");

@@ -839,10 +839,15 @@ export class Builder<T = Record<string, any>> {
   }
 
   private async aggregate(sql: string, alias: string): Promise<any> {
-    const model = this.model;
-    this.model = undefined;
-    const result = await this.select(`${sql} as ${alias}`).first();
-    this.model = model;
+    const query = this.clone();
+    query.model = undefined;
+    query.columns = [`${sql} as ${alias}`];
+    query.orders = [];
+    query.limitValue = undefined;
+    query.offsetValue = undefined;
+    query.eagerLoads = [];
+    query.lockMode = undefined;
+    const result = await query.first();
     return result ? (result as any)[alias] : null;
   }
 
@@ -867,7 +872,11 @@ export class Builder<T = Record<string, any>> {
   }
 
   async paginate(perPage: number = 15, page: number = 1): Promise<Paginator<T>> {
-    const total = await this.clone().count();
+    const countQuery = this.clone();
+    countQuery.limitValue = undefined;
+    countQuery.offsetValue = undefined;
+    countQuery.orders = [];
+    const total = await countQuery.count();
     const data = await this.clone().forPage(page, perPage).get();
     return {
       data,
@@ -1007,7 +1016,7 @@ export class Builder<T = Record<string, any>> {
     const records = Array.isArray(data) ? data : [data];
     if (records.length === 0) return;
 
-    const columns = Object.keys(records[0]);
+    const columns = this.getUniformColumns(records);
     const bindings: any[] = [];
     const values = records.map((record) => {
       return `(${columns.map((col) => {
@@ -1029,7 +1038,7 @@ export class Builder<T = Record<string, any>> {
     const records = Array.isArray(data) ? data : [data];
     if (records.length === 0) return;
 
-    const columns = Object.keys(records[0]);
+    const columns = this.getUniformColumns(records);
     const bindings: any[] = [];
     const values = records.map((record) => {
       return `(${columns.map((col) => {
@@ -1050,7 +1059,7 @@ export class Builder<T = Record<string, any>> {
     const records = Array.isArray(data) ? data : [data];
     if (records.length === 0) return;
 
-    const columns = Object.keys(records[0]);
+    const columns = this.getUniformColumns(records);
     const bindings: any[] = [];
     const values = records.map((record) => {
       return `(${columns.map((col) => {
@@ -1070,6 +1079,18 @@ export class Builder<T = Record<string, any>> {
       updateCols
     );
     return await this.connection.run(sql, bindings);
+  }
+
+  private getUniformColumns(records: ModelAttributeInput<T>[]): string[] {
+    const columns = Object.keys(records[0]);
+    const signature = [...columns].sort().join("\0");
+    for (let i = 1; i < records.length; i++) {
+      const recordSignature = Object.keys(records[i]).sort().join("\0");
+      if (recordSignature !== signature) {
+        throw new Error("Bulk insert records must have the same columns.");
+      }
+    }
+    return columns;
   }
 
   async update(data: ModelAttributeInput<T>): Promise<any> {

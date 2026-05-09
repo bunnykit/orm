@@ -10,7 +10,7 @@ export class PostgresGrammar extends Grammar {
       return value.split(".").map((v) => this.wrap(v)).join(".");
     }
     if (value === "*") return value;
-    return `"${value}"`;
+    return `"${value.replaceAll('"', '""')}"`;
   }
 
   placeholder(index: number): string {

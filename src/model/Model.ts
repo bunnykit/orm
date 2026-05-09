@@ -1054,25 +1054,25 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     const constructor = this.constructor as typeof Model;
 
     if (this.$exists) {
-      await ObserverRegistry.dispatch("updating", this);
       await ObserverRegistry.dispatch("saving", this);
 
-      if (constructor.timestamps) {
+      let dirty = this.getDirty();
+      if (Object.keys(dirty).length > 0 && constructor.timestamps) {
         (this.$attributes as any)["updated_at"] = this.freshTimestamp();
+        dirty = this.getDirty();
       }
-
-      const dirty = this.getDirty();
       if (Object.keys(dirty).length > 0) {
+        await ObserverRegistry.dispatch("updating", this);
         const pk = this.getAttribute(constructor.primaryKey);
         const connection = this.getConnection();
         await new Builder(connection, connection.qualifyTable(constructor.getTable()))
           .where(constructor.primaryKey, pk)
           .update(dirty);
+        await ObserverRegistry.dispatch("updated", this);
       }
 
       this.$original = { ...this.$attributes };
 
-      await ObserverRegistry.dispatch("updated", this);
       await ObserverRegistry.dispatch("saved", this);
     } else {
       await ObserverRegistry.dispatch("creating", this);
@@ -1184,10 +1184,9 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
   async delete(): Promise<boolean> {
     const constructor = this.constructor as typeof Model;
-    await ObserverRegistry.dispatch("deleting", this);
-
     const pk = this.getAttribute(constructor.primaryKey);
     if (!pk) return false;
+    await ObserverRegistry.dispatch("deleting", this);
 
     if (constructor.softDeletes) {
       const deletedAt = this.freshTimestamp();
