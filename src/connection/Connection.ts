@@ -130,21 +130,23 @@ export class Connection {
     if (this.transactionDepth <= 0) return;
     if (this.transactionDepth === 1) {
       await this.driver.unsafe("COMMIT");
+      this.transactionDepth = 0;
     } else {
       await this.driver.unsafe(`RELEASE SAVEPOINT bunny_trans_${this.savepointId--}`);
+      this.transactionDepth--;
     }
-    this.transactionDepth--;
   }
 
   async rollback(): Promise<void> {
     if (this.transactionDepth <= 0) return;
     if (this.transactionDepth === 1) {
       await this.driver.unsafe("ROLLBACK");
+      this.transactionDepth = 0;
     } else {
       await this.driver.unsafe(`ROLLBACK TO SAVEPOINT bunny_trans_${this.savepointId}`);
       await this.driver.unsafe(`RELEASE SAVEPOINT bunny_trans_${this.savepointId--}`);
+      this.transactionDepth--;
     }
-    this.transactionDepth--;
   }
 
   isInTransaction(): boolean {
