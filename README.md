@@ -644,10 +644,10 @@ User.where("name", "Alice").dd();     // logs SQL and throws
 | `each(n, fn)`                                              | Per-item iterate                    |
 | `cursor()`                                                 | Lazy async generator                |
 | `lazy(n?)`                                                 | Chunked lazy generator              |
-| `insert(data)`                                             | Insert row(s)                       |
-| `insertGetId(data, col?)`                                  | Insert and return ID                |
-| `insertOrIgnore(data)`                                     | Insert, ignore conflicts            |
-| `upsert(data, uniqueBy, updateCols?)`                      | Insert or update on conflict        |
+| `insert(data, options?)`                                        | Insert row(s) with optional chunking     |
+| `insertGetId(data, col?)`                                       | Insert and return ID                    |
+| `insertOrIgnore(data)`                                          | Insert, ignore conflicts                |
+| `upsert(data, uniqueBy, updateCols?, options?)`                 | Insert or update on conflict, optional chunking |
 | `update(data)`                                             | Update matched rows                 |
 | `updateFrom(tbl, a, op, b)`                                | Update with JOIN                    |
 | `delete()`                                                 | Delete matched rows                 |
@@ -739,10 +739,123 @@ const user = await User.firstOrCreate(
   { email: "alice@example.com" },
   { name: "Alice" },
 );
-const user = await User.updateOrCreate(
+const user = await User.updateOrInsert(
   { email: "alice@example.com" },
   { name: "Alice Smith" },
 );
+
+// Bulk insert / upsert (apply fillable, casts, timestamps, UUID keys)
+await User.insert([
+  { name: "Alice", email: "alice1@example.com" },
+  { name: "Bob", email: "alice2@example.com" },
+], { chunkSize: 100 });
+
+await User.upsert(
+  [{ email: "alice@example.com", name: "Alice Updated" }],
+  "email",
+  ["name"],
+  { chunkSize: 100 },
+);
+
+// Bulk create / save (fire model events by default)
+const users = await User.createMany([
+  { name: "Alice", email: "alice@example.com" },
+  { name: "Bob", email: "bob@example.com" },
+]);
+
+await User.saveMany(users);
+
+// Bypass observers with { events: false }
+await User.createMany(records, { events: false });
+await User.saveMany(models, { events: false });
+model.save({ events: false });
+```
+
+### Bulk Operations
+
+Bunny provides bulk methods for inserting, upserting, and creating multiple records efficiently. All bulk insert and upsert operations apply fillable rules, attribute casts, timestamps, and UUID key generation automatically.
+
+#### Model.insert(records, options?)
+
+Insert raw records with automatic processing. Respects `fillable` guard, applies casts and timestamps, and generates UUID keys for `primaryKey = "uuid"` models.
+
+```ts
+await User.insert([
+  { name: "Alice", email: "alice@example.com" },
+  { name: "Bob", email: "bob@example.com" },
+], { chunkSize: 500 });
+```
+
+`chunkSize` batches large inserts to avoid exceeding query size limits.
+
+#### Model.upsert(records, uniqueBy, updateColumns?, options?)
+
+Insert or update records based on a unique key. On insert: applies fillable, casts, timestamps, and UUID generation. On update: only the specified `updateColumns` are modified.
+
+```ts
+// Insert or update by email, updating only the name
+await User.upsert(
+  [{ email: "alice@example.com", name: "Alice Updated" }],
+  "email",
+  ["name"],
+  { chunkSize: 500 },
+);
+
+// Insert or update by email, updating all columns except the unique key
+await User.upsert(
+  [{ email: "alice@example.com", name: "Alice", active: true }],
+  "email",
+);
+```
+
+#### Model.updateOrInsert(attributes, values)
+
+Find a record by `attributes` and update with `values`, or create a new record if not found. Combines `firstOrCreate` logic with the ability to pass explicit create values.
+
+```ts
+const user = await User.updateOrInsert(
+  { email: "alice@example.com" },
+  { name: "Alice Smith", active: true },
+);
+```
+
+#### Model.createMany(records, options?)
+
+Create multiple model instances with full ORM support. Fires `creating` / `created` observers by default. Pass `{ events: false }` to bypass observers for better performance.
+
+```ts
+const users = await User.createMany([
+  { name: "Alice", email: "alice@example.com" },
+  { name: "Bob", email: "bob@example.com" },
+]);
+
+// Bypass observers for bulk create
+await User.createMany(records, { events: false });
+```
+
+#### Model.saveMany(models, options?)
+
+Persist an array of new or existing model instances. Existing models trigger update observers and update `updated_at`. New models trigger create observers. Auto-increment IDs are preserved when saving new models silently one-by-one where needed. Pass `{ events: false }` to bypass all observers.
+
+```ts
+const users = [
+  new User({ name: "Alice" }),
+  new User({ id: 5, name: "Bob" }), // existing record
+];
+
+await User.saveMany(users);
+
+// Bypass observers for bulk save
+await User.saveMany(models, { events: false });
+```
+
+#### model.save(options?)
+
+Save an existing model instance. Pass `{ events: false }` to bypass `updating` / `updated` observers.
+
+```ts
+user.name = "Charlie";
+await user.save({ events: false });
 ```
 
 ### Default Attributes

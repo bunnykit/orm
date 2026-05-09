@@ -20,6 +20,8 @@ export { Model, HasMany, BelongsTo, HasOne, HasManyThrough, HasOneThrough } from
 export type {
   ModelAttributeInput,
   ModelAttributes,
+  BulkModelOptions,
+  SaveOptions,
   ModelColumn,
   ModelColumnValue,
   ModelConstructor,

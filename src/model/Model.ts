@@ -77,6 +77,13 @@ export type ModelAttributes<T> = T extends { $attributes: Record<string, any> }
 export type ModelColumn<T> = LiteralUnion<Extract<keyof ModelAttributes<T>, string>>;
 export type ModelColumnValue<T, K> = K extends keyof ModelAttributes<T> ? ModelAttributes<T>[K] : any;
 export type ModelAttributeInput<T> = Partial<ModelAttributes<T>> & Record<string, any>;
+export interface BulkModelOptions {
+  chunkSize?: number;
+  events?: boolean;
+}
+export interface SaveOptions {
+  events?: boolean;
+}
 export type ModelRelationValue =
   | Relation<any>
   | MorphTo<any>
@@ -601,6 +608,43 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return !numericTypes.has(type);
   }
 
+  static async prepareBulkRecords<M extends ModelConstructor>(
+    this: M,
+    records: ModelAttributeInput<InstanceType<M>>[]
+  ): Promise<Record<string, any>[]> {
+    const prepared: Record<string, any>[] = [];
+    for (const record of records) {
+      prepared.push(await this.prepareBulkRecord(record));
+    }
+    return prepared;
+  }
+
+  static async prepareBulkRecord<M extends ModelConstructor>(
+    this: M,
+    record: ModelAttributeInput<InstanceType<M>>,
+    options: { touchCreatedAt?: boolean; touchUpdatedAt?: boolean; generatePrimaryKey?: boolean } = {}
+  ): Promise<Record<string, any>> {
+    const instance = new this() as InstanceType<M>;
+    instance.fill(record as any);
+    const attributes = { ...(instance.$attributes as Record<string, any>) };
+
+    if (this.timestamps) {
+      const now = instance.freshTimestamp();
+      if (options.touchCreatedAt !== false && attributes.created_at === undefined) attributes.created_at = now;
+      if (options.touchUpdatedAt !== false && attributes.updated_at === undefined) attributes.updated_at = now;
+    }
+
+    if (options.generatePrimaryKey !== false) {
+      const primaryKey = this.primaryKey;
+      const primaryKeyValue = attributes[primaryKey];
+      if ((primaryKeyValue === null || primaryKeyValue === undefined || primaryKeyValue === "") && await this.shouldAutoGeneratePrimaryKey()) {
+        attributes[primaryKey] = crypto.randomUUID();
+      }
+    }
+
+    return attributes;
+  }
+
   static hydrate<M extends ModelConstructor>(
     this: M,
     row: Record<string, any>,
@@ -622,6 +666,128 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     instance.fill(attributes as any);
     await instance.save();
     return instance;
+  }
+
+  static async insert<M extends ModelConstructor>(
+    this: M,
+    records: ModelAttributeInput<InstanceType<M>> | ModelAttributeInput<InstanceType<M>>[],
+    options: Omit<BulkModelOptions, "events"> = {}
+  ): Promise<any> {
+    const prepared = await this.prepareBulkRecords(Array.isArray(records) ? records : [records]);
+    const chunkSize = options.chunkSize || prepared.length || 1;
+    let result: any;
+    for (let i = 0; i < prepared.length; i += chunkSize) {
+      result = await this.query().insert(prepared.slice(i, i + chunkSize) as any);
+    }
+    return result;
+  }
+
+  static async upsert<M extends ModelConstructor>(
+    this: M,
+    records: ModelAttributeInput<InstanceType<M>> | ModelAttributeInput<InstanceType<M>>[],
+    uniqueBy: ModelColumn<InstanceType<M>> | ModelColumn<InstanceType<M>>[],
+    updateColumns?: ModelColumn<InstanceType<M>>[],
+    options: Omit<BulkModelOptions, "events"> = {}
+  ): Promise<any> {
+    const prepared = await this.prepareBulkRecords(Array.isArray(records) ? records : [records]);
+    const chunkSize = options.chunkSize || prepared.length || 1;
+    let columns = updateColumns;
+    if (!columns && this.timestamps) {
+      const uniqueColumns = new Set(Array.isArray(uniqueBy) ? uniqueBy : [uniqueBy]);
+      columns = Object.keys(prepared[0] || {}).filter((column) => column !== "created_at" && !uniqueColumns.has(column as any)) as any;
+    }
+    let result: any;
+    for (let i = 0; i < prepared.length; i += chunkSize) {
+      result = await this.query().upsert(prepared.slice(i, i + chunkSize) as any, uniqueBy as any, columns as any);
+    }
+    return result;
+  }
+
+  static async updateOrInsert<M extends ModelConstructor>(
+    this: M,
+    attributes: ModelAttributeInput<InstanceType<M>>,
+    values: ModelAttributeInput<InstanceType<M>> = {}
+  ): Promise<boolean> {
+    const existing = await this.where(attributes).first();
+    if (existing) {
+      const update = await this.prepareBulkRecord(values, { touchUpdatedAt: true, touchCreatedAt: false, generatePrimaryKey: false });
+      await this.where(attributes).update(update as any);
+      return true;
+    }
+    await this.insert({ ...attributes, ...values } as any);
+    return true;
+  }
+
+  static async createMany<M extends ModelConstructor>(
+    this: M,
+    records: ModelAttributeInput<InstanceType<M>>[],
+    options: BulkModelOptions = {}
+  ): Promise<InstanceType<M>[]> {
+    const models = records.map((attributes) => new this(attributes) as InstanceType<M>);
+    await this.saveMany(models, options);
+    return models;
+  }
+
+  static async saveMany<M extends ModelConstructor>(
+    this: M,
+    models: InstanceType<M>[],
+    options: BulkModelOptions = {}
+  ): Promise<InstanceType<M>[]> {
+    const chunkSize = options.chunkSize || models.length || 1;
+    const events = options.events !== false;
+    if (events) {
+      for (const model of models) {
+        await model.save();
+      }
+      return models;
+    }
+
+    for (let i = 0; i < models.length; i += chunkSize) {
+      const chunk = models.slice(i, i + chunkSize);
+      const newModels = chunk.filter((model) => !model.$exists);
+      const existingModels = chunk.filter((model) => model.$exists);
+
+      if (newModels.length > 0) {
+        const shouldGeneratePrimaryKey = await this.shouldAutoGeneratePrimaryKey();
+        const bulkModels: InstanceType<M>[] = [];
+        for (const model of newModels) {
+          const pk = model.getAttribute(this.primaryKey);
+          if (!shouldGeneratePrimaryKey && (pk === null || pk === undefined || pk === "")) {
+            const record = await this.prepareBulkRecord(model.$attributes as any);
+            const id = await this.query().insertGetId(record as any);
+            if (id) record[this.primaryKey] = id;
+            model.$attributes = record as any;
+            model.$original = { ...record } as any;
+            model.$exists = true;
+          } else {
+            bulkModels.push(model);
+          }
+        }
+
+        if (bulkModels.length > 0) {
+          const records = await this.prepareBulkRecords(bulkModels.map((model) => model.$attributes as any));
+          await this.query().insert(records as any);
+          for (let index = 0; index < bulkModels.length; index++) {
+            bulkModels[index].$attributes = records[index] as any;
+            bulkModels[index].$original = { ...records[index] } as any;
+            bulkModels[index].$exists = true;
+          }
+        }
+      }
+
+      for (const model of existingModels) {
+        let dirty = model.getDirty();
+        if (Object.keys(dirty).length > 0 && this.timestamps) {
+          (model.$attributes as any).updated_at = model.freshTimestamp();
+          delete model.$castCache.updated_at;
+          dirty = model.getDirty();
+        }
+        if (Object.keys(dirty).length === 0) continue;
+        await this.query().where(this.primaryKey, model.getAttribute(this.primaryKey)).update(dirty as any);
+        model.$original = { ...model.$attributes };
+      }
+    }
+    return models;
   }
 
   static async find<M extends ModelConstructor>(this: M, id: any): Promise<InstanceType<M> | null> {
@@ -1093,11 +1259,12 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return Object.keys(this.getDirty()).length > 0;
   }
 
-  async save(): Promise<this> {
+  async save(options: SaveOptions = {}): Promise<this> {
     const constructor = this.constructor as typeof Model;
+    const events = options.events !== false;
 
     if (this.$exists) {
-      await ObserverRegistry.dispatch("saving", this);
+      if (events) await ObserverRegistry.dispatch("saving", this);
 
       let dirty = this.getDirty();
       if (Object.keys(dirty).length > 0 && constructor.timestamps) {
@@ -1106,21 +1273,21 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
         dirty = this.getDirty();
       }
       if (Object.keys(dirty).length > 0) {
-        await ObserverRegistry.dispatch("updating", this);
+        if (events) await ObserverRegistry.dispatch("updating", this);
         const pk = this.getAttribute(constructor.primaryKey);
         const connection = this.getConnection();
         await new Builder(connection, connection.qualifyTable(constructor.getTable()))
           .where(constructor.primaryKey, pk)
           .update(dirty);
-        await ObserverRegistry.dispatch("updated", this);
+        if (events) await ObserverRegistry.dispatch("updated", this);
       }
 
       this.$original = { ...this.$attributes };
 
-      await ObserverRegistry.dispatch("saved", this);
+      if (events) await ObserverRegistry.dispatch("saved", this);
     } else {
-      await ObserverRegistry.dispatch("creating", this);
-      await ObserverRegistry.dispatch("saving", this);
+      if (events) await ObserverRegistry.dispatch("creating", this);
+      if (events) await ObserverRegistry.dispatch("saving", this);
 
       if (constructor.timestamps) {
         const now = this.freshTimestamp();
@@ -1153,8 +1320,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       this.$exists = true;
       this.$original = { ...this.$attributes };
 
-      await ObserverRegistry.dispatch("created", this);
-      await ObserverRegistry.dispatch("saved", this);
+      if (events) await ObserverRegistry.dispatch("created", this);
+      if (events) await ObserverRegistry.dispatch("saved", this);
     }
 
     const identityMap = IdentityMap.current();
