@@ -54,14 +54,29 @@ export default {
     // password: "secret",
   },
   migrationsPath: ["./database/migrations", "./database/tenant-migrations"],
+  // Optional grouped migrations for multi-tenant apps
+  // migrations: {
+  //   landlord: "./database/landlord-migrations",
+  //   tenant: "./database/tenant-migrations",
+  // },
+  // Optional tenant resolver for dynamic multi-tenant apps.
+  // Apps call configureBunny(config) at startup to register this resolver.
+  // tenancy: {
+  //   resolveTenant: async (tenantId) => ({
+  //     strategy: "database",
+  //     name: `tenant:${tenantId}`,
+  //     config: await getTenantConnectionConfig(tenantId),
+  //   }),
+  //   listTenants: async () => await getAllTenantIds(),
+  // },
   modelsPath: ["./src/models", "./src/admin/models"],
   // Optional legacy type output directory
-  typesOutDir: "./src/generated/model-types",
+  // typesOutDir: "./src/generated/model-types",
   // Optional typegen overrides
-  typeDeclarationImportPrefix: "../models",
-  typeDeclarations: {
-    admin_users: { path: "../AdminAccount", className: "AdminAccount" },
-  },
+  // typeDeclarationImportPrefix: "../models",
+  // typeDeclarations: {
+  //   admin_users: { path: "../AdminAccount", className: "AdminAccount" },
+  // },
 };
 ```
 
@@ -111,6 +126,136 @@ Model.setConnection(connection);
 Schema.setConnection(connection);
 ```
 
+Or apply the same `bunny.config.ts` used by the CLI in your application bootstrap:
+
+```ts
+import config from "../bunny.config";
+import { configureBunny } from "@bunnykit/orm";
+
+const { connection } = configureBunny(config);
+```
+
+### Dynamic Tenant Connections
+
+Use `ConnectionManager` and `TenantContext` when tenants are discovered at runtime instead of listed in config:
+
+```ts
+import { ConnectionManager, TenantContext } from "@bunnykit/orm";
+
+ConnectionManager.setTenantResolver(async (tenantId) => {
+  const tenant = await lookupTenant(tenantId); // your app owns this lookup
+
+  return {
+    strategy: "database",
+    name: `tenant:${tenant.id}`,
+    config: { url: tenant.databaseUrl },
+  };
+});
+
+await TenantContext.run("acme", async () => {
+  const users = await User.all();
+  await Invoice.create({ total: 100 });
+});
+```
+
+You can also define the resolver in `bunny.config.ts` and reuse the same config in your app and CLI:
+
+```ts
+// bunny.config.ts
+export default {
+  connection: { url: process.env.LANDLORD_DATABASE_URL! },
+  tenancy: {
+    resolveTenant: async (tenantId) => ({
+      strategy: "database",
+      name: `tenant:${tenantId}`,
+      config: await getTenantConnectionConfig(tenantId),
+    }),
+    listTenants: async () => await getAllTenantIds(),
+  },
+};
+```
+
+Then register it in app startup:
+
+```ts
+import config from "../bunny.config";
+import { configureBunny } from "@bunnykit/orm";
+
+configureBunny(config);
+```
+
+`configureBunny(config)` registers `tenancy.resolveTenant` for application code automatically. `listTenants()` is only used by the CLI when running grouped tenant migrations.
+
+For PostgreSQL schema-per-tenant systems, return a shared database config plus a schema. PostgreSQL is the only supported driver for ORM-level schema switching; for MySQL and SQLite, use dynamic `strategy: "database"` instead.
+
+```ts
+ConnectionManager.setTenantResolver(async (tenantId) => ({
+  strategy: "schema",
+  name: `tenant:${tenantId}`,
+  config: { url: process.env.DATABASE_URL!, schema: `tenant_${tenantId}` },
+  schema: `tenant_${tenantId}`,
+}));
+```
+
+For PostgreSQL systems that prefer `SET search_path` over table qualification, reuse the existing default connection and opt into transaction-scoped search path switching:
+
+```ts
+ConnectionManager.setTenantResolver(async (tenantId) => ({
+  strategy: "schema",
+  name: `tenant:${tenantId}`,
+  schema: `tenant_${tenantId}`,
+  mode: "search_path",
+}));
+```
+
+`mode: "search_path"` runs the tenant callback inside a PostgreSQL transaction and applies `SET LOCAL search_path`, so the schema switch stays bound to the same database session and is reset when the transaction ends.
+
+For PostgreSQL RLS, return `strategy: "rls"`. The ORM sets a transaction-local tenant variable before running the tenant callback. The setting defaults to `app.tenant_id`, but can be customized:
+
+```ts
+ConnectionManager.setTenantResolver(async (tenantId) => ({
+  strategy: "rls",
+  name: "main",
+  tenantId,
+  setting: "app.current_tenant_id",
+}));
+```
+
+Your PostgreSQL policies should read the same setting, for example `current_setting('app.current_tenant_id')`.
+
+Resolved tenants are cached. Use `await ConnectionManager.resolveTenant("acme")` to preload a tenant, `User.forTenant("acme")` for an already resolved tenant, and `ConnectionManager.purgeTenant("acme")` when tenant connection metadata changes.
+
+### Landlord and Tenant Migrations
+
+For multi-tenant apps, use grouped migrations so landlord tables and tenant tables can be migrated separately:
+
+```ts
+export default {
+  connection: { url: process.env.LANDLORD_DATABASE_URL! },
+  migrations: {
+    landlord: ["./database/landlord-migrations", "./modules/billing/migrations"],
+    tenant: ["./database/tenant-migrations", "./modules/tenant-features/migrations"],
+  },
+  tenancy: {
+    resolveTenant: async (tenantId) => ({
+      strategy: "database",
+      name: `tenant:${tenantId}`,
+      config: await getTenantConnectionConfig(tenantId),
+    }),
+    listTenants: async () => await getAllTenantIds(),
+  },
+};
+```
+
+With grouped migrations, `bun run bunny migrate` runs landlord migrations first, then tenant migrations for every tenant returned by `listTenants()`. Rollback runs in reverse order: tenants first, then landlord.
+
+```bash
+bun run bunny migrate
+bun run bunny migrate --landlord
+bun run bunny migrate --tenants
+bun run bunny migrate --tenant acme
+```
+
 ### Create Tables
 
 ```ts
@@ -142,9 +287,7 @@ const user = await User.create({ name: "Alice", email: "alice@example.com" });
 const found = await User.find(1);
 
 // Query
-const adults = await User.where("age", ">=", 18)
-  .orderBy("name")
-  .get();
+const adults = await User.where("age", ">=", 18).orderBy("name").get();
 
 // Update
 user.name = "Alice Smith";
@@ -187,37 +330,37 @@ await Schema.create("products", (table) => {
 
 ### Available Column Types
 
-| Method | Description |
-|--------|-------------|
-| `increments(name)` | Auto-incrementing integer primary key |
-| `bigIncrements(name)` | Auto-incrementing big integer |
-| `string(name, length=255)` | VARCHAR |
-| `text(name)` | TEXT |
-| `integer(name)` | INTEGER |
-| `bigInteger(name)` | BIGINT |
-| `smallInteger(name)` | SMALLINT |
-| `tinyInteger(name)` | TINYINT |
-| `float(name, p=8, s=2)` | FLOAT |
-| `double(name, p=8, s=2)` | DOUBLE |
-| `decimal(name, p=8, s=2)` | DECIMAL |
-| `boolean(name)` | BOOLEAN |
-| `date(name)` | DATE |
-| `dateTime(name)` | DATETIME |
-| `time(name)` | TIME |
-| `timestamp(name)` | TIMESTAMP |
-| `json(name)` | JSON |
-| `jsonb(name)` | JSONB (Postgres) |
-| `binary(name)` | BLOB / BYTEA |
-| `uuid(name)` | UUID |
-| `enum(name, values)` | ENUM |
+| Method                     | Description                           |
+| -------------------------- | ------------------------------------- |
+| `increments(name)`         | Auto-incrementing integer primary key |
+| `bigIncrements(name)`      | Auto-incrementing big integer         |
+| `string(name, length=255)` | VARCHAR                               |
+| `text(name)`               | TEXT                                  |
+| `integer(name)`            | INTEGER                               |
+| `bigInteger(name)`         | BIGINT                                |
+| `smallInteger(name)`       | SMALLINT                              |
+| `tinyInteger(name)`        | TINYINT                               |
+| `float(name, p=8, s=2)`    | FLOAT                                 |
+| `double(name, p=8, s=2)`   | DOUBLE                                |
+| `decimal(name, p=8, s=2)`  | DECIMAL                               |
+| `boolean(name)`            | BOOLEAN                               |
+| `date(name)`               | DATE                                  |
+| `dateTime(name)`           | DATETIME                              |
+| `time(name)`               | TIME                                  |
+| `timestamp(name)`          | TIMESTAMP                             |
+| `json(name)`               | JSON                                  |
+| `jsonb(name)`              | JSONB (Postgres)                      |
+| `binary(name)`             | BLOB / BYTEA                          |
+| `uuid(name)`               | UUID                                  |
+| `enum(name, values)`       | ENUM                                  |
 
 ### Column Modifiers
 
 ```ts
-table.string("email").unique();     // UNIQUE index
-table.string("slug").index();       // INDEX
-table.string("name").nullable();    // NULLABLE
-table.integer("role").default(1);   // DEFAULT value
+table.string("email").unique(); // UNIQUE index
+table.string("slug").index(); // INDEX
+table.string("name").nullable(); // NULLABLE
+table.integer("role").default(1); // DEFAULT value
 table.string("code").comment("SKU code");
 table.integer("user_id").unsigned();
 ```
@@ -355,120 +498,120 @@ User.where("name", "Alice").dd();     // logs SQL and throws
 
 ### Query Builder Reference
 
-| Method | Description |
-|--------|-------------|
-| `where(col, op, val)` | Basic equality or operator filter |
-| `where(obj)` | Object of column → value pairs |
-| `where(fn)` | Nested where group via closure |
-| `orWhere(...)` | OR variant of `where` |
-| `whereNot(col, val)` | `!=` filter |
-| `orWhereNot(...)` | OR `!=` |
-| `whereIn(col, vals)` | `IN` set |
-| `orWhereIn(...)` | OR `IN` |
-| `whereNotIn(col, vals)` | `NOT IN` |
-| `orWhereNotIn(...)` | OR `NOT IN` |
-| `whereNull(col)` | `IS NULL` |
-| `orWhereNull(...)` | OR `IS NULL` |
-| `whereNotNull(col)` | `IS NOT NULL` |
-| `orWhereNotNull(...)` | OR `IS NOT NULL` |
-| `whereBetween(col, [a, b])` | `BETWEEN` |
-| `orWhereBetween(...)` | OR `BETWEEN` |
-| `whereNotBetween(col, [a, b])` | `NOT BETWEEN` |
-| `orWhereNotBetween(...)` | OR `NOT BETWEEN` |
-| `whereExists(sql)` | `EXISTS (subquery)` |
-| `orWhereExists(...)` | OR `EXISTS` |
-| `whereNotExists(sql)` | `NOT EXISTS` |
-| `orWhereNotExists(...)` | OR `NOT EXISTS` |
-| `whereColumn(a, op, b)` | Compare two columns |
-| `orWhereColumn(...)` | OR column compare |
-| `whereRaw(sql)` | Raw SQL where clause |
-| `orWhereRaw(...)` | OR raw SQL |
-| `whereDate(col, op, val)` | Cross-database date filter |
-| `whereDay / whereMonth / whereYear / whereTime` | Date part filters |
-| `whereJsonContains(col, val)` | JSON membership (cross-db) |
-| `whereJsonLength(col, op, val)` | JSON array length |
-| `whereLike(col, pattern)` | `LIKE` pattern |
-| `whereNotLike(...)` | `NOT LIKE` |
-| `whereRegexp(col, pattern)` | Regular expression match |
-| `whereFullText(cols, query)` | Full-text search (cross-db) |
-| `whereAll(cols, op, val)` | Multi-column `AND` |
-| `whereAny(cols, op, val)` | Multi-column `OR` |
-| `orderBy(col, dir)` | Sort ascending or descending |
-| `orderByDesc(col)` | Sort descending shorthand |
-| `latest(col?)` | `orderBy(created_at, desc)` |
-| `oldest(col?)` | `orderBy(created_at, asc)` |
-| `inRandomOrder()` | `ORDER BY RANDOM()` / `RAND()` |
-| `reorder(col?, dir?)` | Clear and optionally replace orders |
-| `groupBy(...cols)` | `GROUP BY` |
-| `having(col, op, val)` | `HAVING` filter |
-| `orHaving(...)` | OR `HAVING` |
-| `havingRaw(sql)` | Raw `HAVING` |
-| `orHavingRaw(...)` | OR raw `HAVING` |
-| `join(tbl, a, op, b)` | `INNER JOIN` |
-| `leftJoin(...)` | `LEFT JOIN` |
-| `rightJoin(...)` | `RIGHT JOIN` |
-| `crossJoin(tbl)` | `CROSS JOIN` |
-| `union(query, all?)` | `UNION` another query |
-| `unionAll(query)` | `UNION ALL` |
-| `select(...cols)` | Choose columns |
-| `addSelect(...cols)` | Append columns |
-| `selectRaw(sql)` | Raw SELECT expression |
-| `fromSub(query, alias)` | Derived table from subquery |
-| `distinct()` | `SELECT DISTINCT` |
-| `limit(n)` | Row limit |
-| `offset(n)` | Row offset |
-| `take(n)` | Alias for `limit` |
-| `skip(n)` | Alias for `offset` |
-| `forPage(page, perPage)` | Pagination offset/limit |
-| `lockForUpdate()` | `FOR UPDATE` (MySQL/Postgres) |
-| `sharedLock()` | `LOCK IN SHARE MODE` / `FOR SHARE` |
-| `skipLocked()` | Append `SKIP LOCKED` |
-| `noWait()` | Append `NOWAIT` |
-| `get()` | Fetch all rows |
-| `first()` | Fetch first row |
-| `find(id, col?)` | Find by ID |
-| `findOrFail(id, col?)` | Find or throw |
-| `firstOrFail()` | First or throw |
-| `sole()` | Exactly one row or throw |
-| `value(col)` | Single scalar from first row |
-| `pluck(col)` | Array of column values |
-| `count(col?)` | `COUNT` aggregate |
-| `sum(col)` | `SUM` |
-| `avg(col)` | `AVG` |
-| `min(col)` | `MIN` |
-| `max(col)` | `MAX` |
-| `exists()` | Check any rows exist |
-| `doesntExist()` | Check no rows exist |
-| `paginate(perPage?, page?)` | Paginated result set |
-| `chunk(n, fn)` | Batch iterate |
-| `each(n, fn)` | Per-item iterate |
-| `cursor()` | Lazy async generator |
-| `lazy(n?)` | Chunked lazy generator |
-| `insert(data)` | Insert row(s) |
-| `insertGetId(data, col?)` | Insert and return ID |
-| `insertOrIgnore(data)` | Insert, ignore conflicts |
-| `upsert(data, uniqueBy, updateCols?)` | Insert or update on conflict |
-| `update(data)` | Update matched rows |
-| `updateFrom(tbl, a, op, b)` | Update with JOIN |
-| `delete()` | Delete matched rows |
-| `increment(col, amt?, extra?)` | Add to column |
-| `decrement(col, amt?, extra?)` | Subtract from column |
-| `restore()` | Restore soft-deleted rows |
-| `with(...rels)` | Eager load relations |
-| `has(rel)` / `orHas(rel)` | Relation existence |
-| `whereHas(rel, fn?)` / `orWhereHas(...)` | Filtered relation existence |
-| `doesntHave(rel)` / `whereDoesntHave(...)` | Relation absence |
-| `withCount(rel)` / `withSum / withAvg / withMin / withMax` | Relation aggregates |
-| `scope(name, ...args)` | Apply local scope |
-| `withoutGlobalScope(name)` / `withoutGlobalScopes()` | Remove scopes |
-| `withTrashed()` / `onlyTrashed()` | Soft delete visibility |
-| `when(cond, fn, elseFn?)` / `unless(...)` | Conditional building |
-| `tap(fn)` | Mutate and return |
-| `clone()` | Copy builder state |
-| `toSql()` | Compile to SQL string |
-| `dump()` | Log SQL, return builder |
-| `dd()` | Log SQL and halt |
-| `explain()` | Return query plan |
+| Method                                                     | Description                         |
+| ---------------------------------------------------------- | ----------------------------------- |
+| `where(col, op, val)`                                      | Basic equality or operator filter   |
+| `where(obj)`                                               | Object of column → value pairs      |
+| `where(fn)`                                                | Nested where group via closure      |
+| `orWhere(...)`                                             | OR variant of `where`               |
+| `whereNot(col, val)`                                       | `!=` filter                         |
+| `orWhereNot(...)`                                          | OR `!=`                             |
+| `whereIn(col, vals)`                                       | `IN` set                            |
+| `orWhereIn(...)`                                           | OR `IN`                             |
+| `whereNotIn(col, vals)`                                    | `NOT IN`                            |
+| `orWhereNotIn(...)`                                        | OR `NOT IN`                         |
+| `whereNull(col)`                                           | `IS NULL`                           |
+| `orWhereNull(...)`                                         | OR `IS NULL`                        |
+| `whereNotNull(col)`                                        | `IS NOT NULL`                       |
+| `orWhereNotNull(...)`                                      | OR `IS NOT NULL`                    |
+| `whereBetween(col, [a, b])`                                | `BETWEEN`                           |
+| `orWhereBetween(...)`                                      | OR `BETWEEN`                        |
+| `whereNotBetween(col, [a, b])`                             | `NOT BETWEEN`                       |
+| `orWhereNotBetween(...)`                                   | OR `NOT BETWEEN`                    |
+| `whereExists(sql)`                                         | `EXISTS (subquery)`                 |
+| `orWhereExists(...)`                                       | OR `EXISTS`                         |
+| `whereNotExists(sql)`                                      | `NOT EXISTS`                        |
+| `orWhereNotExists(...)`                                    | OR `NOT EXISTS`                     |
+| `whereColumn(a, op, b)`                                    | Compare two columns                 |
+| `orWhereColumn(...)`                                       | OR column compare                   |
+| `whereRaw(sql)`                                            | Raw SQL where clause                |
+| `orWhereRaw(...)`                                          | OR raw SQL                          |
+| `whereDate(col, op, val)`                                  | Cross-database date filter          |
+| `whereDay / whereMonth / whereYear / whereTime`            | Date part filters                   |
+| `whereJsonContains(col, val)`                              | JSON membership (cross-db)          |
+| `whereJsonLength(col, op, val)`                            | JSON array length                   |
+| `whereLike(col, pattern)`                                  | `LIKE` pattern                      |
+| `whereNotLike(...)`                                        | `NOT LIKE`                          |
+| `whereRegexp(col, pattern)`                                | Regular expression match            |
+| `whereFullText(cols, query)`                               | Full-text search (cross-db)         |
+| `whereAll(cols, op, val)`                                  | Multi-column `AND`                  |
+| `whereAny(cols, op, val)`                                  | Multi-column `OR`                   |
+| `orderBy(col, dir)`                                        | Sort ascending or descending        |
+| `orderByDesc(col)`                                         | Sort descending shorthand           |
+| `latest(col?)`                                             | `orderBy(created_at, desc)`         |
+| `oldest(col?)`                                             | `orderBy(created_at, asc)`          |
+| `inRandomOrder()`                                          | `ORDER BY RANDOM()` / `RAND()`      |
+| `reorder(col?, dir?)`                                      | Clear and optionally replace orders |
+| `groupBy(...cols)`                                         | `GROUP BY`                          |
+| `having(col, op, val)`                                     | `HAVING` filter                     |
+| `orHaving(...)`                                            | OR `HAVING`                         |
+| `havingRaw(sql)`                                           | Raw `HAVING`                        |
+| `orHavingRaw(...)`                                         | OR raw `HAVING`                     |
+| `join(tbl, a, op, b)`                                      | `INNER JOIN`                        |
+| `leftJoin(...)`                                            | `LEFT JOIN`                         |
+| `rightJoin(...)`                                           | `RIGHT JOIN`                        |
+| `crossJoin(tbl)`                                           | `CROSS JOIN`                        |
+| `union(query, all?)`                                       | `UNION` another query               |
+| `unionAll(query)`                                          | `UNION ALL`                         |
+| `select(...cols)`                                          | Choose columns                      |
+| `addSelect(...cols)`                                       | Append columns                      |
+| `selectRaw(sql)`                                           | Raw SELECT expression               |
+| `fromSub(query, alias)`                                    | Derived table from subquery         |
+| `distinct()`                                               | `SELECT DISTINCT`                   |
+| `limit(n)`                                                 | Row limit                           |
+| `offset(n)`                                                | Row offset                          |
+| `take(n)`                                                  | Alias for `limit`                   |
+| `skip(n)`                                                  | Alias for `offset`                  |
+| `forPage(page, perPage)`                                   | Pagination offset/limit             |
+| `lockForUpdate()`                                          | `FOR UPDATE` (MySQL/Postgres)       |
+| `sharedLock()`                                             | `LOCK IN SHARE MODE` / `FOR SHARE`  |
+| `skipLocked()`                                             | Append `SKIP LOCKED`                |
+| `noWait()`                                                 | Append `NOWAIT`                     |
+| `get()`                                                    | Fetch all rows                      |
+| `first()`                                                  | Fetch first row                     |
+| `find(id, col?)`                                           | Find by ID                          |
+| `findOrFail(id, col?)`                                     | Find or throw                       |
+| `firstOrFail()`                                            | First or throw                      |
+| `sole()`                                                   | Exactly one row or throw            |
+| `value(col)`                                               | Single scalar from first row        |
+| `pluck(col)`                                               | Array of column values              |
+| `count(col?)`                                              | `COUNT` aggregate                   |
+| `sum(col)`                                                 | `SUM`                               |
+| `avg(col)`                                                 | `AVG`                               |
+| `min(col)`                                                 | `MIN`                               |
+| `max(col)`                                                 | `MAX`                               |
+| `exists()`                                                 | Check any rows exist                |
+| `doesntExist()`                                            | Check no rows exist                 |
+| `paginate(perPage?, page?)`                                | Paginated result set                |
+| `chunk(n, fn)`                                             | Batch iterate                       |
+| `each(n, fn)`                                              | Per-item iterate                    |
+| `cursor()`                                                 | Lazy async generator                |
+| `lazy(n?)`                                                 | Chunked lazy generator              |
+| `insert(data)`                                             | Insert row(s)                       |
+| `insertGetId(data, col?)`                                  | Insert and return ID                |
+| `insertOrIgnore(data)`                                     | Insert, ignore conflicts            |
+| `upsert(data, uniqueBy, updateCols?)`                      | Insert or update on conflict        |
+| `update(data)`                                             | Update matched rows                 |
+| `updateFrom(tbl, a, op, b)`                                | Update with JOIN                    |
+| `delete()`                                                 | Delete matched rows                 |
+| `increment(col, amt?, extra?)`                             | Add to column                       |
+| `decrement(col, amt?, extra?)`                             | Subtract from column                |
+| `restore()`                                                | Restore soft-deleted rows           |
+| `with(...rels)`                                            | Eager load relations                |
+| `has(rel)` / `orHas(rel)`                                  | Relation existence                  |
+| `whereHas(rel, fn?)` / `orWhereHas(...)`                   | Filtered relation existence         |
+| `doesntHave(rel)` / `whereDoesntHave(...)`                 | Relation absence                    |
+| `withCount(rel)` / `withSum / withAvg / withMin / withMax` | Relation aggregates                 |
+| `scope(name, ...args)`                                     | Apply local scope                   |
+| `withoutGlobalScope(name)` / `withoutGlobalScopes()`       | Remove scopes                       |
+| `withTrashed()` / `onlyTrashed()`                          | Soft delete visibility              |
+| `when(cond, fn, elseFn?)` / `unless(...)`                  | Conditional building                |
+| `tap(fn)`                                                  | Mutate and return                   |
+| `clone()`                                                  | Copy builder state                  |
+| `toSql()`                                                  | Compile to SQL string               |
+| `dump()`                                                   | Log SQL, return builder             |
+| `dd()`                                                     | Log SQL and halt                    |
+| `explain()`                                                | Return query plan                   |
 
 ---
 
@@ -486,10 +629,10 @@ User.where("name", "Alice").dd();     // logs SQL and throws
 
 ```ts
 class Product extends Model {
-  static table = "products";       // override table name
-  static primaryKey = "sku";       // override primary key
-  static timestamps = false;        // disable timestamps
-  static softDeletes = true;        // use deleted_at instead of hard deletes
+  static table = "products"; // override table name
+  static primaryKey = "sku"; // override primary key
+  static timestamps = false; // disable timestamps
+  static softDeletes = true; // use deleted_at instead of hard deletes
 
   static attributes = {
     active: true,
@@ -516,18 +659,18 @@ const builder = User.where("active", true);
 
 // Instance
 user.fill({ name: "Bob", email: "bob@example.com" });
-user.name;                 // property access
-user.name = "Charlie";     // property assignment
+user.name; // property access
+user.name = "Charlie"; // property assignment
 user.getAttribute("name"); // explicit access still works
 user.setAttribute("name", "Dana");
-user.isDirty();           // true if attributes changed
-user.getDirty();          // { name: "Charlie" }
+user.isDirty(); // true if attributes changed
+user.getDirty(); // { name: "Charlie" }
 await user.save();
 await user.delete();
 await user.refresh();
-await user.touch();       // update only timestamps
+await user.touch(); // update only timestamps
 await user.load("posts"); // lazy eager loading
-user.toJSON();            // plain object
+user.toJSON(); // plain object
 
 // Increment / Decrement
 await user.increment("login_count");
@@ -535,8 +678,14 @@ await user.increment("login_count", 5, { last_login_at: new Date() });
 await user.decrement("stock", 10);
 
 // First-or-Create / Update-or-Create
-const user = await User.firstOrCreate({ email: "alice@example.com" }, { name: "Alice" });
-const user = await User.updateOrCreate({ email: "alice@example.com" }, { name: "Alice Smith" });
+const user = await User.firstOrCreate(
+  { email: "alice@example.com" },
+  { name: "Alice" },
+);
+const user = await User.updateOrCreate(
+  { email: "alice@example.com" },
+  { name: "Alice Smith" },
+);
 ```
 
 ### Default Attributes
@@ -553,7 +702,7 @@ class User extends Model {
 
 const user = new User({ name: "Ada" });
 user.active; // true
-user.role;   // "member"
+user.role; // "member"
 ```
 
 These are model defaults, not database defaults. Values provided by the caller override them.
@@ -578,23 +727,23 @@ const user = new User({
   settings: { theme: "dark" },
 });
 
-user.$attributes.active;   // 1
-user.active;               // true
-user.settings.theme;       // "dark"
+user.$attributes.active; // 1
+user.active; // true
+user.settings.theme; // "dark"
 ```
 
 Supported built-in casts:
 
-| Cast | Behavior |
-|------|----------|
-| `boolean`, `bool` | Stores `1` / `0`, reads boolean |
-| `number`, `integer`, `int`, `float`, `double` | Reads/writes numbers |
-| `decimal:2` | Stores fixed precision string |
-| `string` | Reads/writes string |
-| `date`, `datetime` | Reads as `Date`, stores ISO string for `Date` input |
-| `json`, `array`, `object` | Stores JSON string, reads parsed value |
-| `enum` | Stores enum `.value` when present |
-| `encrypted` | Base64 encodes on write and decodes on read |
+| Cast                                          | Behavior                                            |
+| --------------------------------------------- | --------------------------------------------------- |
+| `boolean`, `bool`                             | Stores `1` / `0`, reads boolean                     |
+| `number`, `integer`, `int`, `float`, `double` | Reads/writes numbers                                |
+| `decimal:2`                                   | Stores fixed precision string                       |
+| `string`                                      | Reads/writes string                                 |
+| `date`, `datetime`                            | Reads as `Date`, stores ISO string for `Date` input |
+| `json`, `array`, `object`                     | Stores JSON string, reads parsed value              |
+| `enum`                                        | Stores enum `.value` when present                   |
+| `encrypted`                                   | Base64 encodes on write and decodes on read         |
 
 Custom casts can implement `CastsAttributes`:
 
@@ -633,13 +782,13 @@ class User extends Model {
   static softDeletes = true;
 }
 
-await user.delete();       // sets deleted_at
-await user.restore();      // clears deleted_at
-await user.forceDelete();  // permanently deletes
+await user.delete(); // sets deleted_at
+await user.restore(); // clears deleted_at
+await user.forceDelete(); // permanently deletes
 
-await User.all();                  // excludes trashed rows
-await User.withTrashed().get();    // includes trashed rows
-await User.onlyTrashed().get();    // only trashed rows
+await User.all(); // excludes trashed rows
+await User.withTrashed().get(); // includes trashed rows
+await User.onlyTrashed().get(); // only trashed rows
 await User.onlyTrashed().restore();
 ```
 
@@ -677,17 +826,17 @@ await User.withoutGlobalScopes().get();
 ```ts
 class User extends Model {
   posts() {
-    return this.hasMany(Post);           // foreignKey: user_id, localKey: id
+    return this.hasMany(Post); // foreignKey: user_id, localKey: id
   }
 
   profile() {
-    return this.hasOne(Profile);         // foreignKey: user_id, localKey: id
+    return this.hasOne(Profile); // foreignKey: user_id, localKey: id
   }
 }
 
 class Post extends Model {
   author() {
-    return this.belongsTo(User);         // foreignKey: user_id, ownerKey: id
+    return this.belongsTo(User); // foreignKey: user_id, ownerKey: id
   }
 }
 ```
@@ -783,8 +932,7 @@ const usersWithoutPosts = await User.doesntHave("posts").get();
 Add relation aggregate columns:
 
 ```ts
-const users = await User
-  .withCount("posts")
+const users = await User.withCount("posts")
   .withSum("posts", "views")
   .withAvg("posts", "score")
   .withMin("posts", "created_at")
@@ -806,7 +954,7 @@ MorphMap.register("Video", Video);
 
 class Comment extends Model {
   commentable() {
-    return this.morphTo("commentable");  // reads commentable_type / commentable_id
+    return this.morphTo("commentable"); // reads commentable_type / commentable_id
   }
 }
 
@@ -849,7 +997,7 @@ Pivot table: `taggables(tag_id, taggable_id, taggable_type)`.
 
 ```ts
 class Post extends Model {
-  static morphName = "post";   // stored in {name}_type column
+  static morphName = "post"; // stored in {name}_type column
 }
 ```
 
@@ -1010,8 +1158,8 @@ Bunny can introspect your database schema and generate TypeScript declaration fi
 
 ```ts
 const user = await User.first();
-user.name;        // ✅ autocomplete + type-checking
-user.email = "a@example.com";  // ✅ typed setter
+user.name; // ✅ autocomplete + type-checking
+user.email = "a@example.com"; // ✅ typed setter
 ```
 
 ### Generate Types
@@ -1047,9 +1195,9 @@ export default {
 
 With `modelsPath`, Bunny conventionally maps tables to singular PascalCase model modules and writes the generated declarations into `types/` beside each model root:
 
-| Table | Generated augmentation |
-|-------|------------------------|
-| `users` | `../User` / `User` |
+| Table        | Generated augmentation     |
+| ------------ | -------------------------- |
+| `users`      | `../User` / `User`         |
 | `blog_posts` | `../BlogPost` / `BlogPost` |
 | `categories` | `../Category` / `Category` |
 
@@ -1110,7 +1258,7 @@ class User extends Model<UserAttributes> {
 // $attributes and getAttribute are now typed
 const user = await User.first();
 user.getAttribute("name"); // string
-user.$attributes.email;    // string
+user.$attributes.email; // string
 ```
 
 ---
@@ -1123,7 +1271,7 @@ Bunny includes a full test suite built with `bun:test`.
 bun test
 ```
 
-195 tests covering connection management, schema grammars, query builder, model CRUD, casts, scopes, soft deletes, relations, observers, migrations, type generation, lazy eager loading, find-or-fail, first-or-create, increment/decrement, touch, chunk/cursor/lazy streaming, date where clauses, conditional query building, whereNot, latest/oldest, or* where variants, having/orHaving, orderByDesc/reorder, crossJoin, union, insertOrIgnore, upsert, delete with limit, skipLocked/noWait, JSON where clauses, like/regexp/fulltext, whereAll/whereAny, sole/value, selectRaw/fromSub, updateFrom, dump/dd, and explain.
+195 tests covering connection management, schema grammars, query builder, model CRUD, casts, scopes, soft deletes, relations, observers, migrations, type generation, lazy eager loading, find-or-fail, first-or-create, increment/decrement, touch, chunk/cursor/lazy streaming, date where clauses, conditional query building, whereNot, latest/oldest, or\* where variants, having/orHaving, orderByDesc/reorder, crossJoin, union, insertOrIgnore, upsert, delete with limit, skipLocked/noWait, JSON where clauses, like/regexp/fulltext, whereAll/whereAny, sole/value, selectRaw/fromSub, updateFrom, dump/dd, and explain.
 
 ---
 

@@ -7,6 +7,8 @@ import { MorphTo, MorphOne, MorphMany, MorphToMany } from "./MorphRelations.js";
 import { BelongsToMany } from "./BelongsToMany.js";
 import { Schema } from "../schema/Schema.js";
 import { ModelNotFoundError } from "./ModelNotFoundError.js";
+import { ConnectionManager } from "../connection/ConnectionManager.js";
+import { TenantContext } from "../connection/TenantContext.js";
 
 export type ModelConstructor<T extends Model = Model> = typeof Model & (new (...args: any[]) => T);
 export type GlobalScope = (builder: Builder<any>, model: typeof Model) => void;
@@ -49,7 +51,7 @@ export abstract class Relation<T extends Model = Model> {
   constructor(parent: Model, related: typeof Model, foreignKey?: string, localKey?: string) {
     this.parent = parent;
     this.related = related;
-    this.builder = (related as any).query();
+    this.builder = (related as any).on(parent.getConnection());
     this.foreignKey = foreignKey || this.defaultForeignKey();
     this.localKey = localKey || related.primaryKey;
   }
@@ -73,7 +75,7 @@ export abstract class Relation<T extends Model = Model> {
   }
 
   protected newExistenceQuery(parentQuery: Builder<any>, aggregate: string, callback?: (query: Builder<any>) => void | Builder<any>): Builder<any> {
-    const query = (this.related as any).query().select(aggregate);
+    const query = (this.related as any).on(parentQuery.connection).select(aggregate);
     query.whereColumn(`${this.related.getTable()}.${this.foreignKey}`, "=", `${parentQuery.tableName}.${this.localKey}`);
     if (callback) callback(query);
     return query;
@@ -106,7 +108,7 @@ export class HasMany<T extends Model = Model> extends Relation<T> {
   }
 
   addEagerConstraints(models: Model[]): void {
-    this.builder = (this.related as any).query();
+    this.builder = (this.related as any).on(this.parent.getConnection());
     const keys = models.map((m) => m.getAttribute(this.localKey));
     this.builder.whereIn(this.foreignKey, keys);
   }
@@ -161,7 +163,7 @@ export class BelongsTo<T extends Model = Model> extends Relation<T> {
   }
 
   addEagerConstraints(models: Model[]): void {
-    this.builder = (this.related as any).query();
+    this.builder = (this.related as any).on(this.parent.getConnection());
     const keys = models.map((m) => m.getAttribute(this.foreignKey));
     this.builder.whereIn(this.localKey, keys);
   }
@@ -198,7 +200,7 @@ export class BelongsTo<T extends Model = Model> extends Relation<T> {
   }
 
   protected newExistenceQuery(parentQuery: Builder<any>, aggregate: string, callback?: (query: Builder<any>) => void | Builder<any>): Builder<any> {
-    const query = (this.related as any).query().select(aggregate);
+    const query = (this.related as any).on(parentQuery.connection).select(aggregate);
     query.whereColumn(`${this.related.getTable()}.${this.localKey}`, "=", `${parentQuery.tableName}.${this.foreignKey}`);
     if (callback) callback(query);
     return query;
@@ -246,7 +248,7 @@ export class HasManyThrough<T extends Model = Model> extends Relation<T> {
     const throughTable = this.through.getTable();
     const relatedTable = this.related.getTable();
     const keys = models.map((m) => m.getAttribute(this.localKey));
-    this.builder = (this.related as any).query();
+    this.builder = (this.related as any).on(this.parent.getConnection());
     this.builder.select(`${relatedTable}.*`, `${throughTable}.${this.firstKey}`);
     this.builder.join(
       throughTable,
@@ -282,7 +284,7 @@ export class HasManyThrough<T extends Model = Model> extends Relation<T> {
   protected newExistenceQuery(parentQuery: Builder<any>, aggregate: string, callback?: (query: Builder<any>) => void | Builder<any>): Builder<any> {
     const throughTable = this.through.getTable();
     const relatedTable = this.related.getTable();
-    const query = (this.related as any).query().select(aggregate);
+    const query = (this.related as any).on(parentQuery.connection).select(aggregate);
     query.join(
       throughTable,
       `${throughTable}.${this.secondLocalKey}`,
@@ -328,7 +330,7 @@ export class HasOne<T extends Model = Model> extends Relation<T> {
   }
 
   addEagerConstraints(models: Model[]): void {
-    this.builder = (this.related as any).query();
+    this.builder = (this.related as any).on(this.parent.getConnection());
     const keys = models.map((m) => m.getAttribute(this.localKey));
     this.builder.whereIn(this.foreignKey, keys);
   }
@@ -376,6 +378,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   $exists = false;
   $relations: Record<string, any> = {};
   $casts: Record<string, CastDefinition> = {};
+  $connection?: Connection;
 
   constructor(attributes?: Partial<T>) {
     const defaults = (this.constructor as typeof Model).attributes;
@@ -425,18 +428,39 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   }
 
   static getConnection(): Connection {
-    if (!this.connection) {
+    const tenantConnection = TenantContext.current()?.connection;
+    const ownConnection = Object.prototype.hasOwnProperty.call(this, "connection") ? this.connection : undefined;
+    const connection = ownConnection || tenantConnection || this.connection || ConnectionManager.getDefault();
+    if (!connection) {
       throw new Error(`No connection set on model ${this.name}`);
     }
-    return this.connection;
+    return connection;
   }
 
   static setConnection(connection: Connection): void {
     this.connection = connection;
+    ConnectionManager.setDefault(connection);
+  }
+
+  static on<M extends typeof Model>(this: M, connection: string | Connection): Builder<InstanceType<M>> {
+    const resolved = typeof connection === "string" ? ConnectionManager.require(connection) : connection;
+    const builder = new Builder<InstanceType<M>>(resolved, resolved.qualifyTable(this.getTable()));
+    builder.setModel(this);
+    this.applyGlobalScopes(builder);
+    return builder;
+  }
+
+  static forTenant<M extends typeof Model>(this: M, tenantId: string): Builder<InstanceType<M>> {
+    const context = ConnectionManager.getResolvedTenant(tenantId);
+    if (!context) {
+      throw new Error(`Tenant "${tenantId}" has not been resolved. Use TenantContext.run() or await ConnectionManager.resolveTenant() first.`);
+    }
+    return this.on(context.connection);
   }
 
   static query<M extends typeof Model>(this: M): Builder<InstanceType<M>> {
-    const builder = new Builder<InstanceType<M>>(this.getConnection(), this.getTable());
+    const connection = this.getConnection();
+    const builder = new Builder<InstanceType<M>>(connection, connection.qualifyTable(this.getTable()));
     builder.setModel(this);
     this.applyGlobalScopes(builder);
     return builder;
@@ -764,6 +788,15 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this;
   }
 
+  setConnection(connection: Connection): this {
+    this.$connection = connection;
+    return this;
+  }
+
+  getConnection(): Connection {
+    return this.$connection || (this.constructor as typeof Model).getConnection();
+  }
+
   isFillable(key: string): boolean {
     const constructor = this.constructor as typeof Model;
     if (constructor.fillable.length > 0) {
@@ -908,7 +941,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       const dirty = this.getDirty();
       if (Object.keys(dirty).length > 0) {
         const pk = this.getAttribute(constructor.primaryKey);
-        await new Builder(constructor.getConnection(), constructor.getTable())
+        const connection = this.getConnection();
+        await new Builder(connection, connection.qualifyTable(constructor.getTable()))
           .where(constructor.primaryKey, pk)
           .update(dirty);
       }
@@ -935,10 +969,11 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
         (this.$attributes as any)[primaryKey] = generated;
       }
 
+      const connection = this.getConnection();
       if (shouldGeneratePrimaryKey || primaryKeyValue !== null && primaryKeyValue !== undefined && primaryKeyValue !== "") {
-        await new Builder(constructor.getConnection(), constructor.getTable()).insert(this.$attributes);
+        await new Builder(connection, connection.qualifyTable(constructor.getTable())).insert(this.$attributes);
       } else {
-        const result = await new Builder(constructor.getConnection(), constructor.getTable()).insertGetId(this.$attributes);
+        const result = await new Builder(connection, connection.qualifyTable(constructor.getTable())).insertGetId(this.$attributes);
         if (result) {
           (this.$attributes as any)[constructor.primaryKey] = result;
         }
@@ -970,7 +1005,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     if (!constructor.timestamps) return false;
     const now = this.freshTimestamp();
     const pk = this.getAttribute(constructor.primaryKey);
-    await new Builder(constructor.getConnection(), constructor.getTable())
+    const connection = this.getConnection();
+    await new Builder(connection, connection.qualifyTable(constructor.getTable()))
       .where(constructor.primaryKey, pk)
       .update({ updated_at: now } as any);
     (this.$attributes as any)["updated_at"] = now;
@@ -983,7 +1019,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     const pk = this.getAttribute(constructor.primaryKey);
     if (!pk) return this;
 
-    const builder = new Builder(constructor.getConnection(), constructor.getTable())
+    const connection = this.getConnection();
+    const builder = new Builder(connection, connection.qualifyTable(constructor.getTable()))
       .where(constructor.primaryKey, pk);
 
     if (constructor.timestamps) {
@@ -1018,13 +1055,15 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
     if (constructor.softDeletes) {
       const deletedAt = this.freshTimestamp();
-      await new Builder(constructor.getConnection(), constructor.getTable())
+      const connection = this.getConnection();
+      await new Builder(connection, connection.qualifyTable(constructor.getTable()))
         .where(constructor.primaryKey, pk)
         .update({ [constructor.deletedAtColumn]: deletedAt } as any);
       (this.$attributes as any)[constructor.deletedAtColumn] = deletedAt;
       this.$original = { ...this.$attributes };
     } else {
-      await new Builder(constructor.getConnection(), constructor.getTable())
+      const connection = this.getConnection();
+      await new Builder(connection, connection.qualifyTable(constructor.getTable()))
         .where(constructor.primaryKey, pk)
         .delete();
       this.$exists = false;
@@ -1040,7 +1079,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     const pk = this.getAttribute(constructor.primaryKey);
     if (!pk) return false;
 
-    await new Builder(constructor.getConnection(), constructor.getTable())
+    const connection = this.getConnection();
+    await new Builder(connection, connection.qualifyTable(constructor.getTable()))
       .where(constructor.primaryKey, pk)
       .update({ [constructor.deletedAtColumn]: null } as any);
     (this.$attributes as any)[constructor.deletedAtColumn] = null;
@@ -1053,7 +1093,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     const constructor = this.constructor as typeof Model;
     const pk = this.getAttribute(constructor.primaryKey);
     if (!pk) return false;
-    await new Builder(constructor.getConnection(), constructor.getTable())
+    const connection = this.getConnection();
+    await new Builder(connection, connection.qualifyTable(constructor.getTable()))
       .where(constructor.primaryKey, pk)
       .delete();
     this.$exists = false;

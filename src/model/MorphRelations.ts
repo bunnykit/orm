@@ -38,7 +38,7 @@ export class MorphTo<T extends Model = Model> {
         `No morph mapping found for type: ${type}. Register it with MorphMap.register() or pass a typeMap.`
       );
     }
-    return Related.find(id) as Promise<T | null>;
+    return (Related as any).on(this.parent.getConnection()).find(id) as Promise<T | null>;
   }
 
   addEagerConstraints(models: Model[]): void {
@@ -99,7 +99,7 @@ export class MorphOne<T extends Model = Model> {
     this.typeColumn = typeColumn || `${name}_type`;
     this.idColumn = idColumn || `${name}_id`;
     this.localKey = localKey || (parent.constructor as typeof Model).primaryKey;
-    this.builder = (related as any).query();
+    this.builder = (related as any).on(parent.getConnection());
     this.builder.where(this.typeColumn, this.getMorphType());
     this.builder.where(this.idColumn, this.parent.getAttribute(this.localKey));
   }
@@ -113,7 +113,7 @@ export class MorphOne<T extends Model = Model> {
   }
 
   addEagerConstraints(models: Model[]): void {
-    this.builder = (this.related as any).query();
+    this.builder = (this.related as any).on(this.parent.getConnection());
     const keys = models.map((m) => m.getAttribute(this.localKey));
     this.builder.whereIn(this.idColumn, keys);
     this.builder.where(this.typeColumn, this.getMorphType());
@@ -144,7 +144,7 @@ export class MorphOne<T extends Model = Model> {
   }
 
   protected newExistenceQuery(parentTable: string, aggregate: string, callback?: (query: Builder<any>) => void | Builder<any>): Builder<any> {
-    const query = (this.related as any).query().select(aggregate);
+    const query = (this.related as any).on(this.parent.getConnection()).select(aggregate);
     query.whereColumn(`${this.related.getTable()}.${this.idColumn}`, "=", `${parentTable}.${this.localKey}`);
     query.where(`${this.related.getTable()}.${this.typeColumn}`, this.getMorphType());
     if (callback) callback(query);
@@ -187,7 +187,7 @@ export class MorphMany<T extends Model = Model> {
     this.typeColumn = typeColumn || `${name}_type`;
     this.idColumn = idColumn || `${name}_id`;
     this.localKey = localKey || (parent.constructor as typeof Model).primaryKey;
-    this.builder = (related as any).query();
+    this.builder = (related as any).on(parent.getConnection());
     this.builder.where(this.typeColumn, this.getMorphType());
     this.builder.where(this.idColumn, this.parent.getAttribute(this.localKey));
   }
@@ -201,7 +201,7 @@ export class MorphMany<T extends Model = Model> {
   }
 
   addEagerConstraints(models: Model[]): void {
-    this.builder = (this.related as any).query();
+    this.builder = (this.related as any).on(this.parent.getConnection());
     const keys = models.map((m) => m.getAttribute(this.localKey));
     this.builder.whereIn(this.idColumn, keys);
     this.builder.where(this.typeColumn, this.getMorphType());
@@ -233,7 +233,7 @@ export class MorphMany<T extends Model = Model> {
   }
 
   protected newExistenceQuery(parentTable: string, aggregate: string, callback?: (query: Builder<any>) => void | Builder<any>): Builder<any> {
-    const query = (this.related as any).query().select(aggregate);
+    const query = (this.related as any).on(this.parent.getConnection()).select(aggregate);
     query.whereColumn(`${this.related.getTable()}.${this.idColumn}`, "=", `${parentTable}.${this.localKey}`);
     query.where(`${this.related.getTable()}.${this.typeColumn}`, this.getMorphType());
     if (callback) callback(query);
@@ -285,7 +285,7 @@ export class MorphToMany<T extends Model = Model> {
     this.morphType = morphType || (parent.constructor as typeof Model).morphName || parent.constructor.name;
     this.foreignPivotKey = foreignPivotKey || `${snakeCase(name)}_id`;
     this.relatedPivotKey = relatedPivotKey || `${snakeCase(related.name)}_id`;
-    this.builder = (related as any).query();
+    this.builder = (related as any).on(parent.getConnection());
     this.addConstraints();
   }
 
@@ -309,7 +309,7 @@ export class MorphToMany<T extends Model = Model> {
   addEagerConstraints(models: Model[]): void {
     const keys = models.map((m) => m.getAttribute(this.parentKey));
     const relatedTable = this.related.getTable();
-    this.builder = (this.related as any).query();
+    this.builder = (this.related as any).on(this.parent.getConnection());
     this.builder.select(`${relatedTable}.*`, `${this.table}.${this.foreignPivotKey}`);
     this.builder.join(
       this.table,
@@ -349,7 +349,7 @@ export class MorphToMany<T extends Model = Model> {
 
   protected newExistenceQuery(parentTable: string, aggregate: string, callback?: (query: Builder<any>) => void | Builder<any>): Builder<any> {
     const relatedTable = this.related.getTable();
-    const query = (this.related as any).query().select(aggregate);
+    const query = (this.related as any).on(this.parent.getConnection()).select(aggregate);
     query.join(
       this.table,
       `${this.table}.${this.relatedPivotKey}`,

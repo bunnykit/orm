@@ -1,13 +1,15 @@
 #!/usr/bin/env bun
 import { Connection } from "../src/connection/Connection.js";
+import { ConnectionManager } from "../src/connection/ConnectionManager.js";
+import { TenantContext } from "../src/connection/TenantContext.js";
+import { configureBunny } from "../src/config/BunnyConfig.js";
+import type { BunnyConfig } from "../src/config/BunnyConfig.js";
 import { Migrator } from "../src/migration/Migrator.js";
 import { MigrationCreator } from "../src/migration/MigrationCreator.js";
 import { TypeGenerator } from "../src/typegen/TypeGenerator.js";
-import type { ConnectionConfig } from "../src/types/index.js";
 import { existsSync } from "fs";
 import { mkdir, readdir, rm, writeFile } from "fs/promises";
 import { basename, extname, join, resolve } from "path";
-import type { ModelDeclaration } from "../src/typegen/TypeGenerator.js";
 import { normalizePathList } from "../src/utils.js";
 import {
   BelongsTo,
@@ -34,17 +36,12 @@ import {
   Model,
 } from "../src/index.js";
 
-interface BunnyConfig {
-  connection: ConnectionConfig;
-  migrationsPath: string | string[];
-  modelsPath?: string | string[];
-  typesOutDir?: string;
-  typeDeclarations?: Record<string, string | ModelDeclaration>;
-  typeDeclarationModelsDir?: string;
-  typeDeclarationImportPrefix?: string;
-  typeDeclarationSingularModels?: boolean;
-  typeStubs?: boolean;
-}
+type MigrationCommand = "migrate" | "migrate:rollback" | "migrate:status";
+type MigrationTarget =
+  | { scope: "default" }
+  | { scope: "landlord" }
+  | { scope: "tenants" }
+  | { scope: "tenant"; tenantId: string };
 
 function parseEnvPathSetting(value?: string): string | string[] | undefined {
   if (!value) return undefined;
@@ -54,6 +51,147 @@ function parseEnvPathSetting(value?: string): string | string[] | undefined {
     .filter((item) => item.length > 0);
   if (paths.length === 0) return undefined;
   return paths.length === 1 ? paths[0] : paths;
+}
+
+function getDefaultMigrationsPath(config: BunnyConfig): string | string[] {
+  return config.migrationsPath || config.migrations?.landlord || "./database/migrations";
+}
+
+function getFirstMigrationPath(path: string | string[] | undefined): string | undefined {
+  return normalizePathList(path).filter(Boolean)[0];
+}
+
+function parseMigrationTarget(args: string[]): MigrationTarget {
+  if (args.includes("--landlord")) return { scope: "landlord" };
+  if (args.includes("--tenants")) return { scope: "tenants" };
+  const tenantFlagIndex = args.indexOf("--tenant");
+  if (tenantFlagIndex >= 0) {
+    const tenantId = args[tenantFlagIndex + 1];
+    if (!tenantId) {
+      throw new Error("Usage: bun run bunny migrate --tenant <tenantId>");
+    }
+    return { scope: "tenant", tenantId };
+  }
+  return { scope: "default" };
+}
+
+function createTypeGeneratorOptions(config: BunnyConfig) {
+  const modelRoots = normalizePathList(config.modelsPath || config.typeDeclarationModelsDir);
+  return {
+    declarations: !config.typeStubs,
+    stubs: config.typeStubs,
+    modelDeclarations: config.typeDeclarations,
+    modelDirectory: modelRoots[0],
+    modelDirectories: modelRoots.length > 1 ? modelRoots : undefined,
+    modelImportPrefix: config.typeDeclarationImportPrefix,
+    singularModels: config.typeDeclarationSingularModels,
+    declarationDirName: "types",
+  };
+}
+
+async function runMigratorCommand(
+  command: MigrationCommand,
+  migrator: Migrator,
+  statusLabel?: string
+): Promise<void> {
+  if (command === "migrate") {
+    await migrator.run();
+    return;
+  }
+  if (command === "migrate:rollback") {
+    await migrator.rollback();
+    return;
+  }
+  const status = await migrator.status();
+  if (statusLabel) {
+    console.log(statusLabel);
+  }
+  console.table(status);
+}
+
+async function getTenantIds(config: BunnyConfig): Promise<string[]> {
+  if (!config.tenancy?.listTenants) {
+    throw new Error("Tenant migrations require tenancy.listTenants() in bunny.config.ts.");
+  }
+  const tenantIds = await config.tenancy.listTenants();
+  return tenantIds.map((tenantId) => String(tenantId));
+}
+
+async function runTenantMigrationCommand(
+  command: MigrationCommand,
+  config: BunnyConfig,
+  tenantPath: string | string[],
+  tenantId: string,
+  typesOutDir?: string
+): Promise<void> {
+  await TenantContext.run(tenantId, async () => {
+    const context = TenantContext.current();
+    if (!context) {
+      throw new Error(`Tenant "${tenantId}" did not resolve to an active context.`);
+    }
+    console.log(`Tenant: ${tenantId}`);
+    const migrator = new Migrator(context.connection, tenantPath, typesOutDir, createTypeGeneratorOptions(config));
+    await runMigratorCommand(command, migrator);
+  });
+}
+
+async function runConfiguredMigrationCommand(
+  command: MigrationCommand,
+  config: BunnyConfig,
+  connection: Connection,
+  target: MigrationTarget
+): Promise<void> {
+  if (!config.migrations) {
+    const migrator = new Migrator(connection, getDefaultMigrationsPath(config), config.typesOutDir, createTypeGeneratorOptions(config));
+    await runMigratorCommand(command, migrator);
+    return;
+  }
+
+  const landlordPath = config.migrations.landlord;
+  const tenantPath = config.migrations.tenant;
+  const runLandlord = async () => {
+    if (!landlordPath) return;
+    console.log("Landlord migrations");
+    const migrator = new Migrator(connection, landlordPath, config.typesOutDir, createTypeGeneratorOptions(config));
+    await runMigratorCommand(command, migrator);
+  };
+  const runAllTenants = async () => {
+    if (!tenantPath) return;
+    if (!config.tenancy?.resolveTenant) {
+      throw new Error("Tenant migrations require tenancy.resolveTenant() in bunny.config.ts.");
+    }
+    ConnectionManager.setTenantResolver(config.tenancy.resolveTenant);
+    const tenantIds = await getTenantIds(config);
+    for (const tenantId of tenantIds) {
+      await runTenantMigrationCommand(command, config, tenantPath, tenantId);
+    }
+  };
+
+  if (target.scope === "landlord") {
+    await runLandlord();
+    return;
+  }
+  if (target.scope === "tenant") {
+    if (!tenantPath) return;
+    if (!config.tenancy?.resolveTenant) {
+      throw new Error("Tenant migrations require tenancy.resolveTenant() in bunny.config.ts.");
+    }
+    ConnectionManager.setTenantResolver(config.tenancy.resolveTenant);
+    await runTenantMigrationCommand(command, config, tenantPath, target.tenantId);
+    return;
+  }
+  if (target.scope === "tenants") {
+    await runAllTenants();
+    return;
+  }
+
+  if (command === "migrate:rollback") {
+    await runAllTenants();
+    await runLandlord();
+    return;
+  }
+  await runLandlord();
+  await runAllTenants();
 }
 
 async function createReplBootstrap(config: BunnyConfig): Promise<string> {
@@ -310,8 +448,8 @@ async function main() {
     }
     const config = await loadConfig();
     const creator = new MigrationCreator();
-    const migrationRoots = normalizePathList(config.migrationsPath);
-    const targetPath = args[2] || migrationRoots[0] || "./database/migrations";
+    const migrationRoots = normalizePathList(config.migrationsPath || config.migrations?.landlord);
+    const targetPath = args[2] || migrationRoots[0] || getFirstMigrationPath(config.migrations?.landlord) || "./database/migrations";
     const path = await creator.create(name, targetPath);
     console.log(`Created migration: ${path}`);
     return;
@@ -349,29 +487,20 @@ async function main() {
   }
 
   const config = await loadConfig();
-  const connection = new Connection(config.connection);
-  const modelRoots = normalizePathList(config.modelsPath || config.typeDeclarationModelsDir);
-  const migrator = new Migrator(connection, config.migrationsPath, config.typesOutDir, {
-    declarations: !config.typeStubs,
-    stubs: config.typeStubs,
-    modelDeclarations: config.typeDeclarations,
-    modelDirectory: modelRoots[0],
-    modelDirectories: modelRoots.length > 1 ? modelRoots : undefined,
-    modelImportPrefix: config.typeDeclarationImportPrefix,
-    singularModels: config.typeDeclarationSingularModels,
-    declarationDirName: "types",
-  });
+  const { connection } = configureBunny(config);
 
   if (command === "migrate") {
-    await migrator.run();
+    await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
   } else if (command === "migrate:rollback") {
-    await migrator.rollback();
+    await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
   } else if (command === "migrate:status") {
-    const status = await migrator.status();
-    console.table(status);
+    await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
   } else {
     console.log("Usage:");
-    console.log("  bun run bunny migrate              Run pending migrations");
+    console.log("  bun run bunny migrate              Run landlord migrations, then all tenant migrations when configured");
+    console.log("  bun run bunny migrate --landlord   Run landlord migrations only");
+    console.log("  bun run bunny migrate --tenants    Run all tenant migrations only");
+    console.log("  bun run bunny migrate --tenant <id> Run one tenant's migrations only");
     console.log("  bun run bunny migrate:make <name> [dir] Create a new migration");
     console.log("  bun run bunny migrate:rollback     Rollback the last batch");
     console.log("  bun run bunny migrate:status       Show migration status");

@@ -159,7 +159,8 @@ export class TypeGenerator {
     } else if (driver === "mysql") {
       sql = "SHOW TABLES";
     } else {
-      sql = `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`;
+      const schema = this.connection.getSchema() || "public";
+      sql = `SELECT table_name FROM information_schema.tables WHERE table_schema = '${schema}' AND table_type = 'BASE TABLE'`;
     }
 
     const rows = await this.connection.query(sql);
@@ -221,8 +222,9 @@ export class TypeGenerator {
     }
 
     // postgres
+    const schema = this.connection.getSchema() || "public";
     const rows = await this.connection.query(
-      `SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_name = '${table}' AND table_schema = 'public' ORDER BY ordinal_position`
+      `SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_name = '${table}' AND table_schema = '${schema}' ORDER BY ordinal_position`
     );
     return rows.map((r: any) => ({
       name: r.column_name,

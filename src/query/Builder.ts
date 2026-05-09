@@ -250,7 +250,7 @@ export class Builder<T = Record<string, any>> {
       value = operator as number;
       operator = "=";
     }
-    let sql = this.grammar.compileJsonLength(this.grammar.wrap(column), operator, value);
+    let sql = this.grammar.compileJsonLength(this.grammar.wrap(column), String(operator), value);
     if (not) sql = `NOT (${sql})`;
     this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
     return this;
@@ -681,6 +681,9 @@ export class Builder<T = Record<string, any>> {
         const instance = new (this.model as any)(row);
         instance.$exists = true;
         instance.$original = { ...row };
+        if (typeof instance.setConnection === "function") {
+          instance.setConnection(this.connection);
+        }
         return instance as T;
       });
 
@@ -725,7 +728,12 @@ export class Builder<T = Record<string, any>> {
     if (!this.model) {
       throw new Error("firstOrCreate requires a model to be set on the builder");
     }
-    return (this.model as any).create({ ...attributes, ...values });
+    const instance = new (this.model as any)({ ...attributes, ...values });
+    if (typeof instance.setConnection === "function") {
+      instance.setConnection(this.connection);
+    }
+    await instance.save();
+    return instance;
   }
 
   async updateOrCreate(attributes: Partial<T>, values: Partial<T> = {}): Promise<T> {
@@ -741,7 +749,12 @@ export class Builder<T = Record<string, any>> {
     if (!this.model) {
       throw new Error("updateOrCreate requires a model to be set on the builder");
     }
-    return (this.model as any).create({ ...attributes, ...values });
+    const instance = new (this.model as any)({ ...attributes, ...values });
+    if (typeof instance.setConnection === "function") {
+      instance.setConnection(this.connection);
+    }
+    await instance.save();
+    return instance;
   }
 
   async pluck(column: string): Promise<any[]> {

@@ -7,6 +7,8 @@ import { setupTestDb } from "./helpers.js";
 const TEST_MIGRATIONS_DIR = join(process.cwd(), "tests", "temp_migrations");
 const TEST_MIGRATIONS_DIR_A = join(process.cwd(), "tests", "temp_migrations_a");
 const TEST_MIGRATIONS_DIR_B = join(process.cwd(), "tests", "temp_migrations_b");
+const TEST_MIGRATIONS_DIR_C = join(process.cwd(), "tests", "temp_migrations_c");
+const TEST_MIGRATIONS_DIR_D = join(process.cwd(), "tests", "temp_migrations_d");
 
 describe("MigrationCreator", () => {
   test("creates migration file with class", async () => {
@@ -130,7 +132,7 @@ describe("Migrator multi-path support", () => {
   });
 
   afterAll(async () => {
-    for (const dir of [TEST_MIGRATIONS_DIR_A, TEST_MIGRATIONS_DIR_B]) {
+    for (const dir of [TEST_MIGRATIONS_DIR_A, TEST_MIGRATIONS_DIR_B, TEST_MIGRATIONS_DIR_C, TEST_MIGRATIONS_DIR_D]) {
       await rm(dir, { recursive: true, force: true });
     }
   });
@@ -176,5 +178,51 @@ export default class CreateBetaTable extends Migration {
 
     const status = await migrator.status();
     expect(status.filter((row) => row.status === "Ran").length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("supports modular landlord and tenant migration path arrays", async () => {
+    await mkdir(TEST_MIGRATIONS_DIR_C, { recursive: true });
+    await mkdir(TEST_MIGRATIONS_DIR_D, { recursive: true });
+
+    await Bun.write(
+      join(TEST_MIGRATIONS_DIR_C, "20260403000000_create_landlord_settings_table.ts"),
+      `
+import { Migration, Schema } from "../../src/index.js";
+export default class CreateLandlordSettingsTable extends Migration {
+  async up(): Promise<void> {
+    await Schema.create("landlord_settings", (table) => {
+      table.increments("id");
+    });
+  }
+  async down(): Promise<void> {
+    await Schema.dropIfExists("landlord_settings");
+  }
+}`
+    );
+
+    await Bun.write(
+      join(TEST_MIGRATIONS_DIR_D, "20260404000000_create_tenant_notes_table.ts"),
+      `
+import { Migration, Schema } from "../../src/index.js";
+export default class CreateTenantNotesTable extends Migration {
+  async up(): Promise<void> {
+    await Schema.create("tenant_notes", (table) => {
+      table.increments("id");
+    });
+  }
+  async down(): Promise<void> {
+    await Schema.dropIfExists("tenant_notes");
+  }
+}`
+    );
+
+    const landlordMigrator = new Migrator(connection, [TEST_MIGRATIONS_DIR_C, TEST_MIGRATIONS_DIR_A]);
+    const tenantMigrator = new Migrator(connection, [TEST_MIGRATIONS_DIR_D, TEST_MIGRATIONS_DIR_B]);
+
+    await landlordMigrator.run();
+    await tenantMigrator.run();
+
+    expect(await Schema.hasTable("landlord_settings")).toBe(true);
+    expect(await Schema.hasTable("tenant_notes")).toBe(true);
   });
 });

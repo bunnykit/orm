@@ -4,19 +4,24 @@ import { Grammar } from "./grammars/Grammar.js";
 import { SQLiteGrammar } from "./grammars/SQLiteGrammar.js";
 import { MySqlGrammar } from "./grammars/MySqlGrammar.js";
 import { PostgresGrammar } from "./grammars/PostgresGrammar.js";
+import { ConnectionManager } from "../connection/ConnectionManager.js";
+import { TenantContext } from "../connection/TenantContext.js";
 
 export class Schema {
   static connection: Connection;
 
   static setConnection(connection: Connection): void {
     this.connection = connection;
+    ConnectionManager.setDefault(connection);
   }
 
   static getConnection(): Connection {
-    if (!this.connection) {
+    const tenantConnection = TenantContext.current()?.connection;
+    const connection = tenantConnection || this.connection || ConnectionManager.getDefault();
+    if (!connection) {
       throw new Error("No database connection set.");
     }
-    return this.connection;
+    return connection;
   }
 
   private static getGrammar(): Grammar {
@@ -35,10 +40,11 @@ export class Schema {
     const blueprint = new Blueprint(table);
     callback(blueprint);
     const grammar = this.getGrammar();
-    const sql = grammar.compileCreate(blueprint, table);
+    const connection = this.getConnection();
+    const sql = grammar.compileCreate(blueprint, connection.qualifyTable(table));
     await this.getConnection().run(sql);
 
-    const indexes = grammar.compileIndexes(blueprint, table);
+    const indexes = grammar.compileIndexes(blueprint, connection.qualifyTable(table));
     for (const indexSql of indexes) {
       await this.getConnection().run(indexSql);
     }
@@ -48,10 +54,11 @@ export class Schema {
     const blueprint = new Blueprint(table);
     callback(blueprint);
     const grammar = this.getGrammar();
-    const sql = grammar.compileCreateIfNotExists(blueprint, table);
+    const connection = this.getConnection();
+    const sql = grammar.compileCreateIfNotExists(blueprint, connection.qualifyTable(table));
     await this.getConnection().run(sql);
 
-    const indexes = grammar.compileIndexes(blueprint, table);
+    const indexes = grammar.compileIndexes(blueprint, connection.qualifyTable(table));
     for (const indexSql of indexes) {
       await this.getConnection().run(indexSql);
     }
@@ -61,17 +68,19 @@ export class Schema {
     const blueprint = new Blueprint(table);
     callback(blueprint);
     const grammar = this.getGrammar();
+    const connection = this.getConnection();
+    const qualifiedTable = connection.qualifyTable(table);
 
     for (const command of blueprint.commands) {
       if (command.name === "dropColumn") {
-        const sql = grammar.compileDropColumn(table, command.parameters!.column);
+        const sql = grammar.compileDropColumn(qualifiedTable, command.parameters!.column);
         if (Array.isArray(sql)) {
           for (const s of sql) await this.getConnection().run(s);
         } else {
           await this.getConnection().run(sql);
         }
       } else if (command.name === "renameColumn") {
-        const sql = grammar.compileColumnRename(table, command.parameters!.from, command.parameters!.to);
+        const sql = grammar.compileColumnRename(qualifiedTable, command.parameters!.from, command.parameters!.to);
         await this.getConnection().run(sql);
       } else if (command.name === "dropIndex") {
         await this.getConnection().run(`DROP INDEX ${grammar.wrap(command.parameters!.name)}`);
@@ -84,17 +93,17 @@ export class Schema {
       }
     }
 
-    const addSqls = grammar.compileAdd(blueprint, table);
+    const addSqls = grammar.compileAdd(blueprint, qualifiedTable);
     for (const sql of addSqls) {
       await this.getConnection().run(sql);
     }
 
-    const indexes = grammar.compileIndexes(blueprint, table);
+    const indexes = grammar.compileIndexes(blueprint, qualifiedTable);
     for (const indexSql of indexes) {
       await this.getConnection().run(indexSql);
     }
 
-    const fks = grammar.compileForeignKeys(blueprint, table);
+    const fks = grammar.compileForeignKeys(blueprint, qualifiedTable);
     for (const fkSql of fks) {
       await this.getConnection().run(fkSql);
     }
@@ -102,46 +111,53 @@ export class Schema {
 
   static async drop(table: string): Promise<void> {
     const grammar = this.getGrammar();
-    await this.getConnection().run(grammar.compileDrop(table));
+    const connection = this.getConnection();
+    await connection.run(grammar.compileDrop(connection.qualifyTable(table)));
   }
 
   static async dropIfExists(table: string): Promise<void> {
     const grammar = this.getGrammar();
-    await this.getConnection().run(grammar.compileDropIfExists(table));
+    const connection = this.getConnection();
+    await connection.run(grammar.compileDropIfExists(connection.qualifyTable(table)));
   }
 
   static async rename(from: string, to: string): Promise<void> {
     const grammar = this.getGrammar();
-    await this.getConnection().run(grammar.compileRename(from, to));
+    const connection = this.getConnection();
+    await connection.run(grammar.compileRename(connection.qualifyTable(from), connection.qualifyTable(to)));
   }
 
   static async hasTable(table: string): Promise<boolean> {
-    const driver = this.getConnection().getDriverName();
+    const connection = this.getConnection();
+    const driver = connection.getDriverName();
+    const schema = connection.getSchema() || "public";
     let sql: string;
     if (driver === "sqlite") {
       sql = `SELECT name FROM sqlite_master WHERE type='table' AND name='${table}'`;
     } else if (driver === "mysql") {
       sql = `SHOW TABLES LIKE '${table}'`;
     } else {
-      sql = `SELECT * FROM information_schema.tables WHERE table_name = '${table}'`;
+      sql = `SELECT * FROM information_schema.tables WHERE table_schema = '${schema}' AND table_name = '${table}'`;
     }
-    const result = await this.getConnection().query(sql);
+    const result = await connection.query(sql);
     return result.length > 0;
   }
 
   static async hasColumn(table: string, column: string): Promise<boolean> {
-    const driver = this.getConnection().getDriverName();
+    const connection = this.getConnection();
+    const driver = connection.getDriverName();
+    const schema = connection.getSchema() || "public";
     let sql: string;
     if (driver === "sqlite") {
       sql = `PRAGMA table_info(${table})`;
-      const result = await this.getConnection().query(sql);
+      const result = await connection.query(sql);
       return result.some((row: any) => row.name === column);
     } else if (driver === "mysql") {
       sql = `SHOW COLUMNS FROM ${table} LIKE '${column}'`;
     } else {
-      sql = `SELECT column_name FROM information_schema.columns WHERE table_name = '${table}' AND column_name = '${column}'`;
+      sql = `SELECT column_name FROM information_schema.columns WHERE table_schema = '${schema}' AND table_name = '${table}' AND column_name = '${column}'`;
     }
-    const result = await this.getConnection().query(sql);
+    const result = await connection.query(sql);
     return result.length > 0;
   }
 
@@ -149,20 +165,22 @@ export class Schema {
     table: string,
     column: string
   ): Promise<{ name: string; type: string; primary: boolean; autoIncrement: boolean } | null> {
-    const driver = this.getConnection().getDriverName();
+    const connection = this.getConnection();
+    const driver = connection.getDriverName();
+    const schema = connection.getSchema() || "public";
     if (driver === "sqlite") {
-      const rows = await this.getConnection().query(`PRAGMA table_info(${table})`);
+      const rows = await connection.query(`PRAGMA table_info(${table})`);
       const row = rows.find((item: any) => item.name === column);
       return row ? { name: row.name, type: row.type, primary: row.pk > 0, autoIncrement: false } as any : null;
     }
 
     if (driver === "mysql") {
-      const rows = await this.getConnection().query(`SHOW COLUMNS FROM ${table} LIKE '${column}'`);
+      const rows = await connection.query(`SHOW COLUMNS FROM ${table} LIKE '${column}'`);
       const row = rows[0];
       return row ? { name: row.Field, type: row.Type, primary: row.Key === "PRI", autoIncrement: String(row.Extra || "").toLowerCase().includes("auto_increment") } as any : null;
     }
 
-    const rows = await this.getConnection().query(
+    const rows = await connection.query(
       `SELECT c.column_name, c.data_type, COALESCE(tc.constraint_type = 'PRIMARY KEY', false) AS primary_key
        FROM information_schema.columns c
        LEFT JOIN information_schema.key_column_usage kcu
@@ -172,7 +190,7 @@ export class Schema {
        LEFT JOIN information_schema.table_constraints tc
          ON kcu.table_schema = tc.table_schema
         AND kcu.constraint_name = tc.constraint_name
-       WHERE c.table_schema = 'public'
+       WHERE c.table_schema = '${schema}'
          AND c.table_name = '${table}'
          AND c.column_name = '${column}'`
     );

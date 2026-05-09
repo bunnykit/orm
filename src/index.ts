@@ -1,4 +1,10 @@
 export { Connection } from "./connection/Connection.js";
+export { ConnectionManager } from "./connection/ConnectionManager.js";
+export type { TenantResolution, TenantResolver } from "./connection/ConnectionManager.js";
+export { TenantContext } from "./connection/TenantContext.js";
+export type { ActiveTenantContext } from "./connection/TenantContext.js";
+export { configureBunny } from "./config/BunnyConfig.js";
+export type { BunnyConfig, ConfiguredBunny } from "./config/BunnyConfig.js";
 export type { ConnectionConfig } from "./types/index.js";
 
 export { Schema } from "./schema/Schema.js";

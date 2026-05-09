@@ -33,7 +33,7 @@ export class BelongsToMany<T extends Model = Model> {
     this.relatedKey = relatedKey || related.primaryKey;
     this.foreignPivotKey = foreignPivotKey || `${snakeCase(parent.constructor.name)}_id`;
     this.relatedPivotKey = relatedPivotKey || `${snakeCase(related.name)}_id`;
-    this.builder = (related as any).query();
+    this.builder = (related as any).on(parent.getConnection());
     this.addConstraints();
   }
 
@@ -55,7 +55,7 @@ export class BelongsToMany<T extends Model = Model> {
 
   addEagerConstraints(models: Model[]): void {
     const keys = models.map((m) => m.getAttribute(this.parentKey));
-    this.builder = (this.related as any).query();
+    this.builder = (this.related as any).on(this.parent.getConnection());
     const relatedTable = this.related.getTable();
     this.builder.select(`${relatedTable}.*`, `${this.table}.${this.foreignPivotKey}`);
     this.builder.join(
@@ -95,7 +95,7 @@ export class BelongsToMany<T extends Model = Model> {
 
   protected newExistenceQuery(parentTable: string, aggregate: string, callback?: (query: Builder<any>) => void | Builder<any>): Builder<any> {
     const relatedTable = this.related.getTable();
-    const query = (this.related as any).query().select(aggregate);
+    const query = (this.related as any).on(this.parent.getConnection()).select(aggregate);
     query.join(
       this.table,
       `${this.table}.${this.relatedPivotKey}`,
@@ -126,11 +126,13 @@ export class BelongsToMany<T extends Model = Model> {
       [this.relatedPivotKey]: id,
       ...attributes,
     }));
-    await new Builder(this.related.getConnection(), this.table).insert(records);
+    const connection = this.parent.getConnection();
+    await new Builder(connection, connection.qualifyTable(this.table)).insert(records);
   }
 
   async detach(ids?: any | any[]): Promise<void> {
-    const builder = new Builder(this.related.getConnection(), this.table)
+    const connection = this.parent.getConnection();
+    const builder = new Builder(connection, connection.qualifyTable(this.table))
       .where(this.foreignPivotKey, this.parent.getAttribute(this.parentKey));
     if (ids !== undefined) {
       builder.whereIn(this.relatedPivotKey, Array.isArray(ids) ? ids : [ids]);
@@ -140,7 +142,8 @@ export class BelongsToMany<T extends Model = Model> {
 
   async sync(ids: any | any[], detachMissing: boolean = true): Promise<void> {
     const idList = Array.isArray(ids) ? ids : [ids];
-    const current = await new Builder(this.related.getConnection(), this.table)
+    const connection = this.parent.getConnection();
+    const current = await new Builder(connection, connection.qualifyTable(this.table))
       .where(this.foreignPivotKey, this.parent.getAttribute(this.parentKey))
       .pluck(this.relatedPivotKey);
 
