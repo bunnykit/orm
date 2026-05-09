@@ -1,6 +1,6 @@
 import type { Model } from "./Model.js";
 
-export interface ObserverContract<T extends Model = Model> {
+export interface ObserverContract<T extends Model<any> = Model<any>> {
   creating?(model: T): Promise<void> | void;
   created?(model: T): Promise<void> | void;
   updating?(model: T): Promise<void> | void;
@@ -27,7 +27,7 @@ export class ObserverRegistry {
     return this.observers.get(modelClass) || [];
   }
 
-  static async dispatch<T extends Model>(event: keyof ObserverContract, model: T): Promise<void> {
+  static async dispatch<T extends Model<any>>(event: keyof ObserverContract, model: T): Promise<void> {
     const observers = this.get(model.constructor as typeof Model);
     for (const observer of observers) {
       const handler = observer[event];

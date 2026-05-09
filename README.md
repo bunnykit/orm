@@ -1262,7 +1262,16 @@ export class User extends Model {
 }
 ```
 
-Editors that include the generated `.d.ts` files in `tsconfig.json` will understand `user.name`, `user.email`, etc. The generated files can be safely **gitignored** and regenerated whenever your schema changes.
+Editors that include the generated `.d.ts` files in `tsconfig.json` will understand `user.name`, `user.email`, etc. The same generated attributes are also used for column-name autocomplete in model and builder APIs:
+
+```ts
+await User.where("email", "alice@example.com").first();
+await User.where({ email: "alice@example.com" }).first();
+await User.orderBy("created_at").get();
+await User.create({ id: 1, name: "Alice", email: "alice@example.com" });
+```
+
+Column arguments still accept raw strings for joins, aliases, expressions, and advanced SQL, so autocomplete is helpful without blocking escape hatches. The generated files can be safely **gitignored** and regenerated whenever your schema changes.
 
 If you still want generated base classes, use the programmatic generator with `{ stubs: true }`.
 

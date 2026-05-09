@@ -12,6 +12,60 @@ import { TenantContext } from "../connection/TenantContext.js";
 
 export type ModelConstructor<T extends Model = Model> = (new (...args: any[]) => T) & Omit<typeof Model, "prototype">;
 export type GlobalScope = (builder: Builder<any>, model: ModelConstructor) => void;
+export type LiteralUnion<T extends string> = T | (string & {});
+type BaseModelInstanceKey =
+  | "$attributes"
+  | "$original"
+  | "$exists"
+  | "$relations"
+  | "$casts"
+  | "$connection"
+  | "fill"
+  | "setConnection"
+  | "getConnection"
+  | "isFillable"
+  | "getAttribute"
+  | "setAttribute"
+  | "castAttribute"
+  | "serializeCastAttribute"
+  | "mergeCasts"
+  | "getDirty"
+  | "isDirty"
+  | "save"
+  | "updateTimestamps"
+  | "touch"
+  | "increment"
+  | "decrement"
+  | "load"
+  | "delete"
+  | "restore"
+  | "forceDelete"
+  | "refresh"
+  | "toJSON"
+  | "toString"
+  | "freshTimestamp"
+  | "setRelation"
+  | "getRelation"
+  | "hasMany"
+  | "belongsTo"
+  | "hasOne"
+  | "hasManyThrough"
+  | "hasOneThrough"
+  | "belongsToMany"
+  | "morphTo"
+  | "morphOne"
+  | "morphMany"
+  | "morphToMany"
+  | "morphedByMany";
+export type ModelInstanceAttributeKeys<T> = Extract<Exclude<keyof T, BaseModelInstanceKey>, string>;
+export type ModelAttributes<T> = T extends { $attributes: Record<string, any> }
+  ? string extends keyof T["$attributes"]
+    ? Pick<T, ModelInstanceAttributeKeys<T>>
+    : T["$attributes"]
+  : T;
+export type ModelColumn<T> = LiteralUnion<Extract<keyof ModelAttributes<T>, string>>;
+export type ModelColumnValue<T, K> = K extends keyof ModelAttributes<T> ? ModelAttributes<T>[K] : any;
+export type ModelAttributeInput<T> = Partial<ModelAttributes<T>> & Record<string, any>;
 export type CastDefinition =
   | string
   | CastsAttributes
@@ -503,7 +557,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return !numericTypes.has(type);
   }
 
-  static async create<M extends ModelConstructor>(this: M, attributes: Partial<InstanceType<M> extends Model<infer U> ? U : Record<string, any>>): Promise<InstanceType<M>> {
+  static async create<M extends ModelConstructor>(this: M, attributes: ModelAttributeInput<InstanceType<M>>): Promise<InstanceType<M>> {
     const instance = new this() as InstanceType<M>;
     instance.fill(attributes as any);
     await instance.save();
@@ -536,8 +590,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
   static async firstOrCreate<M extends ModelConstructor>(
     this: M,
-    attributes: Record<string, any> = {},
-    values: Record<string, any> = {}
+    attributes: ModelAttributeInput<InstanceType<M>> = {},
+    values: ModelAttributeInput<InstanceType<M>> = {}
   ): Promise<InstanceType<M>> {
     const found = await this.where(attributes).first();
     if (found) return found;
@@ -546,8 +600,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
   static async updateOrCreate<M extends ModelConstructor>(
     this: M,
-    attributes: Record<string, any>,
-    values: Record<string, any> = {}
+    attributes: ModelAttributeInput<InstanceType<M>>,
+    values: ModelAttributeInput<InstanceType<M>> = {}
   ): Promise<InstanceType<M>> {
     const found = await this.where(attributes).first();
     if (found) {
@@ -558,83 +612,89 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.create({ ...attributes, ...values } as any);
   }
 
-  static where<M extends ModelConstructor>(this: M, column: string | Record<string, any>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static where<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, value: any): Builder<InstanceType<M>>;
+  static where<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator: string, value: any): Builder<InstanceType<M>>;
+  static where<M extends ModelConstructor>(this: M, column: ModelAttributeInput<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>>;
+  static where<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>> | ModelAttributeInput<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().where(column as any, operator, value);
   }
 
-  static orderBy<M extends ModelConstructor>(this: M, column: string, direction?: "asc" | "desc"): Builder<InstanceType<M>> {
+  static orderBy<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, direction?: "asc" | "desc"): Builder<InstanceType<M>> {
     return this.query().orderBy(column, direction);
   }
 
-  static whereIn<M extends ModelConstructor>(this: M, column: string, values: any[]): Builder<InstanceType<M>> {
+  static whereIn<M extends ModelConstructor, K extends ModelColumn<InstanceType<M>>>(this: M, column: K, values: ModelColumnValue<InstanceType<M>, K>[]): Builder<InstanceType<M>> {
     return this.query().whereIn(column, values);
   }
 
-  static whereNull<M extends ModelConstructor>(this: M, column: string): Builder<InstanceType<M>> {
+  static whereNull<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>): Builder<InstanceType<M>> {
     return this.query().whereNull(column);
   }
 
-  static whereNotNull<M extends ModelConstructor>(this: M, column: string): Builder<InstanceType<M>> {
+  static whereNotNull<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>): Builder<InstanceType<M>> {
     return this.query().whereNotNull(column);
   }
 
-  static orWhere<M extends ModelConstructor>(this: M, column: string | Record<string, any>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static orWhere<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, value: any): Builder<InstanceType<M>>;
+  static orWhere<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator: string, value: any): Builder<InstanceType<M>>;
+  static orWhere<M extends ModelConstructor>(this: M, column: ModelAttributeInput<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>>;
+  static orWhere<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>> | ModelAttributeInput<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().orWhere(column as any, operator, value);
   }
 
-  static whereNot<M extends ModelConstructor>(this: M, column: string | Record<string, any>, value?: any): Builder<InstanceType<M>> {
+  static whereNot<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>> | ModelAttributeInput<InstanceType<M>>, value?: any): Builder<InstanceType<M>> {
     return this.query().whereNot(column as any, value);
   }
 
-  static orWhereNot<M extends ModelConstructor>(this: M, column: string | Record<string, any>, value?: any): Builder<InstanceType<M>> {
+  static orWhereNot<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>> | ModelAttributeInput<InstanceType<M>>, value?: any): Builder<InstanceType<M>> {
     return this.query().orWhereNot(column as any, value);
   }
 
-  static whereDate<M extends ModelConstructor>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static whereDate<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().whereDate(column, operator, value);
   }
 
-  static orWhereDate<M extends ModelConstructor>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static orWhereDate<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().orWhereDate(column, operator, value);
   }
 
-  static whereDay<M extends ModelConstructor>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static whereDay<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().whereDay(column, operator, value);
   }
 
-  static orWhereDay<M extends ModelConstructor>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static orWhereDay<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().orWhereDay(column, operator, value);
   }
 
-  static whereMonth<M extends ModelConstructor>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static whereMonth<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().whereMonth(column, operator, value);
   }
 
-  static orWhereMonth<M extends ModelConstructor>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static orWhereMonth<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().orWhereMonth(column, operator, value);
   }
 
-  static whereYear<M extends ModelConstructor>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static whereYear<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().whereYear(column, operator, value);
   }
 
-  static orWhereYear<M extends ModelConstructor>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static orWhereYear<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().orWhereYear(column, operator, value);
   }
 
-  static whereTime<M extends ModelConstructor>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static whereTime<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().whereTime(column, operator, value);
   }
 
-  static orWhereTime<M extends ModelConstructor>(this: M, column: string, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static orWhereTime<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().orWhereTime(column, operator, value);
   }
 
-  static latest<M extends ModelConstructor>(this: M, column?: string): Builder<InstanceType<M>> {
+  static latest<M extends ModelConstructor>(this: M, column?: ModelColumn<InstanceType<M>>): Builder<InstanceType<M>> {
     return this.query().latest(column);
   }
 
-  static oldest<M extends ModelConstructor>(this: M, column?: string): Builder<InstanceType<M>> {
+  static oldest<M extends ModelConstructor>(this: M, column?: ModelColumn<InstanceType<M>>): Builder<InstanceType<M>> {
     return this.query().oldest(column);
   }
 
@@ -710,19 +770,19 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().withCount(relationName, alias);
   }
 
-  static withSum<M extends ModelConstructor>(this: M, relationName: string, column: string, alias?: string): Builder<InstanceType<M>> {
+  static withSum<M extends ModelConstructor>(this: M, relationName: string, column: ModelColumn<InstanceType<M>>, alias?: string): Builder<InstanceType<M>> {
     return this.query().withSum(relationName, column, alias);
   }
 
-  static withAvg<M extends ModelConstructor>(this: M, relationName: string, column: string, alias?: string): Builder<InstanceType<M>> {
+  static withAvg<M extends ModelConstructor>(this: M, relationName: string, column: ModelColumn<InstanceType<M>>, alias?: string): Builder<InstanceType<M>> {
     return this.query().withAvg(relationName, column, alias);
   }
 
-  static withMin<M extends ModelConstructor>(this: M, relationName: string, column: string, alias?: string): Builder<InstanceType<M>> {
+  static withMin<M extends ModelConstructor>(this: M, relationName: string, column: ModelColumn<InstanceType<M>>, alias?: string): Builder<InstanceType<M>> {
     return this.query().withMin(relationName, column, alias);
   }
 
-  static withMax<M extends ModelConstructor>(this: M, relationName: string, column: string, alias?: string): Builder<InstanceType<M>> {
+  static withMax<M extends ModelConstructor>(this: M, relationName: string, column: ModelColumn<InstanceType<M>>, alias?: string): Builder<InstanceType<M>> {
     return this.query().withMax(relationName, column, alias);
   }
 
@@ -779,7 +839,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     relation.match(models, results, relationName);
   }
 
-  fill(attributes: Partial<T>): this {
+  fill(attributes: Partial<T> | ModelAttributeInput<this>): this {
     for (const [key, value] of Object.entries(attributes)) {
       if (this.isFillable(key)) {
         this.setAttribute(key as any, value as any);
@@ -1014,7 +1074,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return true;
   }
 
-  async increment(column: string, amount: number = 1, extra: Record<string, any> = {}): Promise<this> {
+  async increment<K extends ModelColumn<this>>(column: K, amount: number = 1, extra: ModelAttributeInput<this> = {}): Promise<this> {
     const constructor = this.constructor as typeof Model;
     const pk = this.getAttribute(constructor.primaryKey);
     if (!pk) return this;
@@ -1036,7 +1096,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this;
   }
 
-  async decrement(column: string, amount: number = 1, extra: Record<string, any> = {}): Promise<this> {
+  async decrement<K extends ModelColumn<this>>(column: K, amount: number = 1, extra: ModelAttributeInput<this> = {}): Promise<this> {
     return this.increment(column, -amount, extra);
   }
 

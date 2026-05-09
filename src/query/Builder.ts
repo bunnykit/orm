@@ -1,6 +1,6 @@
 import { Connection } from "../connection/Connection.js";
 import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../types/index.js";
-import type { Model, ModelConstructor } from "../model/Model.js";
+import type { Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
 
 type RelationConstraint = (query: Builder<any>) => void | Builder<any>;
@@ -54,7 +54,7 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
-  select(...columns: string[]): this {
+  select(...columns: ModelColumn<T>[]): this {
     this.columns = columns;
     return this;
   }
@@ -64,7 +64,10 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
-  where(column: string | Record<string, any> | ((query: Builder<T>) => void), operator?: string | any, value?: any, boolean: "and" | "or" = "and", scope?: string): this {
+  where(column: ModelColumn<T>, value: any): this;
+  where(column: ModelColumn<T>, operator: string, value: any, boolean?: "and" | "or", scope?: string): this;
+  where(column: ModelAttributeInput<T> | ((query: Builder<T>) => void), operator?: string | any, value?: any, boolean?: "and" | "or", scope?: string): this;
+  where(column: ModelColumn<T> | ModelAttributeInput<T> | ((query: Builder<T>) => void), operator?: string | any, value?: any, boolean: "and" | "or" = "and", scope?: string): this {
     if (typeof column === "function") {
       return this.whereNested(column as (query: Builder<T>) => void, boolean);
     }
@@ -95,11 +98,14 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
-  orWhere(column: string | Record<string, any> | ((query: Builder<T>) => void), operator?: string | any, value?: any): this {
+  orWhere(column: ModelColumn<T>, value: any): this;
+  orWhere(column: ModelColumn<T>, operator: string, value: any): this;
+  orWhere(column: ModelAttributeInput<T> | ((query: Builder<T>) => void), operator?: string | any, value?: any): this;
+  orWhere(column: ModelColumn<T> | ModelAttributeInput<T> | ((query: Builder<T>) => void), operator?: string | any, value?: any): this {
     return this.where(column as any, operator, value, "or");
   }
 
-  whereNot(column: string | Record<string, any>, value?: any, boolean: "and" | "or" = "and"): this {
+  whereNot(column: ModelColumn<T> | ModelAttributeInput<T>, value?: any, boolean: "and" | "or" = "and"): this {
     if (typeof column === "object" && column !== null) {
       for (const [key, val] of Object.entries(column)) {
         this.whereNot(key, val, boolean);
@@ -109,77 +115,77 @@ export class Builder<T = Record<string, any>> {
     return this.where(column, "!=", value, boolean);
   }
 
-  orWhereNot(column: string | Record<string, any>, value?: any): this {
+  orWhereNot(column: ModelColumn<T> | ModelAttributeInput<T>, value?: any): this {
     return this.whereNot(column, value, "or");
   }
 
-  whereIn(column: string, values: any[], boolean: "and" | "or" = "and", scope?: string): this {
+  whereIn<K extends ModelColumn<T>>(column: K, values: ModelColumnValue<T, K>[], boolean: "and" | "or" = "and", scope?: string): this {
     this.wheres.push({ type: "in", column, value: values, boolean, scope });
     return this;
   }
 
-  whereNotIn(column: string, values: any[], boolean: "and" | "or" = "and", scope?: string): this {
+  whereNotIn<K extends ModelColumn<T>>(column: K, values: ModelColumnValue<T, K>[], boolean: "and" | "or" = "and", scope?: string): this {
     this.wheres.push({ type: "in", column, value: values, boolean, operator: "NOT IN" as any, scope });
     return this;
   }
 
-  whereNull(column: string, boolean: "and" | "or" = "and", scope?: string): this {
+  whereNull(column: ModelColumn<T>, boolean: "and" | "or" = "and", scope?: string): this {
     this.wheres.push({ type: "null", column, boolean, scope });
     return this;
   }
 
-  whereNotNull(column: string, boolean: "and" | "or" = "and", scope?: string): this {
+  whereNotNull(column: ModelColumn<T>, boolean: "and" | "or" = "and", scope?: string): this {
     this.wheres.push({ type: "null", column, boolean, operator: "NOT NULL" as any, scope });
     return this;
   }
 
-  whereBetween(column: string, values: [any, any], boolean: "and" | "or" = "and", scope?: string): this {
+  whereBetween<K extends ModelColumn<T>>(column: K, values: [ModelColumnValue<T, K>, ModelColumnValue<T, K>], boolean: "and" | "or" = "and", scope?: string): this {
     this.wheres.push({ type: "between", column, value: values, boolean, scope });
     return this;
   }
 
-  whereNotBetween(column: string, values: [any, any], boolean: "and" | "or" = "and", scope?: string): this {
+  whereNotBetween<K extends ModelColumn<T>>(column: K, values: [ModelColumnValue<T, K>, ModelColumnValue<T, K>], boolean: "and" | "or" = "and", scope?: string): this {
     this.wheres.push({ type: "between", column, value: values, boolean, operator: "NOT BETWEEN" as any, scope });
     return this;
   }
 
-  whereDate(column: string, operator?: string | any, value?: any, boolean: "and" | "or" = "and"): this {
+  whereDate(column: ModelColumn<T>, operator?: string | any, value?: any, boolean: "and" | "or" = "and"): this {
     return this.addDateWhere("date", column, operator, value, boolean);
   }
 
-  orWhereDate(column: string, operator?: string | any, value?: any): this {
+  orWhereDate(column: ModelColumn<T>, operator?: string | any, value?: any): this {
     return this.whereDate(column, operator, value, "or");
   }
 
-  whereDay(column: string, operator?: string | any, value?: any, boolean: "and" | "or" = "and"): this {
+  whereDay(column: ModelColumn<T>, operator?: string | any, value?: any, boolean: "and" | "or" = "and"): this {
     return this.addDateWhere("day", column, operator, value, boolean);
   }
 
-  orWhereDay(column: string, operator?: string | any, value?: any): this {
+  orWhereDay(column: ModelColumn<T>, operator?: string | any, value?: any): this {
     return this.whereDay(column, operator, value, "or");
   }
 
-  whereMonth(column: string, operator?: string | any, value?: any, boolean: "and" | "or" = "and"): this {
+  whereMonth(column: ModelColumn<T>, operator?: string | any, value?: any, boolean: "and" | "or" = "and"): this {
     return this.addDateWhere("month", column, operator, value, boolean);
   }
 
-  orWhereMonth(column: string, operator?: string | any, value?: any): this {
+  orWhereMonth(column: ModelColumn<T>, operator?: string | any, value?: any): this {
     return this.whereMonth(column, operator, value, "or");
   }
 
-  whereYear(column: string, operator?: string | any, value?: any, boolean: "and" | "or" = "and"): this {
+  whereYear(column: ModelColumn<T>, operator?: string | any, value?: any, boolean: "and" | "or" = "and"): this {
     return this.addDateWhere("year", column, operator, value, boolean);
   }
 
-  orWhereYear(column: string, operator?: string | any, value?: any): this {
+  orWhereYear(column: ModelColumn<T>, operator?: string | any, value?: any): this {
     return this.whereYear(column, operator, value, "or");
   }
 
-  whereTime(column: string, operator?: string | any, value?: any, boolean: "and" | "or" = "and"): this {
+  whereTime(column: ModelColumn<T>, operator?: string | any, value?: any, boolean: "and" | "or" = "and"): this {
     return this.addDateWhere("time", column, operator, value, boolean);
   }
 
-  orWhereTime(column: string, operator?: string | any, value?: any): this {
+  orWhereTime(column: ModelColumn<T>, operator?: string | any, value?: any): this {
     return this.whereTime(column, operator, value, "or");
   }
 
@@ -198,27 +204,27 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
-  orWhereNull(column: string, scope?: string): this {
+  orWhereNull(column: ModelColumn<T>, scope?: string): this {
     return this.whereNull(column, "or", scope);
   }
 
-  orWhereNotNull(column: string, scope?: string): this {
+  orWhereNotNull(column: ModelColumn<T>, scope?: string): this {
     return this.whereNotNull(column, "or", scope);
   }
 
-  orWhereBetween(column: string, values: [any, any], scope?: string): this {
+  orWhereBetween<K extends ModelColumn<T>>(column: K, values: [ModelColumnValue<T, K>, ModelColumnValue<T, K>], scope?: string): this {
     return this.whereBetween(column, values, "or", scope);
   }
 
-  orWhereNotBetween(column: string, values: [any, any], scope?: string): this {
+  orWhereNotBetween<K extends ModelColumn<T>>(column: K, values: [ModelColumnValue<T, K>, ModelColumnValue<T, K>], scope?: string): this {
     return this.whereNotBetween(column, values, "or", scope);
   }
 
-  orWhereIn(column: string, values: any[], scope?: string): this {
+  orWhereIn<K extends ModelColumn<T>>(column: K, values: ModelColumnValue<T, K>[], scope?: string): this {
     return this.whereIn(column, values, "or", scope);
   }
 
-  orWhereNotIn(column: string, values: any[], scope?: string): this {
+  orWhereNotIn<K extends ModelColumn<T>>(column: K, values: ModelColumnValue<T, K>[], scope?: string): this {
     return this.whereNotIn(column, values, "or", scope);
   }
 
@@ -238,14 +244,14 @@ export class Builder<T = Record<string, any>> {
     return this.whereRaw(sql, "or", scope);
   }
 
-  whereJsonContains(column: string, value: any, boolean: "and" | "or" = "and", not: boolean = false): this {
+  whereJsonContains(column: ModelColumn<T>, value: any, boolean: "and" | "or" = "and", not: boolean = false): this {
     let sql = this.grammar.compileJsonContains(this.grammar.wrap(column), value);
     if (not) sql = `NOT (${sql})`;
     this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
     return this;
   }
 
-  whereJsonLength(column: string, operator: string | number = "=", value?: number, boolean: "and" | "or" = "and", not: boolean = false): this {
+  whereJsonLength(column: ModelColumn<T>, operator: string | number = "=", value?: number, boolean: "and" | "or" = "and", not: boolean = false): this {
     if (value === undefined) {
       value = operator as number;
       operator = "=";
@@ -256,23 +262,23 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
-  whereLike(column: string, value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
+  whereLike(column: ModelColumn<T>, value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
     const sql = this.grammar.compileLike(this.grammar.wrap(column), value, not);
     this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
     return this;
   }
 
-  whereNotLike(column: string, value: string): this {
+  whereNotLike(column: ModelColumn<T>, value: string): this {
     return this.whereLike(column, value, "and", true);
   }
 
-  whereRegexp(column: string, value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
+  whereRegexp(column: ModelColumn<T>, value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
     const sql = this.grammar.compileRegexp(this.grammar.wrap(column), value, not);
     this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
     return this;
   }
 
-  whereFullText(columns: string | string[], value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
+  whereFullText(columns: ModelColumn<T> | ModelColumn<T>[], value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
     const cols = Array.isArray(columns) ? columns : [columns];
     let sql = this.grammar.compileFullText(cols.map((c) => this.grammar.wrap(c)), value);
     if (not) sql = `NOT (${sql})`;
@@ -280,28 +286,28 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
-  whereAll(columns: string[], operator: string, value: any, boolean: "and" | "or" = "and"): this {
+  whereAll(columns: ModelColumn<T>[], operator: string, value: any, boolean: "and" | "or" = "and"): this {
     const sql = columns.map((c) => `${this.grammar.wrap(c)} ${operator} ${this.grammar.escape(value)}`).join(" AND ");
     this.wheres.push({ type: "raw", column: `(${sql})`, boolean, scope: undefined });
     return this;
   }
 
-  whereAny(columns: string[], operator: string, value: any, boolean: "and" | "or" = "and"): this {
+  whereAny(columns: ModelColumn<T>[], operator: string, value: any, boolean: "and" | "or" = "and"): this {
     const sql = columns.map((c) => `${this.grammar.wrap(c)} ${operator} ${this.grammar.escape(value)}`).join(" OR ");
     this.wheres.push({ type: "raw", column: `(${sql})`, boolean, scope: undefined });
     return this;
   }
 
-  orderBy(column: string, direction: "asc" | "desc" = "asc"): this {
+  orderBy(column: ModelColumn<T>, direction: "asc" | "desc" = "asc"): this {
     this.orders.push({ column, direction });
     return this;
   }
 
-  latest(column: string = "created_at"): this {
+  latest(column: ModelColumn<T> = "created_at"): this {
     return this.orderBy(column, "desc");
   }
 
-  oldest(column: string = "created_at"): this {
+  oldest(column: ModelColumn<T> = "created_at"): this {
     return this.orderBy(column, "asc");
   }
 
@@ -310,11 +316,11 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
-  orderByDesc(column: string): this {
+  orderByDesc(column: ModelColumn<T>): this {
     return this.orderBy(column, "desc");
   }
 
-  reorder(column?: string, direction: "asc" | "desc" = "asc"): this {
+  reorder(column?: ModelColumn<T>, direction: "asc" | "desc" = "asc"): this {
     this.orders = [];
     this.randomOrderFlag = false;
     if (column) {
@@ -323,17 +329,17 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
-  groupBy(...columns: string[]): this {
+  groupBy(...columns: ModelColumn<T>[]): this {
     this.groups.push(...columns);
     return this;
   }
 
-  having(column: string, operator: string, value: any): this {
+  having(column: ModelColumn<T>, operator: string, value: any): this {
     this.havings.push({ sql: `${this.grammar.wrap(column)} ${operator} ${this.grammar.escape(value)}`, boolean: "and" });
     return this;
   }
 
-  orHaving(column: string, operator: string, value: any): this {
+  orHaving(column: ModelColumn<T>, operator: string, value: any): this {
     this.havings.push({ sql: `${this.grammar.wrap(column)} ${operator} ${this.grammar.escape(value)}`, boolean: "or" });
     return this;
   }
@@ -505,23 +511,23 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
-  withSum(relationName: string, column: string, alias?: string): this {
+  withSum(relationName: string, column: ModelColumn<T>, alias?: string): this {
     return this.withAggregate(relationName, column, "SUM", alias);
   }
 
-  withAvg(relationName: string, column: string, alias?: string): this {
+  withAvg(relationName: string, column: ModelColumn<T>, alias?: string): this {
     return this.withAggregate(relationName, column, "AVG", alias);
   }
 
-  withMin(relationName: string, column: string, alias?: string): this {
+  withMin(relationName: string, column: ModelColumn<T>, alias?: string): this {
     return this.withAggregate(relationName, column, "MIN", alias);
   }
 
-  withMax(relationName: string, column: string, alias?: string): this {
+  withMax(relationName: string, column: ModelColumn<T>, alias?: string): this {
     return this.withAggregate(relationName, column, "MAX", alias);
   }
 
-  addSelect(...columns: string[]): this {
+  addSelect(...columns: ModelColumn<T>[]): this {
     if (this.columns.length === 1 && this.columns[0] === "*") {
       this.columns = [`${this.tableName}.*`];
     }
@@ -702,11 +708,11 @@ export class Builder<T = Record<string, any>> {
     return results[0] || null;
   }
 
-  async find(id: any, column: string = "id"): Promise<T | null> {
+  async find(id: any, column: ModelColumn<T> = "id"): Promise<T | null> {
     return this.where(column, id).first();
   }
 
-  async findOrFail(id: any, column: string = "id"): Promise<T> {
+  async findOrFail(id: any, column: ModelColumn<T> = "id"): Promise<T> {
     const result = await this.find(id, column);
     if (!result) {
       throw new ModelNotFoundError(this.model?.name || "Model", id);
@@ -722,7 +728,7 @@ export class Builder<T = Record<string, any>> {
     return result;
   }
 
-  async firstOrCreate(attributes: Partial<T> = {}, values: Partial<T> = {}): Promise<T> {
+  async firstOrCreate(attributes: ModelAttributeInput<T> = {}, values: ModelAttributeInput<T> = {}): Promise<T> {
     const found = await this.clone().where(attributes as any).first();
     if (found) return found;
     if (!this.model) {
@@ -736,7 +742,7 @@ export class Builder<T = Record<string, any>> {
     return instance;
   }
 
-  async updateOrCreate(attributes: Partial<T>, values: Partial<T> = {}): Promise<T> {
+  async updateOrCreate(attributes: ModelAttributeInput<T>, values: ModelAttributeInput<T> = {}): Promise<T> {
     const found = await this.clone().where(attributes as any).first();
     if (found) {
       const model = found as any;
@@ -757,7 +763,7 @@ export class Builder<T = Record<string, any>> {
     return instance;
   }
 
-  async pluck(column: string): Promise<any[]> {
+  async pluck<K extends ModelColumn<T>>(column: K): Promise<ModelColumnValue<T, K>[]> {
     const results = await this.select(column).get();
     return results.map((row: any) => row[column]);
   }
@@ -770,23 +776,23 @@ export class Builder<T = Record<string, any>> {
     return result ? (result as any)[alias] : null;
   }
 
-  async count(column: string = "*"): Promise<number> {
+  async count(column: ModelColumn<T> | "*" = "*"): Promise<number> {
     return Number(await this.aggregate(`COUNT(${column})`, "count") ?? 0);
   }
 
-  async sum(column: string): Promise<number> {
+  async sum(column: ModelColumn<T>): Promise<number> {
     return Number(await this.aggregate(`SUM(${column})`, "sum") ?? 0);
   }
 
-  async avg(column: string): Promise<number> {
+  async avg(column: ModelColumn<T>): Promise<number> {
     return Number(await this.aggregate(`AVG(${column})`, "avg") ?? 0);
   }
 
-  async min(column: string): Promise<any> {
+  async min<K extends ModelColumn<T>>(column: K): Promise<ModelColumnValue<T, K> | null> {
     return await this.aggregate(`MIN(${column})`, "min");
   }
 
-  async max(column: string): Promise<any> {
+  async max<K extends ModelColumn<T>>(column: K): Promise<ModelColumnValue<T, K> | null> {
     return await this.aggregate(`MAX(${column})`, "max");
   }
 
@@ -846,7 +852,7 @@ export class Builder<T = Record<string, any>> {
     }
   }
 
-  async insert(data: Partial<T> | Partial<T>[]): Promise<any> {
+  async insert(data: ModelAttributeInput<T> | ModelAttributeInput<T>[]): Promise<any> {
     const records = Array.isArray(data) ? data : [data];
     if (records.length === 0) return;
 
@@ -859,12 +865,12 @@ export class Builder<T = Record<string, any>> {
     return await this.connection.run(sql);
   }
 
-  async insertGetId(data: Partial<T>, idColumn: string = "id"): Promise<any> {
+  async insertGetId(data: ModelAttributeInput<T>, idColumn: ModelColumn<T> = "id"): Promise<any> {
     const result = await this.insert(data);
     return (result as any)?.lastInsertRowid ?? (result as any)?.insertId ?? null;
   }
 
-  async insertOrIgnore(data: Partial<T> | Partial<T>[]): Promise<any> {
+  async insertOrIgnore(data: ModelAttributeInput<T> | ModelAttributeInput<T>[]): Promise<any> {
     const records = Array.isArray(data) ? data : [data];
     if (records.length === 0) return;
 
@@ -881,7 +887,7 @@ export class Builder<T = Record<string, any>> {
     return await this.connection.run(sql);
   }
 
-  async upsert(data: Partial<T> | Partial<T>[], uniqueBy: string | string[], updateColumns?: string[]): Promise<any> {
+  async upsert(data: ModelAttributeInput<T> | ModelAttributeInput<T>[], uniqueBy: ModelColumn<T> | ModelColumn<T>[], updateColumns?: ModelColumn<T>[]): Promise<any> {
     const records = Array.isArray(data) ? data : [data];
     if (records.length === 0) return;
 
@@ -903,7 +909,7 @@ export class Builder<T = Record<string, any>> {
     return await this.connection.run(sql);
   }
 
-  async update(data: Partial<T>): Promise<any> {
+  async update(data: ModelAttributeInput<T>): Promise<any> {
     const sets = Object.entries(data)
       .map(([key, value]) => `${this.grammar.wrap(key)} = ${this.grammar.escape(value)}`)
       .join(", ");
@@ -926,7 +932,7 @@ export class Builder<T = Record<string, any>> {
     return await this.connection.run(sql);
   }
 
-  async increment(column: string, amount: number = 1, extra: Record<string, any> = {}): Promise<any> {
+  async increment(column: ModelColumn<T>, amount: number = 1, extra: ModelAttributeInput<T> = {}): Promise<any> {
     const sets = [`${this.grammar.wrap(column)} = ${this.grammar.wrap(column)} + ${amount}`];
     for (const [key, value] of Object.entries(extra)) {
       sets.push(`${this.grammar.wrap(key)} = ${this.grammar.escape(value)}`);
@@ -935,7 +941,7 @@ export class Builder<T = Record<string, any>> {
     return await this.connection.run(sql.trim());
   }
 
-  async decrement(column: string, amount: number = 1, extra: Record<string, any> = {}): Promise<any> {
+  async decrement(column: ModelColumn<T>, amount: number = 1, extra: ModelAttributeInput<T> = {}): Promise<any> {
     return this.increment(column, -amount, extra);
   }
 
@@ -967,7 +973,7 @@ export class Builder<T = Record<string, any>> {
     return results[0];
   }
 
-  async value(column: string): Promise<any> {
+  async value<K extends ModelColumn<T>>(column: K): Promise<ModelColumnValue<T, K> | null> {
     const result = await this.first();
     return result ? (result as any)[column] : null;
   }
@@ -1028,7 +1034,7 @@ export class Builder<T = Record<string, any>> {
     return this;
   }
 
-  private addDateWhere(type: string, column: string, operator?: string | any, value?: any, boolean: "and" | "or" = "and"): this {
+  private addDateWhere(type: string, column: ModelColumn<T>, operator?: string | any, value?: any, boolean: "and" | "or" = "and"): this {
     if (value === undefined) {
       value = operator;
       operator = "=";
@@ -1050,7 +1056,7 @@ export class Builder<T = Record<string, any>> {
     return relation;
   }
 
-  private withAggregate(relationName: string, column: string, fn: string, alias?: string): this {
+  private withAggregate(relationName: string, column: ModelColumn<T>, fn: string, alias?: string): this {
     const relation = this.getModelRelation(relationName);
     const defaultAlias = `${relationName}_${fn.toLowerCase()}_${column.replace(/\W+/g, "_")}`;
     this.addSelect(`(${relation.getRelationAggregateSql(this, `${fn}(${relation.qualifyRelatedColumn(column)})`)}) as ${alias || defaultAlias}`);
