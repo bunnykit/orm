@@ -217,6 +217,9 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
   await mkdir(dir, { recursive: true });
   const bootstrapPath = join(dir, `bootstrap-${Date.now()}-${Math.random().toString(36).slice(2)}.ts`);
   const modelRoots = normalizePathList(config.modelsPath || config.typeDeclarationModelsDir);
+  const tsConfigPath = join(process.cwd(), "bunny.config.ts");
+  const jsConfigPath = join(process.cwd(), "bunny.config.js");
+  const configPath = existsSync(tsConfigPath) ? tsConfigPath : existsSync(jsConfigPath) ? jsConfigPath : null;
   const source = `
     import {
       BelongsTo,
@@ -224,6 +227,7 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
       Blueprint,
       Builder,
       Connection,
+      ConnectionManager,
       Grammar,
       HasMany,
       HasManyThrough,
@@ -242,18 +246,22 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
       PostgresGrammar,
       Schema,
       SQLiteGrammar,
+      TenantContext,
       TypeGenerator,
       TypeMapper,
-      Model
+      Model,
+      configureBunny
     } from "@bunnykit/orm";
     import { existsSync } from "fs";
     import { readdir } from "fs/promises";
     import { basename, extname, join, resolve } from "path";
     import { pathToFileURL } from "url";
 
-    const connection = new Connection(${JSON.stringify(config.connection)});
-    Model.setConnection(connection);
-    Schema.setConnection(connection);
+    const configPath = ${JSON.stringify(configPath)};
+    const configModule = configPath ? await import(pathToFileURL(configPath).href) : null;
+    const replConfig = configModule ? (configModule.default || configModule) : ${JSON.stringify(config)};
+    const bunny = configureBunny(replConfig);
+    const connection = bunny.connection;
 
     const modelRoots = ${JSON.stringify(modelRoots)};
 
@@ -308,6 +316,7 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
     Object.assign(globalThis, {
       Connection,
       Builder,
+      ConnectionManager,
       Blueprint,
       Grammar,
       SQLiteGrammar,
@@ -332,8 +341,12 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
       TypeGenerator,
       TypeMapper,
       Schema,
+      TenantContext,
+      configureBunny,
       db: connection,
       connection,
+      bunny,
+      config: replConfig,
       Models: loadedModels,
     });
 
