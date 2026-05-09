@@ -226,6 +226,7 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
       BelongsToMany,
       Blueprint,
       Builder,
+      Collection,
       Connection,
       ConnectionManager,
       Grammar,
@@ -250,6 +251,7 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
       TypeGenerator,
       TypeMapper,
       Model,
+      collect,
       configureBunny
     } from "@bunnykit/orm";
     import { existsSync } from "fs";
@@ -341,6 +343,7 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
     Object.assign(globalThis, {
       Connection,
       Builder,
+      Collection,
       ConnectionManager,
       Blueprint,
       Grammar,
@@ -367,6 +370,7 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
       TypeMapper,
       Schema,
       TenantContext,
+      collect,
       configureBunny,
       db: connection,
       connection,

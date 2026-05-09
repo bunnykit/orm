@@ -1,5 +1,5 @@
 import { expect, test, describe, beforeAll } from "bun:test";
-import { Model, Schema } from "../src/index.js";
+import { Collection, Model, Schema } from "../src/index.js";
 import { setupTestDb } from "./helpers.js";
 
 class PUser extends Model {
@@ -22,6 +22,7 @@ describe("Pagination", () => {
 
   test("paginate returns correct structure", async () => {
     const result = await PUser.paginate(10, 1);
+    expect(result.data).toBeInstanceOf(Collection);
     expect(result.data).toHaveLength(10);
     expect(result.current_page).toBe(1);
     expect(result.per_page).toBe(10);

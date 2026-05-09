@@ -3,11 +3,12 @@ import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../typ
 import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
 import { IdentityMap } from "../model/IdentityMap.js";
+import { Collection } from "../support/Collection.js";
 
 type RelationConstraint = (query: Builder<any>) => void | Builder<any>;
 
 export interface Paginator<T> {
-  data: T[];
+  data: Collection<T>;
   current_page: number;
   per_page: number;
   total: number;
@@ -785,7 +786,7 @@ export class Builder<T = Record<string, any>> {
     return compiled;
   }
 
-  async get(): Promise<T[]> {
+  async get(): Promise<Collection<T>> {
     this.bindings = [];
     this.parameterize = true;
     const sql = this.toSql();
@@ -825,10 +826,14 @@ export class Builder<T = Record<string, any>> {
         await (this.model as any).eagerLoadRelations(models, this.eagerLoads);
       }
 
-      return models;
+      return new Collection(models);
     }
 
-    return rows as T[];
+    return new Collection(rows as T[]);
+  }
+
+  async getArray(): Promise<T[]> {
+    return (await this.get()).all();
   }
 
   async first(): Promise<T | null> {
@@ -991,7 +996,7 @@ export class Builder<T = Record<string, any>> {
     };
   }
 
-  async chunk(count: number, callback: (items: T[]) => void | Promise<void>): Promise<void> {
+  async chunk(count: number, callback: (items: Collection<T>) => void | Promise<void>): Promise<void> {
     let page = 1;
     while (true) {
       const items = await this.clone().forPage(page, count).get();

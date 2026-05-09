@@ -10,6 +10,7 @@ import { ModelNotFoundError } from "./ModelNotFoundError.js";
 import { ConnectionManager } from "../connection/ConnectionManager.js";
 import { TenantContext } from "../connection/TenantContext.js";
 import { IdentityMap } from "./IdentityMap.js";
+import { Collection } from "../support/Collection.js";
 
 export type ModelConstructor<T extends Model = Model> = (new (...args: any[]) => T) & Omit<typeof Model, "prototype">;
 export type GlobalScope = (builder: Builder<any>, model: ModelConstructor) => void;
@@ -188,10 +189,10 @@ export abstract class Relation<T extends Model = Model> {
   }
 
   abstract addConstraints(): void;
-  abstract getResults(): Promise<T | T[] | null>;
+  abstract getResults(): Promise<T | Collection<T> | null>;
   abstract addEagerConstraints(models: Model[]): void;
-  abstract getEager(): Promise<any[]>;
-  abstract match(models: Model[], results: any[], relationName: string): void;
+  abstract getEager(): Promise<Collection<any>>;
+  abstract match(models: Model[], results: Collection<any>, relationName: string): void;
 
   protected defaultForeignKey(): string {
     return `${snakeCase(this.parent.constructor.name)}_id`;
@@ -244,11 +245,11 @@ export class HasMany<T extends Model = Model> extends Relation<T> {
     this.builder.whereIn(this.foreignKey, keys);
   }
 
-  async getEager(): Promise<any[]> {
+  async getEager(): Promise<Collection<any>> {
     return this.builder.get();
   }
 
-  match(models: Model[], results: any[], relationName: string): void {
+  match(models: Model[], results: Collection<any>, relationName: string): void {
     const dictionary: Record<string, any[]> = {};
     for (const result of results) {
       const key = (result.$attributes as any)[this.foreignKey];
@@ -257,11 +258,11 @@ export class HasMany<T extends Model = Model> extends Relation<T> {
     }
     for (const model of models) {
       const key = model.getAttribute(this.localKey);
-      model.setRelation(relationName, dictionary[String(key)] || []);
+      model.setRelation(relationName, new Collection(dictionary[String(key)] || []));
     }
   }
 
-  async getResults(): Promise<T[]> {
+  async getResults(): Promise<Collection<T>> {
     return this.builder.get();
   }
 
@@ -299,11 +300,11 @@ export class BelongsTo<T extends Model = Model> extends Relation<T> {
     this.builder.whereIn(this.localKey, keys);
   }
 
-  async getEager(): Promise<any[]> {
+  async getEager(): Promise<Collection<any>> {
     return this.builder.get();
   }
 
-  match(models: Model[], results: any[], relationName: string): void {
+  match(models: Model[], results: Collection<any>, relationName: string): void {
     const dictionary: Record<string, any> = {};
     for (const result of results) {
       const key = (result.$attributes as any)[this.localKey];
@@ -390,11 +391,11 @@ export class HasManyThrough<T extends Model = Model> extends Relation<T> {
     this.builder.whereIn(`${throughTable}.${this.firstKey}`, keys);
   }
 
-  async getEager(): Promise<any[]> {
+  async getEager(): Promise<Collection<any>> {
     return this.builder.get();
   }
 
-  match(models: Model[], results: any[], relationName: string): void {
+  match(models: Model[], results: Collection<any>, relationName: string): void {
     const dictionary: Record<string, any[]> = {};
     for (const result of results) {
       const key = (result.$attributes as any)[this.firstKey];
@@ -404,11 +405,11 @@ export class HasManyThrough<T extends Model = Model> extends Relation<T> {
     }
     for (const model of models) {
       const key = model.getAttribute(this.localKey);
-      model.setRelation(relationName, dictionary[String(key)] || []);
+      model.setRelation(relationName, new Collection(dictionary[String(key)] || []));
     }
   }
 
-  async getResults(): Promise<T[] | T | null> {
+  async getResults(): Promise<Collection<T> | T | null> {
     return this.builder.get();
   }
 
@@ -433,7 +434,7 @@ export class HasOneThrough<T extends Model = Model> extends HasManyThrough<T> {
     return this.builder.first();
   }
 
-  match(models: Model[], results: any[], relationName: string): void {
+  match(models: Model[], results: Collection<any>, relationName: string): void {
     const dictionary: Record<string, any> = {};
     for (const result of results) {
       const key = (result.$attributes as any)[this.firstKey];
@@ -466,11 +467,11 @@ export class HasOne<T extends Model = Model> extends Relation<T> {
     this.builder.whereIn(this.foreignKey, keys);
   }
 
-  async getEager(): Promise<any[]> {
+  async getEager(): Promise<Collection<any>> {
     return this.builder.get();
   }
 
-  match(models: Model[], results: any[], relationName: string): void {
+  match(models: Model[], results: Collection<any>, relationName: string): void {
     const dictionary: Record<string, any> = {};
     for (const result of results) {
       const key = (result.$attributes as any)[this.foreignKey];
@@ -1034,7 +1035,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().withMax(relationName, column, alias);
   }
 
-  static async all<M extends ModelConstructor>(this: M): Promise<InstanceType<M>[]> {
+  static async all<M extends ModelConstructor>(this: M): Promise<Collection<InstanceType<M>>> {
     return this.query().get();
   }
 
@@ -1042,7 +1043,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().paginate(perPage, page);
   }
 
-  static async chunk<M extends ModelConstructor>(this: M, count: number, callback: (items: InstanceType<M>[]) => void | Promise<void>): Promise<void> {
+  static async chunk<M extends ModelConstructor>(this: M, count: number, callback: (items: Collection<InstanceType<M>>) => void | Promise<void>): Promise<void> {
     return this.query().chunk(count, callback);
   }
 

@@ -1,5 +1,5 @@
 import { expect, test, describe, beforeAll } from "bun:test";
-import { Model, Schema } from "../src/index.js";
+import { Collection, Model, Schema } from "../src/index.js";
 import { setupTestDb } from "./helpers.js";
 
 class BUser extends Model {
@@ -44,6 +44,7 @@ describe("BelongsToMany", () => {
     await user.roles().attach(role.getAttribute("id"));
 
     const roles = await user.roles().getResults();
+    expect(roles).toBeInstanceOf(Collection);
     expect(roles).toHaveLength(1);
     expect(roles[0].getAttribute("title")).toBe("Admin");
   });
@@ -83,6 +84,7 @@ describe("BelongsToMany", () => {
     await user.roles().attach(role.getAttribute("id"));
 
     const users = await BUser.with("roles").where("id", user.getAttribute("id")).get();
+    expect(users[0].getRelation("roles")).toBeInstanceOf(Collection);
     expect(users[0].getRelation("roles")).toHaveLength(1);
     expect(users[0].getRelation("roles")[0].getAttribute("title")).toBe("Manager");
   });

@@ -1,4 +1,5 @@
 import { Builder } from "../query/Builder.js";
+import { Collection } from "../support/Collection.js";
 import { snakeCase } from "../utils.js";
 import { MorphMap } from "./MorphMap.js";
 import type { Model, ModelConstructor } from "./Model.js";
@@ -65,7 +66,7 @@ export class MorphTo<T extends Model = Model> {
     this.eagerModels = models;
   }
 
-  async getEager(): Promise<any[]> {
+  async getEager(): Promise<Collection<any>> {
     const results: Array<{ __morphType: string; model: Model }> = [];
     const groups: Record<string, Model[]> = {};
 
@@ -89,10 +90,10 @@ export class MorphTo<T extends Model = Model> {
       }
     }
 
-    return results;
+    return new Collection(results);
   }
 
-  match(models: Model[], results: Array<{ __morphType: string; model: Model }>, relationName: string): void {
+  match(models: Model[], results: Collection<{ __morphType: string; model: Model }>, relationName: string): void {
     const dictionary: Record<string, Model> = {};
     for (const result of results) {
       const key = result.model.getAttribute((result.model.constructor as ModelConstructor).primaryKey);
@@ -162,11 +163,11 @@ export class MorphOne<T extends Model = Model> {
     this.builder.where(this.typeColumn, this.getMorphType());
   }
 
-  async getEager(): Promise<any[]> {
+  async getEager(): Promise<Collection<any>> {
     return this.builder.get();
   }
 
-  match(models: Model[], results: any[], relationName: string): void {
+  match(models: Model[], results: Collection<any>, relationName: string): void {
     const dictionary: Record<string, any> = {};
     for (const result of results) {
       const key = (result.$attributes as any)[this.idColumn];
@@ -262,11 +263,11 @@ export class MorphMany<T extends Model = Model> {
     this.builder.where(this.typeColumn, this.getMorphType());
   }
 
-  async getEager(): Promise<any[]> {
+  async getEager(): Promise<Collection<any>> {
     return this.builder.get();
   }
 
-  match(models: Model[], results: any[], relationName: string): void {
+  match(models: Model[], results: Collection<any>, relationName: string): void {
     const dictionary: Record<string, any[]> = {};
     for (const result of results) {
       const key = (result.$attributes as any)[this.idColumn];
@@ -275,11 +276,11 @@ export class MorphMany<T extends Model = Model> {
     }
     for (const model of models) {
       const key = model.getAttribute(this.localKey);
-      model.setRelation(relationName, dictionary[String(key)] || []);
+      model.setRelation(relationName, new Collection(dictionary[String(key)] || []));
     }
   }
 
-  async getResults(): Promise<T[]> {
+  async getResults(): Promise<Collection<T>> {
     return this.builder.get();
   }
 
@@ -388,11 +389,11 @@ export class MorphToMany<T extends Model = Model> {
     this.builder.where(`${this.table}.${this.name}_type`, this.morphType);
   }
 
-  async getEager(): Promise<any[]> {
+  async getEager(): Promise<Collection<any>> {
     return this.builder.get();
   }
 
-  match(models: Model[], results: any[], relationName: string): void {
+  match(models: Model[], results: Collection<any>, relationName: string): void {
     const dictionary: Record<string, any[]> = {};
     for (const result of results) {
       const key = (result.$attributes as any)[this.foreignPivotKey];
@@ -402,11 +403,11 @@ export class MorphToMany<T extends Model = Model> {
     }
     for (const model of models) {
       const key = model.getAttribute(this.parentKey);
-      model.setRelation(relationName, dictionary[String(key)] || []);
+      model.setRelation(relationName, new Collection(dictionary[String(key)] || []));
     }
   }
 
-  async getResults(): Promise<T[]> {
+  async getResults(): Promise<Collection<T>> {
     return this.builder.get();
   }
 

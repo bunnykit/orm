@@ -1,5 +1,5 @@
 import { expect, test, describe, beforeAll } from "bun:test";
-import { Model, Schema } from "../src/index.js";
+import { Collection, Model, Schema } from "../src/index.js";
 import { setupTestDb } from "./helpers.js";
 
 class Author extends Model {
@@ -92,6 +92,7 @@ describe("Relations", () => {
     await Book.create({ author_id: author.getAttribute("id"), title: "Book B" });
 
     const books = await author.books().getResults();
+    expect(books).toBeInstanceOf(Collection);
     expect(books).toHaveLength(2);
     expect(books[0]).toBeInstanceOf(Book);
     expect(books[0].getAttribute("title")).toBe("Book A");
@@ -157,6 +158,7 @@ describe("Relations", () => {
     await CountryPost.create({ country_user_id: user.getAttribute("id"), title: "Through B" });
 
     const posts = await country.posts().getResults();
+    expect(posts).toBeInstanceOf(Collection);
     expect(posts).toHaveLength(2);
     expect(posts.map((post) => post.getAttribute("title"))).toEqual(["Through A", "Through B"]);
   });

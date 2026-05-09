@@ -21,6 +21,7 @@ An **Eloquent-inspired ORM** built specifically for [Bun](https://bun.sh)'s nati
 - 🏗️ **Schema Builder** — Programmatic table creation, indexes, foreign keys
 - 🔍 **Query Builder** — Chainable `where`, `join`, `orderBy`, `groupBy`, date filters, conditional building, etc.
 - 🧬 **Eloquent-style Models** — Property attributes, defaults, casts, dirty tracking, soft deletes, scopes, find-or-fail, first-or-create
+- 🧺 **Collections** — Laravel-style helpers for multi-record query results
 - 🔗 **Relations** — Standard, many-to-many, polymorphic, through, one-of-many, and relation queries
 - 👁️ **Observers** — Lifecycle hooks (`creating`, `created`, `updating`, `updated`, etc.)
 - 🚀 **Migrations & CLI** — Create, run, reset, refresh, and inspect migrations from the command line
@@ -292,7 +293,7 @@ const user = await User.create({ name: "Alice", email: "alice@example.com" });
 const found = await User.find(1);
 
 // Query
-const adults = await User.where("age", ">=", 18).orderBy("name").get();
+const adults = await User.where("age", ">=", 18).orderBy("name").get(); // Collection<User>
 
 // Update
 user.name = "Alice Smith";
@@ -310,7 +311,7 @@ Start an interactive Bunny session with the ORM already loaded:
 bunny repl
 ```
 
-The REPL exposes `Model`, `Schema`, `Connection`, `db`, and a `Models` map. Any model files under `modelsPath` are loaded automatically and also registered by class name on the global scope. If no project config is present, it starts against an in-memory SQLite database so you can still experiment immediately. This makes it useful for quick inspection, ad hoc queries, and schema experiments without adding any dependencies to your app.
+The REPL exposes `Model`, `Schema`, `Connection`, `Collection`, `collect`, `db`, and a `Models` map. Any model files under `modelsPath` are loaded automatically and also registered by class name on the global scope. If no project config is present, it starts against an in-memory SQLite database so you can still experiment immediately. This makes it useful for quick inspection, ad hoc queries, and schema experiments without adding any dependencies to your app.
 
 ---
 
@@ -558,6 +559,78 @@ User.where("name", "Alice").dump();   // logs SQL, returns builder
 User.where("name", "Alice").dd();     // logs SQL and throws
 ```
 
+### Collections
+
+Queries that return multiple records use `Collection<T>`:
+
+```ts
+import { collect, Collection } from "@bunnykit/orm";
+
+const users = await User.where("active", true).orderBy("name").get();
+
+users instanceof Collection; // true
+users.length;                // array-compatible length
+users[0];                    // array-compatible index access
+users.all();                 // plain User[]
+users.toArray();             // plain User[]
+```
+
+Collections are iterable and JSON-serialize as arrays, so existing loops and API responses keep the expected shape:
+
+```ts
+for (const user of users) {
+  console.log(user.email);
+}
+
+JSON.stringify(users); // [{"id":1,...}]
+```
+
+Use collection helpers for in-memory transformations:
+
+```ts
+const emails = users.pluck("email");
+const admins = users.where("role", "admin");
+const activeIds = users.where("active", true).pluck("id");
+const byEmail = users.keyBy("email");
+const byRole = users.groupBy("role");
+const topUsers = users.sortByDesc("score").take(10);
+
+users.isEmpty();
+users.isNotEmpty();
+users.first();
+users.last();
+users.firstWhere("email", "alice@example.com");
+users.contains("role", "admin");
+users.sum("score");
+users.avg("score");
+users.min("score");
+users.max("score");
+```
+
+`chunk()` callbacks and paginator `data` also receive collections:
+
+```ts
+await User.chunk(100, (users) => {
+  users.pluck("email");
+});
+
+const page = await User.paginate(15, 1);
+page.data instanceof Collection; // true
+```
+
+If you need a plain array directly from a query, use `getArray()`:
+
+```ts
+const usersArray = await User.where("active", true).getArray(); // User[]
+```
+
+You can also wrap any iterable manually:
+
+```ts
+const numbers = collect([1, 2, 3]);
+numbers.sum(); // 6
+```
+
 ### Query Builder Reference
 
 | Method                                                     | Description                         |
@@ -629,7 +702,8 @@ User.where("name", "Alice").dd();     // logs SQL and throws
 | `sharedLock()`                                             | `LOCK IN SHARE MODE` / `FOR SHARE`  |
 | `skipLocked()`                                             | Append `SKIP LOCKED`                |
 | `noWait()`                                                 | Append `NOWAIT`                     |
-| `get()`                                                    | Fetch all rows                      |
+| `get()`                                                    | Fetch all rows as `Collection<T>`   |
+| `getArray()`                                               | Fetch all rows as a plain array     |
 | `first()`                                                  | Fetch first row                     |
 | `find(id, col?)`                                           | Find by ID                          |
 | `findOrFail(id, col?)`                                     | Find or throw                       |
@@ -644,8 +718,8 @@ User.where("name", "Alice").dd();     // logs SQL and throws
 | `max(col)`                                                 | `MAX`                               |
 | `exists()`                                                 | Check any rows exist                |
 | `doesntExist()`                                            | Check no rows exist                 |
-| `paginate(perPage?, page?)`                                | Paginated result set                |
-| `chunk(n, fn)`                                             | Batch iterate                       |
+| `paginate(perPage?, page?)`                                | Paginated result set with collection `data` |
+| `chunk(n, fn)`                                             | Batch iterate with collection chunks |
 | `each(n, fn)`                                              | Per-item iterate                    |
 | `cursor()`                                                 | Lazy async generator                |
 | `lazy(n?)`                                                 | Chunked lazy generator              |
@@ -713,7 +787,7 @@ class Product extends Model {
 
 ```ts
 // Static
-const all = await User.all();
+const all = await User.all(); // Collection<User>
 const user = await User.create({ name: "Alice" });
 const found = await User.find(1);
 const first = await User.first();
@@ -1509,9 +1583,12 @@ const user = await User.create({ name: "Alice", email: "a@example.com" });
 ### Query Builder Typing
 
 ```ts
+import type { Collection } from "@bunnykit/orm";
+
 // Builder<T> is inferred from the model class
 const builder = User.where("name", "Alice"); // Builder<User>
-const users: User[] = await builder.get();
+const users: Collection<User> = await builder.get();
+const usersArray: User[] = await builder.getArray();
 ```
 
 ---
@@ -1649,7 +1726,7 @@ Bunny includes a full test suite built with `bun:test`.
 bun test
 ```
 
-195 tests covering connection management, schema grammars, query builder, model CRUD, casts, scopes, soft deletes, relations, observers, migrations, type generation, lazy eager loading, find-or-fail, first-or-create, increment/decrement, touch, chunk/cursor/lazy streaming, date where clauses, conditional query building, whereNot, latest/oldest, or\* where variants, having/orHaving, orderByDesc/reorder, crossJoin, union, insertOrIgnore, upsert, delete with limit, skipLocked/noWait, JSON where clauses, like/regexp/fulltext, whereAll/whereAny, sole/value, selectRaw/fromSub, updateFrom, dump/dd, and explain.
+309 tests covering connection management, schema grammars, query builder, collections, model CRUD, casts, scopes, soft deletes, relations, observers, migrations, type generation, lazy eager loading, find-or-fail, first-or-create, increment/decrement, touch, chunk/cursor/lazy streaming, date where clauses, conditional query building, whereNot, latest/oldest, or\* where variants, having/orHaving, orderByDesc/reorder, crossJoin, union, insertOrIgnore, upsert, delete with limit, skipLocked/noWait, JSON where clauses, like/regexp/fulltext, whereAll/whereAny, sole/value, selectRaw/fromSub, updateFrom, dump/dd, and explain.
 
 ---
 

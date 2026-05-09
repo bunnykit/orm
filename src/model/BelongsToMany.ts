@@ -1,4 +1,5 @@
 import { Builder } from "../query/Builder.js";
+import { Collection } from "../support/Collection.js";
 import { snakeCase } from "../utils.js";
 import type { Model, ModelConstructor } from "./Model.js";
 
@@ -79,11 +80,11 @@ export class BelongsToMany<T extends Model = Model> {
     this.builder.whereIn(`${this.table}.${this.foreignPivotKey}`, keys);
   }
 
-  async getEager(): Promise<any[]> {
+  async getEager(): Promise<Collection<any>> {
     return this.builder.get();
   }
 
-  match(models: Model[], results: any[], relationName: string): void {
+  match(models: Model[], results: Collection<any>, relationName: string): void {
     const dictionary: Record<string, any[]> = {};
     for (const result of results) {
       const key = (result.$attributes as any)[this.foreignPivotKey];
@@ -93,11 +94,11 @@ export class BelongsToMany<T extends Model = Model> {
     }
     for (const model of models) {
       const key = model.getAttribute(this.parentKey);
-      model.setRelation(relationName, dictionary[key] || []);
+      model.setRelation(relationName, new Collection(dictionary[key] || []));
     }
   }
 
-  async getResults(): Promise<T[]> {
+  async getResults(): Promise<Collection<T>> {
     return this.builder.get();
   }
 
