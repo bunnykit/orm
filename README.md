@@ -394,6 +394,25 @@ await Schema.create("posts", (table) => {
 });
 ```
 
+The foreign key call adds the constraint only. Define the local column first, and make its type match the referenced column:
+
+```ts
+await Schema.create("users", (table) => {
+  table.uuid("id").primary();
+  table.string("email").unique();
+  table.timestamps();
+});
+
+await Schema.create("posts", (table) => {
+  table.increments("id");
+  table.uuid("user_id");
+  table.foreign("user_id").references("id").on("users").onDelete("cascade");
+  table.string("title");
+  table.text("content");
+  table.timestamps();
+});
+```
+
 ---
 
 ## Query Builder
