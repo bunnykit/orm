@@ -85,7 +85,8 @@ describe("TypeGenerator", () => {
     expect(content).toContain("export interface UsersAttributes {");
     expect(content).not.toContain("extends Model");
     expect(content).toContain('declare module "../models/User" {');
-    expect(content).toContain("interface User extends UsersAttributes {}");
+    expect(content).toContain("interface User {");
+    expect(content).toContain("name: string;");
   });
 
   test("generates convention-based declaration mappings", async () => {
@@ -99,11 +100,13 @@ describe("TypeGenerator", () => {
 
     const userContent = await Bun.file(join(conventionDir, "users.d.ts")).text();
     expect(userContent).toContain('declare module "../models/User" {');
-    expect(userContent).toContain("interface User extends UsersAttributes {}");
+    expect(userContent).toContain("interface User {");
+    expect(userContent).toContain("name: string;");
 
     const postContent = await Bun.file(join(conventionDir, "blog_posts.d.ts")).text();
     expect(postContent).toContain('declare module "../models/BlogPost" {');
-    expect(postContent).toContain("interface BlogPost extends BlogPostsAttributes {}");
+    expect(postContent).toContain("interface BlogPost {");
+    expect(postContent).toContain("title: string;");
 
     await rm(conventionDir, { recursive: true, force: true });
   });

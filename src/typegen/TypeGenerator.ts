@@ -66,7 +66,12 @@ export class TypeGenerator {
         const modelDeclaration = this.getModelDeclaration(table, className, target.modelImportPrefix);
         if (declarationOnly && modelDeclaration) {
           lines.push(`declare module "${modelDeclaration.path}" {`);
-          lines.push(`  interface ${modelDeclaration.className} extends ${interfaceName} {}`);
+          lines.push(`  interface ${modelDeclaration.className} {`);
+          for (const col of columns) {
+            const tsType = TypeMapper.sqlToTsType(col.type, col.nullable);
+            lines.push(`    ${col.name}${col.nullable ? "?" : ""}: ${tsType};`);
+          }
+          lines.push("  }");
           lines.push("}");
           lines.push("");
         }

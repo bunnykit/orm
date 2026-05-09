@@ -1219,7 +1219,12 @@ export interface UsersAttributes {
 }
 
 declare module "../User" {
-  interface User extends UsersAttributes {}
+  interface User {
+    id: number;
+    name: string;
+    email: string | null;
+    created_at: string;
+  }
 }
 ```
 
