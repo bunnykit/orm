@@ -141,6 +141,13 @@ export default class CreatePostgresMigrationItems extends Migration {
         [schema, table]
       );
       expect(rows).toHaveLength(1);
+
+      const migrationRows = await connection.query(
+        `SELECT migration, tenant FROM ${grammar.wrap(`${schema}.migrations`)} WHERE migration LIKE $1`,
+        [`%${fileName}`]
+      );
+      expect(migrationRows).toHaveLength(1);
+      expect(migrationRows[0].tenant).toBeNull();
     } finally {
       await connection.run(`DROP SCHEMA IF EXISTS ${grammar.wrap(schema)} CASCADE`);
       await connection.close();

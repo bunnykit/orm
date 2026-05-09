@@ -97,8 +97,16 @@ export class Migrator {
     return this.options.tenantId ?? null;
   }
 
+  private migrationsTable(connection: Connection = this.connection): string {
+    return connection.qualifyTable("migrations");
+  }
+
+  private migrationLocksTable(connection: Connection = this.connection): string {
+    return connection.qualifyTable("migration_locks");
+  }
+
   private scopedMigrations(): Builder<any> {
-    const builder = new Builder<any>(this.connection, "migrations");
+    const builder = new Builder<any>(this.connection, this.migrationsTable());
     const tenantId = this.getTenantId();
     return tenantId === null ? builder.whereNull("tenant") : builder.where("tenant", tenantId);
   }
@@ -131,7 +139,7 @@ export class Migrator {
 
     while (true) {
       try {
-        await new Builder(this.connection, "migration_locks").insert({
+        await new Builder(this.connection, this.migrationLocksTable()).insert({
           name: lockName,
           owner,
           created_at: new Date().toISOString(),
@@ -148,7 +156,7 @@ export class Migrator {
 
   private async releaseLock(): Promise<void> {
     if (!this.shouldLock()) return;
-    await new Builder(this.connection, "migration_locks")
+    await new Builder(this.connection, this.migrationLocksTable())
       .where("name", this.getLockName())
       .delete();
   }
@@ -251,7 +259,7 @@ export class Migrator {
           console.log(`Migrating: ${file.id}`);
           await this.emit("migrating", { migration: file.id, batch });
           await migration.up();
-          await new Builder(connection, "migrations").insert({
+          await new Builder(connection, this.migrationsTable(connection)).insert({
             migration: file.id,
             tenant: this.getTenantId(),
             checksum: file.checksum,
@@ -295,7 +303,7 @@ export class Migrator {
           console.log(`Rolling back: ${record.migration}`);
           await this.emit("rollingBack", { migration: record.migration, batch: record.batch });
           await migration.down();
-          await new Builder(connection, "migrations")
+          await new Builder(connection, this.migrationsTable(connection))
             .where("id", record.id)
             .delete();
           await this.emit("rolledBack", { migration: record.migration, batch: record.batch });
@@ -393,7 +401,7 @@ export class Migrator {
     try {
       await this.scopedMigrations().delete();
       for (const file of files) {
-        await new Builder(this.connection, "migrations").insert({
+        await new Builder(this.connection, this.migrationsTable()).insert({
           migration: file.id,
           tenant: this.getTenantId(),
           checksum: file.checksum,
