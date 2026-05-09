@@ -614,8 +614,9 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
   static where<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, value: any): Builder<InstanceType<M>>;
   static where<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator: string, value: any): Builder<InstanceType<M>>;
+  static where<M extends ModelConstructor>(this: M, column: (query: Builder<InstanceType<M>>) => void | Builder<InstanceType<M>>): Builder<InstanceType<M>>;
   static where<M extends ModelConstructor>(this: M, column: ModelAttributeInput<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>>;
-  static where<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>> | ModelAttributeInput<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static where<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>> | ModelAttributeInput<InstanceType<M>> | ((query: Builder<InstanceType<M>>) => void | Builder<InstanceType<M>>), operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().where(column as any, operator, value);
   }
 
@@ -637,8 +638,9 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
   static orWhere<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, value: any): Builder<InstanceType<M>>;
   static orWhere<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, operator: string, value: any): Builder<InstanceType<M>>;
+  static orWhere<M extends ModelConstructor>(this: M, column: (query: Builder<InstanceType<M>>) => void | Builder<InstanceType<M>>): Builder<InstanceType<M>>;
   static orWhere<M extends ModelConstructor>(this: M, column: ModelAttributeInput<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>>;
-  static orWhere<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>> | ModelAttributeInput<InstanceType<M>>, operator?: string | any, value?: any): Builder<InstanceType<M>> {
+  static orWhere<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>> | ModelAttributeInput<InstanceType<M>> | ((query: Builder<InstanceType<M>>) => void | Builder<InstanceType<M>>), operator?: string | any, value?: any): Builder<InstanceType<M>> {
     return this.query().orWhere(column as any, operator, value);
   }
 
@@ -698,15 +700,15 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().oldest(column);
   }
 
-  static when<M extends ModelConstructor>(this: M, condition: any, callback: (query: Builder<any>) => void | Builder<any>, defaultCallback?: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>> {
+  static when<M extends ModelConstructor>(this: M, condition: any, callback: (query: Builder<InstanceType<M>>) => void | Builder<InstanceType<M>>, defaultCallback?: (query: Builder<InstanceType<M>>) => void | Builder<InstanceType<M>>): Builder<InstanceType<M>> {
     return this.query().when(condition, callback, defaultCallback);
   }
 
-  static unless<M extends ModelConstructor>(this: M, condition: any, callback: (query: Builder<any>) => void | Builder<any>, defaultCallback?: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>> {
+  static unless<M extends ModelConstructor>(this: M, condition: any, callback: (query: Builder<InstanceType<M>>) => void | Builder<InstanceType<M>>, defaultCallback?: (query: Builder<InstanceType<M>>) => void | Builder<InstanceType<M>>): Builder<InstanceType<M>> {
     return this.query().unless(condition, callback, defaultCallback);
   }
 
-  static tap<M extends ModelConstructor>(this: M, callback: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>> {
+  static tap<M extends ModelConstructor>(this: M, callback: (query: Builder<InstanceType<M>>) => void | Builder<InstanceType<M>>): Builder<InstanceType<M>> {
     return this.query().tap(callback);
   }
 
