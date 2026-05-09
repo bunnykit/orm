@@ -12,6 +12,19 @@ class UppercaseCast implements CastsAttributes {
   }
 }
 
+class CountingCast implements CastsAttributes {
+  static gets = 0;
+
+  get(_model: Model, _key: string, value: any): any {
+    CountingCast.gets++;
+    return String(value).toLowerCase();
+  }
+
+  set(_model: Model, _key: string, value: any): any {
+    return String(value).toUpperCase();
+  }
+}
+
 class CastedModel extends Model {
   static table = "casted";
   static casts = {
@@ -23,6 +36,13 @@ class CastedModel extends Model {
     price: "decimal:2",
     secret: "encrypted",
     code: UppercaseCast,
+  };
+}
+
+class CachedCastModel extends Model {
+  static table = "cached_casted";
+  static casts = {
+    code: CountingCast,
   };
 }
 
@@ -40,6 +60,10 @@ describe("Attribute Casting", () => {
       table.text("secret").nullable();
       table.string("code").nullable();
       table.timestamps();
+    });
+    await Schema.create("cached_casted", (table) => {
+      table.increments("id");
+      table.string("code");
     });
   });
 
@@ -93,5 +117,22 @@ describe("Attribute Casting", () => {
     expect(record.$attributes.code).toBe("ABC");
     expect(record.code).toBe("abc");
     expect(record.count).toBe("0");
+  });
+
+  test("caches casted values until the attribute or casts change", () => {
+    CountingCast.gets = 0;
+    const record = new CachedCastModel({ code: "ABC" });
+
+    expect(record.code).toBe("abc");
+    expect(record.code).toBe("abc");
+    expect(CountingCast.gets).toBe(1);
+
+    record.code = "XYZ";
+    expect(record.code).toBe("xyz");
+    expect(CountingCast.gets).toBe(2);
+
+    record.mergeCasts({ code: "string" });
+    expect(record.code).toBe("XYZ");
+    expect(CountingCast.gets).toBe(2);
   });
 });

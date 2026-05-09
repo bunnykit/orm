@@ -20,6 +20,7 @@ type BaseModelInstanceKey =
   | "$exists"
   | "$relations"
   | "$casts"
+  | "$castCache"
   | "$connection"
   | "fill"
   | "setConnection"
@@ -86,6 +87,43 @@ export interface CastsAttributes {
   get(model: Model, key: string, value: any, attributes: Record<string, any>): any;
   set(model: Model, key: string, value: any, attributes: Record<string, any>): any;
 }
+
+const modelProxyHandler: ProxyHandler<Model<any>> = {
+  get(target, prop, receiver) {
+    if (typeof prop === "string" && !(prop in target) && prop in target.$attributes) {
+      return target.getAttribute(prop);
+    }
+    return Reflect.get(target, prop, receiver);
+  },
+  set(target, prop, value, receiver) {
+    if (typeof prop === "string" && !prop.startsWith("$") && !(prop in target)) {
+      target.setAttribute(prop, value);
+      return true;
+    }
+    return Reflect.set(target, prop, value, receiver);
+  },
+  has(target, prop) {
+    if (typeof prop === "string" && prop in target.$attributes) return true;
+    return Reflect.has(target, prop);
+  },
+  getOwnPropertyDescriptor(target, prop) {
+    if (typeof prop === "string" && prop in target.$attributes) {
+      return {
+        enumerable: true,
+        configurable: true,
+        value: target.getAttribute(prop),
+      };
+    }
+    return Reflect.getOwnPropertyDescriptor(target, prop);
+  },
+  ownKeys(target) {
+    const keys = new Set(Reflect.ownKeys(target) as string[]);
+    for (const key of Object.keys(target.$attributes)) {
+      if (!key.startsWith("$")) keys.add(key);
+    }
+    return Array.from(keys);
+  },
+};
 
 const globalScopes = new WeakMap<ModelConstructor, Map<string, GlobalScope>>();
 
@@ -456,6 +494,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   $exists = false;
   $relations: Record<string, any> = {};
   $casts: Record<string, CastDefinition> = {};
+  $castCache: Record<string, any> = {};
   $connection?: Connection;
 
   constructor(attributes?: Partial<T>) {
@@ -466,71 +505,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     if (attributes) {
       this.fill(attributes);
     }
-    this.syncAttributeProperties();
-
-    // Minimal Proxy fallback for dynamic property access on undefined keys.
-    // Pre-defined attribute getters/setters bypass the Proxy entirely.
-    return new Proxy(this, {
-      get(target, prop, receiver) {
-        if (typeof prop === "string" && !(prop in target) && prop in target.$attributes) {
-          return target.getAttribute(prop);
-        }
-        return Reflect.get(target, prop, receiver);
-      },
-      set(target, prop, value, receiver) {
-        if (typeof prop === "string" && !prop.startsWith("$") && !(prop in target)) {
-          target.setAttribute(prop, value);
-          return true;
-        }
-        return Reflect.set(target, prop, value, receiver);
-      },
-      has(target, prop) {
-        if (typeof prop === "string" && prop in target.$attributes) return true;
-        return Reflect.has(target, prop);
-      },
-      getOwnPropertyDescriptor(target, prop) {
-        if (typeof prop === "string" && prop in target.$attributes) {
-          return {
-            enumerable: true,
-            configurable: true,
-            value: target.getAttribute(prop),
-          };
-        }
-        return Reflect.getOwnPropertyDescriptor(target, prop);
-      },
-      ownKeys(target) {
-        const keys = new Set(Reflect.ownKeys(target) as string[]);
-        for (const key of Object.keys(target.$attributes)) {
-          if (!key.startsWith("$")) keys.add(key);
-        }
-        return Array.from(keys);
-      },
-    });
-  }
-
-  private defineAttributeProperty(key: string): void {
-    if (key in this) return;
-    Object.defineProperty(this, key, {
-      get: () => this.getAttribute(key),
-      set: (value) => this.setAttribute(key, value),
-      enumerable: true,
-      configurable: true,
-    });
-  }
-
-  private syncAttributeProperties(): void {
-    const currentKeys = new Set(Object.keys(this.$attributes));
-    // Remove stale attribute properties
-    for (const key of Reflect.ownKeys(this) as string[]) {
-      if (key.startsWith("$") || typeof key !== "string") continue;
-      const desc = Object.getOwnPropertyDescriptor(this, key);
-      if (desc && desc.get && desc.configurable && !currentKeys.has(key)) {
-        delete (this as any)[key];
-      }
-    }
-    for (const key of currentKeys) {
-      this.defineAttributeProperty(key);
-    }
+    return new Proxy(this, modelProxyHandler);
   }
 
   static getTable(): string {
@@ -615,6 +590,22 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     const type = String(column.type || "").toLowerCase();
     const numericTypes = new Set(["integer", "int", "bigint", "smallint", "tinyint", "real", "float", "double", "decimal", "numeric"]);
     return !numericTypes.has(type);
+  }
+
+  static hydrate<M extends ModelConstructor>(
+    this: M,
+    row: Record<string, any>,
+    connection?: Connection
+  ): InstanceType<M> {
+    const instance = new this() as InstanceType<M>;
+    instance.$attributes = { ...(instance.$attributes as Record<string, any>), ...row } as any;
+    instance.$original = { ...row } as any;
+    instance.$castCache = {};
+    instance.$exists = true;
+    if (connection) {
+      instance.setConnection(connection);
+    }
+    return instance;
   }
 
   static async create<M extends ModelConstructor>(this: M, attributes: ModelAttributeInput<InstanceType<M>>): Promise<InstanceType<M>> {
@@ -933,15 +924,22 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   getAttribute<K extends keyof T>(key: K): T[K];
   getAttribute(key: string): any;
   getAttribute(key: string | keyof T): any {
+    if (Object.prototype.hasOwnProperty.call(this.$castCache, key as string)) {
+      return this.$castCache[key as string];
+    }
     const value = (this.$attributes as any)[key];
-    return this.castAttribute(key as string, value);
+    const casted = this.castAttribute(key as string, value);
+    if (this.getCastDefinition(key as string) && value !== null && value !== undefined) {
+      this.$castCache[key as string] = casted;
+    }
+    return casted;
   }
 
   setAttribute<K extends keyof T>(key: K, value: T[K]): void;
   setAttribute(key: string, value: any): void;
   setAttribute(key: string | keyof T, value: any): void {
     (this.$attributes as any)[key] = this.serializeCastAttribute(key as string, value);
-    this.defineAttributeProperty(key as string);
+    delete this.$castCache[key as string];
   }
 
   castAttribute(key: string, value: any): any {
@@ -1021,6 +1019,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
   mergeCasts(casts: Record<string, CastDefinition>): this {
     this.$casts = { ...this.$casts, ...casts };
+    this.$castCache = {};
     return this;
   }
 
@@ -1059,6 +1058,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       let dirty = this.getDirty();
       if (Object.keys(dirty).length > 0 && constructor.timestamps) {
         (this.$attributes as any)["updated_at"] = this.freshTimestamp();
+        delete this.$castCache.updated_at;
         dirty = this.getDirty();
       }
       if (Object.keys(dirty).length > 0) {
@@ -1082,6 +1082,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
         const now = this.freshTimestamp();
         (this.$attributes as any)["created_at"] = now;
         (this.$attributes as any)["updated_at"] = now;
+        delete this.$castCache.created_at;
+        delete this.$castCache.updated_at;
       }
 
       const primaryKey = constructor.primaryKey;
@@ -1090,6 +1092,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       if ((primaryKeyValue === null || primaryKeyValue === undefined || primaryKeyValue === "") && shouldGeneratePrimaryKey) {
         const generated = crypto.randomUUID();
         (this.$attributes as any)[primaryKey] = generated;
+        delete this.$castCache[primaryKey];
       }
 
       const connection = this.getConnection();
@@ -1099,6 +1102,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
         const result = await new Builder(connection, connection.qualifyTable(constructor.getTable())).insertGetId(this.$attributes);
         if (result) {
           (this.$attributes as any)[constructor.primaryKey] = result;
+          delete this.$castCache[constructor.primaryKey];
         }
       }
 
@@ -1108,8 +1112,6 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       await ObserverRegistry.dispatch("created", this);
       await ObserverRegistry.dispatch("saved", this);
     }
-
-    this.syncAttributeProperties();
 
     const identityMap = IdentityMap.current();
     if (identityMap) {
@@ -1127,10 +1129,11 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     if (!constructor.timestamps) return;
     const now = this.freshTimestamp();
     (this.$attributes as any)["updated_at"] = now;
+    delete this.$castCache.updated_at;
     if (!this.$exists) {
       (this.$attributes as any)["created_at"] = now;
+      delete this.$castCache.created_at;
     }
-    this.syncAttributeProperties();
   }
 
   async touch(): Promise<boolean> {
@@ -1144,8 +1147,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       .where(constructor.primaryKey, pk)
       .update({ updated_at: now } as any);
     (this.$attributes as any)["updated_at"] = now;
+    delete this.$castCache.updated_at;
     this.$original = { ...this.$attributes };
-    this.syncAttributeProperties();
     return true;
   }
 
@@ -1164,11 +1167,12 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
     await builder.increment(column, amount, extra);
     (this.$attributes as any)[column] = ((this.$attributes as any)[column] || 0) + amount;
+    delete this.$castCache[column as string];
     for (const [key, value] of Object.entries(extra)) {
       (this.$attributes as any)[key] = value;
+      delete this.$castCache[key];
     }
     this.$original = { ...this.$attributes };
-    this.syncAttributeProperties();
     return this;
   }
 
@@ -1195,8 +1199,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
         .where(constructor.primaryKey, pk)
         .update({ [constructor.deletedAtColumn]: deletedAt } as any);
       (this.$attributes as any)[constructor.deletedAtColumn] = deletedAt;
+      delete this.$castCache[constructor.deletedAtColumn];
       this.$original = { ...this.$attributes };
-      this.syncAttributeProperties();
     } else {
       const connection = this.getConnection();
       await new Builder(connection, connection.qualifyTable(constructor.getTable()))
@@ -1225,9 +1229,9 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       .where(constructor.primaryKey, pk)
       .update({ [constructor.deletedAtColumn]: null } as any);
     (this.$attributes as any)[constructor.deletedAtColumn] = null;
+    delete this.$castCache[constructor.deletedAtColumn];
     this.$original = { ...this.$attributes };
     this.$exists = true;
-    this.syncAttributeProperties();
     return true;
   }
 
@@ -1264,7 +1268,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     if (result) {
       this.$attributes = result.$attributes as T;
       this.$original = { ...result.$attributes } as Partial<T>;
-      this.syncAttributeProperties();
+      this.$castCache = {};
       // Ensure this instance is the canonical one in the identity map
       if (identityMap) {
         IdentityMap.set(constructor.getTable(), pk, this);

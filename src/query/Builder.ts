@@ -37,6 +37,7 @@ export class Builder<T = Record<string, any>> {
   updateJoins: string[] = [];
   bindings: any[] = [];
   private parameterize = false;
+  private sqlCache?: string;
 
   constructor(connection: Connection, table: string) {
     this.connection = connection;
@@ -47,22 +48,29 @@ export class Builder<T = Record<string, any>> {
     return this.connection.getGrammar();
   }
 
+  private invalidateSqlCache(): void {
+    this.sqlCache = undefined;
+  }
+
   setModel(model: ModelConstructor): this {
     this.model = model;
     return this;
   }
 
   table(table: string): this {
+    this.invalidateSqlCache();
     this.tableName = table;
     return this;
   }
 
   select(...columns: ModelColumn<T>[]): this {
+    this.invalidateSqlCache();
     this.columns = columns;
     return this;
   }
 
   distinct(): this {
+    this.invalidateSqlCache();
     this.distinctFlag = true;
     return this;
   }
@@ -87,6 +95,7 @@ export class Builder<T = Record<string, any>> {
       operator = "=";
     }
 
+    this.invalidateSqlCache();
     this.wheres.push({ type: "basic", column, operator, value, boolean, scope });
     return this;
   }
@@ -95,6 +104,7 @@ export class Builder<T = Record<string, any>> {
     const nested = new Builder<T>(this.connection, this.tableName);
     callback(nested);
     if (nested.wheres.length > 0) {
+      this.invalidateSqlCache();
       this.wheres.push({ type: "nested", column: "", query: nested.wheres, boolean, scope: undefined });
     }
     return this;
@@ -122,31 +132,37 @@ export class Builder<T = Record<string, any>> {
   }
 
   whereIn<K extends ModelColumn<T>>(column: K, values: ModelColumnValue<T, K>[], boolean: "and" | "or" = "and", scope?: string): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "in", column, value: values, boolean, scope });
     return this;
   }
 
   whereNotIn<K extends ModelColumn<T>>(column: K, values: ModelColumnValue<T, K>[], boolean: "and" | "or" = "and", scope?: string): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "in", column, value: values, boolean, operator: "NOT IN" as any, scope });
     return this;
   }
 
   whereNull(column: ModelColumn<T>, boolean: "and" | "or" = "and", scope?: string): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "null", column, boolean, scope });
     return this;
   }
 
   whereNotNull(column: ModelColumn<T>, boolean: "and" | "or" = "and", scope?: string): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "null", column, boolean, operator: "NOT NULL" as any, scope });
     return this;
   }
 
   whereBetween<K extends ModelColumn<T>>(column: K, values: [ModelColumnValue<T, K>, ModelColumnValue<T, K>], boolean: "and" | "or" = "and", scope?: string): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "between", column, value: values, boolean, scope });
     return this;
   }
 
   whereNotBetween<K extends ModelColumn<T>>(column: K, values: [ModelColumnValue<T, K>, ModelColumnValue<T, K>], boolean: "and" | "or" = "and", scope?: string): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "between", column, value: values, boolean, operator: "NOT BETWEEN" as any, scope });
     return this;
   }
@@ -192,16 +208,19 @@ export class Builder<T = Record<string, any>> {
   }
 
   whereRaw(sql: string, boolean: "and" | "or" = "and", scope?: string): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "raw", column: sql, boolean, scope });
     return this;
   }
 
   whereColumn(first: string, operator: string, second: string, boolean: "and" | "or" = "and"): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "column", column: first, operator, value: second, boolean });
     return this;
   }
 
   whereExists(sql: string, boolean: "and" | "or" = "and", not: boolean = false): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "exists", column: sql, boolean, operator: not ? "NOT EXISTS" : "EXISTS" });
     return this;
   }
@@ -247,6 +266,7 @@ export class Builder<T = Record<string, any>> {
   }
 
   whereJsonContains(column: ModelColumn<T>, value: any, boolean: "and" | "or" = "and", not: boolean = false): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "json_contains", column, value, boolean, scope: undefined, not });
     return this;
   }
@@ -256,11 +276,13 @@ export class Builder<T = Record<string, any>> {
       value = operator as number;
       operator = "=";
     }
+    this.invalidateSqlCache();
     this.wheres.push({ type: "json_length", column, operator: String(operator), value, boolean, scope: undefined, not });
     return this;
   }
 
   whereLike(column: ModelColumn<T>, value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "like", column, value, boolean, scope: undefined, not });
     return this;
   }
@@ -270,27 +292,32 @@ export class Builder<T = Record<string, any>> {
   }
 
   whereRegexp(column: ModelColumn<T>, value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "regexp", column, value, boolean, scope: undefined, not });
     return this;
   }
 
   whereFullText(columns: ModelColumn<T> | ModelColumn<T>[], value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
     const cols = Array.isArray(columns) ? columns : [columns];
+    this.invalidateSqlCache();
     this.wheres.push({ type: "fulltext", column: "", columns: cols as string[], value, boolean, scope: undefined, not });
     return this;
   }
 
   whereAll(columns: ModelColumn<T>[], operator: string, value: any, boolean: "and" | "or" = "and"): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "all", column: "", columns: columns as string[], operator, value, boolean, scope: undefined });
     return this;
   }
 
   whereAny(columns: ModelColumn<T>[], operator: string, value: any, boolean: "and" | "or" = "and"): this {
+    this.invalidateSqlCache();
     this.wheres.push({ type: "any", column: "", columns: columns as string[], operator, value, boolean, scope: undefined });
     return this;
   }
 
   orderBy(column: ModelColumn<T>, direction: "asc" | "desc" = "asc"): this {
+    this.invalidateSqlCache();
     this.orders.push({ column, direction });
     return this;
   }
@@ -304,6 +331,7 @@ export class Builder<T = Record<string, any>> {
   }
 
   inRandomOrder(): this {
+    this.invalidateSqlCache();
     this.randomOrderFlag = true;
     return this;
   }
@@ -313,6 +341,7 @@ export class Builder<T = Record<string, any>> {
   }
 
   reorder(column?: ModelColumn<T>, direction: "asc" | "desc" = "asc"): this {
+    this.invalidateSqlCache();
     this.orders = [];
     this.randomOrderFlag = false;
     if (column) {
@@ -322,21 +351,25 @@ export class Builder<T = Record<string, any>> {
   }
 
   groupBy(...columns: ModelColumn<T>[]): this {
+    this.invalidateSqlCache();
     this.groups.push(...columns);
     return this;
   }
 
   having(column: ModelColumn<T>, operator: string, value: any): this {
+    this.invalidateSqlCache();
     this.havings.push({ column, operator, value, boolean: "and" });
     return this;
   }
 
   orHaving(column: ModelColumn<T>, operator: string, value: any): this {
+    this.invalidateSqlCache();
     this.havings.push({ column, operator, value, boolean: "or" });
     return this;
   }
 
   havingRaw(sql: string, boolean: "and" | "or" = "and"): this {
+    this.invalidateSqlCache();
     this.havings.push({ sql, boolean });
     return this;
   }
@@ -346,11 +379,13 @@ export class Builder<T = Record<string, any>> {
   }
 
   limit(count: number): this {
+    this.invalidateSqlCache();
     this.limitValue = count;
     return this;
   }
 
   offset(count: number): this {
+    this.invalidateSqlCache();
     this.offsetValue = count;
     return this;
   }
@@ -361,6 +396,7 @@ export class Builder<T = Record<string, any>> {
 
   join(table: string, first: string, operator: string, second: string, type: string = "INNER"): this {
     const joinSql = `${type} JOIN ${this.grammar.wrap(table)} ON ${this.grammar.wrap(first)} ${operator} ${this.grammar.wrap(second)}`;
+    this.invalidateSqlCache();
     this.joins.push(joinSql);
     return this;
   }
@@ -374,12 +410,14 @@ export class Builder<T = Record<string, any>> {
   }
 
   crossJoin(table: string): this {
+    this.invalidateSqlCache();
     this.joins.push(`CROSS JOIN ${this.grammar.wrap(table)}`);
     return this;
   }
 
   union(query: Builder<T> | string, all: boolean = false): this {
     const sql = typeof query === "string" ? query : query.toSql();
+    this.invalidateSqlCache();
     this.unions.push({ query: sql, all });
     return this;
   }
@@ -394,11 +432,13 @@ export class Builder<T = Record<string, any>> {
   }
 
   withoutGlobalScope(scope: string): this {
+    this.invalidateSqlCache();
     this.wheres = this.wheres.filter((where) => where.scope !== scope);
     return this;
   }
 
   withoutGlobalScopes(): this {
+    this.invalidateSqlCache();
     this.wheres = this.wheres.filter((where) => !where.scope);
     return this;
   }
@@ -520,6 +560,7 @@ export class Builder<T = Record<string, any>> {
   }
 
   addSelect(...columns: ModelColumn<T>[]): this {
+    this.invalidateSqlCache();
     if (this.columns.length === 1 && this.columns[0] === "*") {
       this.columns = [`${this.tableName}.*`];
     }
@@ -528,17 +569,20 @@ export class Builder<T = Record<string, any>> {
   }
 
   selectRaw(sql: string): this {
+    this.invalidateSqlCache();
     this.columns.push(sql);
     return this;
   }
 
   fromSub(query: Builder<any> | string, as: string): this {
     const sql = typeof query === "string" ? query : query.toSql();
+    this.invalidateSqlCache();
     this.fromRaw = `(${sql}) AS ${this.grammar.wrap(as)}`;
     return this;
   }
 
   updateFrom(table: string, first: string, operator: string, second: string): this {
+    this.invalidateSqlCache();
     this.updateJoins.push(`INNER JOIN ${this.grammar.wrap(table)} ON ${this.grammar.wrap(first)} ${operator} ${this.grammar.wrap(second)}`);
     return this;
   }
@@ -705,6 +749,7 @@ export class Builder<T = Record<string, any>> {
   }
 
   toSql(): string {
+    if (!this.parameterize && this.sqlCache) return this.sqlCache;
     const distinct = this.distinctFlag ? "DISTINCT " : "";
     const from = this.fromRaw || this.grammar.wrap(this.tableName);
     let sql = `SELECT ${distinct}${this.compileColumns()} FROM ${from}`;
@@ -719,7 +764,9 @@ export class Builder<T = Record<string, any>> {
     for (const union of this.unions) {
       sql += ` UNION${union.all ? " ALL" : ""} ${union.query}`;
     }
-    return sql.replace(/\s+/g, " ").trim();
+    const compiled = sql.replace(/\s+/g, " ").trim();
+    if (!this.parameterize) this.sqlCache = compiled;
+    return compiled;
   }
 
   async get(): Promise<T[]> {
@@ -746,12 +793,7 @@ export class Builder<T = Record<string, any>> {
           }
         }
 
-        const instance = new (this.model as any)(row);
-        instance.$exists = true;
-        instance.$original = { ...row };
-        if (typeof instance.setConnection === "function") {
-          instance.setConnection(this.connection);
-        }
+        const instance = (this.model as any).hydrate(row, this.connection);
 
         if (identityMap) {
           const pk = row[primaryKey];
@@ -847,6 +889,7 @@ export class Builder<T = Record<string, any>> {
     query.offsetValue = undefined;
     query.eagerLoads = [];
     query.lockMode = undefined;
+    query.invalidateSqlCache();
     const result = await query.first();
     return result ? (result as any)[alias] : null;
   }
@@ -876,6 +919,7 @@ export class Builder<T = Record<string, any>> {
     countQuery.limitValue = undefined;
     countQuery.offsetValue = undefined;
     countQuery.orders = [];
+    countQuery.invalidateSqlCache();
     const total = await countQuery.count();
     const data = await this.clone().forPage(page, perPage).get();
     return {
@@ -1206,6 +1250,7 @@ export class Builder<T = Record<string, any>> {
   lockForUpdate(): this {
     const driver = this.connection.getDriverName();
     if (driver !== "sqlite") {
+      this.invalidateSqlCache();
       this.lockMode = "FOR UPDATE";
     }
     return this;
@@ -1214,8 +1259,10 @@ export class Builder<T = Record<string, any>> {
   sharedLock(): this {
     const driver = this.connection.getDriverName();
     if (driver === "mysql") {
+      this.invalidateSqlCache();
       this.lockMode = "LOCK IN SHARE MODE";
     } else if (driver === "postgres") {
+      this.invalidateSqlCache();
       this.lockMode = "FOR SHARE";
     }
     return this;
@@ -1223,6 +1270,7 @@ export class Builder<T = Record<string, any>> {
 
   skipLocked(): this {
     if (this.lockMode) {
+      this.invalidateSqlCache();
       this.lockMode += " SKIP LOCKED";
     }
     return this;
@@ -1230,6 +1278,7 @@ export class Builder<T = Record<string, any>> {
 
   noWait(): this {
     if (this.lockMode) {
+      this.invalidateSqlCache();
       this.lockMode += " NOWAIT";
     }
     return this;
@@ -1240,6 +1289,7 @@ export class Builder<T = Record<string, any>> {
       value = operator;
       operator = "=";
     }
+    this.invalidateSqlCache();
     this.wheres.push({ type: "date", column: column as string, operator, value, boolean, scope: undefined, dateType: type });
     return this;
   }

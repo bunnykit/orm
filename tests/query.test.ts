@@ -14,6 +14,25 @@ describe("Query Builder", () => {
     expect(sql).toContain("LIMIT 10");
   });
 
+  test("toSql caches compiled SQL and invalidates after mutations", () => {
+    const connection = setupTestDb();
+    const builder = new Builder(connection, "users").where("age", ">", 18);
+
+    const first = builder.toSql();
+    const second = builder.toSql();
+    expect(second).toBe(first);
+
+    builder.orderBy("name");
+    const afterOrder = builder.toSql();
+    expect(afterOrder).not.toBe(first);
+    expect(afterOrder).toContain('ORDER BY "name" ASC');
+
+    builder.limit(5);
+    const afterLimit = builder.toSql();
+    expect(afterLimit).not.toBe(afterOrder);
+    expect(afterLimit).toContain("LIMIT 5");
+  });
+
   test("generates whereIn sql", () => {
     const connection = setupTestDb();
     const builder = new Builder(connection, "users");
