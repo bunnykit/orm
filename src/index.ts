@@ -1,6 +1,6 @@
 export { Connection } from "./connection/Connection.js";
 export { ConnectionManager } from "./connection/ConnectionManager.js";
-export type { TenantResolution, TenantResolver } from "./connection/ConnectionManager.js";
+export type { TenantCachePolicy, TenantResolution, TenantResolver } from "./connection/ConnectionManager.js";
 export { TenantContext } from "./connection/TenantContext.js";
 export type { ActiveTenantContext } from "./connection/TenantContext.js";
 export { configureBunny } from "./config/BunnyConfig.js";
@@ -37,7 +37,7 @@ export { IdentityMap } from "./model/IdentityMap.js";
 
 export { Migration } from "./migration/Migration.js";
 export { Migrator } from "./migration/Migrator.js";
-export type { MigrationEvent, MigrationEventListener, MigrationEventPayload } from "./migration/Migrator.js";
+export type { MigrationEvent, MigrationEventListener, MigrationEventPayload, MigrationStatusRow, MigratorOptions } from "./migration/Migrator.js";
 export { MigrationCreator } from "./migration/MigrationCreator.js";
 export { TypeGenerator } from "./typegen/TypeGenerator.js";
 export { TypeMapper } from "./typegen/TypeMapper.js";

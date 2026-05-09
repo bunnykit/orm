@@ -14,6 +14,19 @@ interface MigrationRecord {
   id: number;
   migration: string;
   batch: number;
+  tenant?: string | null;
+}
+
+export interface MigrationStatusRow {
+  migration: string;
+  status: string;
+  tenant: string | null;
+}
+
+export interface MigratorOptions {
+  tenantId?: string | null;
+  lock?: boolean;
+  lockTimeoutMs?: number;
 }
 
 export type MigrationEvent =
@@ -39,7 +52,8 @@ export class Migrator {
     private connection: Connection,
     private path: string | string[],
     private typesOutDir?: string,
-    private typeGeneratorOptions: Omit<TypeGeneratorOptions, "outDir"> = {}
+    private typeGeneratorOptions: Omit<TypeGeneratorOptions, "outDir"> = {},
+    private options: MigratorOptions = {}
   ) {
     Schema.setConnection(connection);
   }
@@ -54,9 +68,77 @@ export class Migrator {
       await Schema.create("migrations", (table: Blueprint) => {
         table.increments("id");
         table.string("migration");
+        table.string("tenant").nullable().index();
         table.integer("batch");
       });
+      return;
     }
+
+    if (!(await Schema.hasColumn("migrations", "tenant"))) {
+      await Schema.table("migrations", (table: Blueprint) => {
+        table.string("tenant").nullable().index();
+      });
+    }
+  }
+
+  private getTenantId(): string | null {
+    return this.options.tenantId ?? null;
+  }
+
+  private scopedMigrations(): Builder<any> {
+    const builder = new Builder<any>(this.connection, "migrations");
+    const tenantId = this.getTenantId();
+    return tenantId === null ? builder.whereNull("tenant") : builder.where("tenant", tenantId);
+  }
+
+  private async ensureMigrationLocksTable(): Promise<void> {
+    if (await Schema.hasTable("migration_locks")) return;
+    await Schema.create("migration_locks", (table: Blueprint) => {
+      table.string("name").primary();
+      table.string("owner");
+      table.string("created_at");
+    });
+  }
+
+  private getLockName(): string {
+    const tenantId = this.getTenantId();
+    return tenantId === null ? "migrations:default" : `migrations:tenant:${tenantId}`;
+  }
+
+  private shouldLock(): boolean {
+    return this.options.lock !== false;
+  }
+
+  private async acquireLock(): Promise<boolean> {
+    if (!this.shouldLock()) return false;
+    await this.ensureMigrationLocksTable();
+    const lockName = this.getLockName();
+    const timeoutMs = this.options.lockTimeoutMs ?? 30000;
+    const owner = `${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    const started = Date.now();
+
+    while (true) {
+      try {
+        await new Builder(this.connection, "migration_locks").insert({
+          name: lockName,
+          owner,
+          created_at: new Date().toISOString(),
+        });
+        return true;
+      } catch {
+        if (Date.now() - started >= timeoutMs) {
+          throw new Error(`Could not acquire migration lock "${lockName}" within ${timeoutMs}ms.`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  }
+
+  private async releaseLock(): Promise<void> {
+    if (!this.shouldLock()) return;
+    await new Builder(this.connection, "migration_locks")
+      .where("name", this.getLockName())
+      .delete();
   }
 
   static on(event: MigrationEvent, listener: MigrationEventListener): () => void {
@@ -78,7 +160,8 @@ export class Migrator {
   }
 
   private async getLastBatchNumber(): Promise<number> {
-    const result = await new Builder(this.connection, "migrations")
+    await this.ensureMigrationsTable();
+    const result = await this.scopedMigrations()
       .select("MAX(batch) as batch")
       .first();
     return (result as any)?.batch || 0;
@@ -105,19 +188,21 @@ export class Migrator {
   }
 
   async run(): Promise<void> {
-    const ran = await this.getRan();
-    const files = await this.getMigrationFiles();
-    const pending = files.filter((f) => !ran.has(f.id) && !ran.has(f.fileName));
-
-    if (pending.length === 0) {
-      console.log("Nothing to migrate.");
-      return;
-    }
-
-    const batch = (await this.getLastBatchNumber()) + 1;
-
-    await this.connection.beginTransaction();
+    await this.ensureMigrationsTable();
+    const locked = await this.acquireLock();
     try {
+      const ran = await this.getRan();
+      const files = await this.getMigrationFiles();
+      const pending = files.filter((f) => !ran.has(f.id) && !ran.has(f.fileName));
+
+      if (pending.length === 0) {
+        console.log("Nothing to migrate.");
+        return;
+      }
+
+      const batch = (await this.getLastBatchNumber()) + 1;
+
+      await this.connection.beginTransaction();
       for (const file of pending) {
         const migration = await this.resolve(file.id);
         console.log(`Migrating: ${file.id}`);
@@ -125,6 +210,7 @@ export class Migrator {
         await migration.up();
         await new Builder(this.connection, "migrations").insert({
           migration: file.id,
+          tenant: this.getTenantId(),
           batch,
         });
         await this.emit("migrated", { migration: file.id, batch });
@@ -135,28 +221,32 @@ export class Migrator {
     } catch (error) {
       await this.connection.rollback();
       throw error;
+    } finally {
+      if (locked) await this.releaseLock();
     }
   }
 
   async rollback(): Promise<void> {
-    const batch = await this.getLastBatchNumber();
-    if (batch === 0) {
-      console.log("Nothing to rollback.");
-      return;
-    }
-
-    const records = (await new Builder(this.connection, "migrations")
-      .where("batch", batch)
-      .orderBy("id", "desc")
-      .get()) as MigrationRecord[];
-
-    if (records.length === 0) {
-      console.log("Nothing to rollback.");
-      return;
-    }
-
-    await this.connection.beginTransaction();
+    await this.ensureMigrationsTable();
+    const locked = await this.acquireLock();
     try {
+      const batch = await this.getLastBatchNumber();
+      if (batch === 0) {
+        console.log("Nothing to rollback.");
+        return;
+      }
+
+      const records = (await this.scopedMigrations()
+        .where("batch", batch)
+        .orderBy("id", "desc")
+        .get()) as MigrationRecord[];
+
+      if (records.length === 0) {
+        console.log("Nothing to rollback.");
+        return;
+      }
+
+      await this.connection.beginTransaction();
       for (const record of records) {
         const migration = await this.resolve(record.migration);
         console.log(`Rolling back: ${record.migration}`);
@@ -173,6 +263,8 @@ export class Migrator {
     } catch (error) {
       await this.connection.rollback();
       throw error;
+    } finally {
+      if (locked) await this.releaseLock();
     }
   }
 
@@ -191,12 +283,15 @@ export class Migrator {
     console.log(`Regenerated types in ${label}`);
   }
 
-  async status(): Promise<{ migration: string; status: string }[]> {
+  async status(): Promise<MigrationStatusRow[]> {
+    await this.ensureMigrationsTable();
     const ran = await this.getRan();
     const files = await this.getMigrationFiles();
+    const tenant = this.getTenantId();
     return files.map((file) => ({
       migration: file.id,
       status: ran.has(file.id) || ran.has(file.fileName) ? "Ran" : "Pending",
+      tenant,
     }));
   }
 
@@ -214,12 +309,18 @@ export class Migrator {
     await this.ensureMigrationsTable();
     const batch = (await this.getLastBatchNumber()) + 1;
 
-    await new Builder(this.connection, "migrations").delete();
-    for (const file of files) {
-      await new Builder(this.connection, "migrations").insert({
-        migration: file.id,
-        batch,
-      });
+    const locked = await this.acquireLock();
+    try {
+      await this.scopedMigrations().delete();
+      for (const file of files) {
+        await new Builder(this.connection, "migrations").insert({
+          migration: file.id,
+          tenant: this.getTenantId(),
+          batch,
+        });
+      }
+    } finally {
+      if (locked) await this.releaseLock();
     }
 
     await this.emit("schemaSquashed", { path, batch });
@@ -329,7 +430,7 @@ export class Migrator {
 
   private async getRan(): Promise<Set<string>> {
     await this.ensureMigrationsTable();
-    const results = await new Builder(this.connection, "migrations")
+    const results = await this.scopedMigrations()
       .orderBy("id", "asc")
       .get();
 

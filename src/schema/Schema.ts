@@ -74,6 +74,31 @@ export class Schema {
     }
   }
 
+  static async createSchema(schema: string): Promise<void> {
+    Connection.assertSafeIdentifier(schema, "schema name");
+    const connection = this.getConnection();
+    const driver = connection.getDriverName();
+    if (driver === "sqlite") {
+      throw new Error("Schema creation is not supported for SQLite connections.");
+    }
+    const grammar = this.getGrammar();
+    const keyword = driver === "mysql" ? "DATABASE" : "SCHEMA";
+    await connection.run(`CREATE ${keyword} IF NOT EXISTS ${grammar.wrap(schema)}`);
+  }
+
+  static async dropSchema(schema: string, options: { cascade?: boolean } = {}): Promise<void> {
+    Connection.assertSafeIdentifier(schema, "schema name");
+    const connection = this.getConnection();
+    const driver = connection.getDriverName();
+    if (driver === "sqlite") {
+      throw new Error("Schema dropping is not supported for SQLite connections.");
+    }
+    const grammar = this.getGrammar();
+    const keyword = driver === "mysql" ? "DATABASE" : "SCHEMA";
+    const cascade = driver === "postgres" && options.cascade ? " CASCADE" : "";
+    await connection.run(`DROP ${keyword} IF EXISTS ${grammar.wrap(schema)}${cascade}`);
+  }
+
   static async table(table: string, callback: (blueprint: Blueprint) => void): Promise<void> {
     const blueprint = new Blueprint(table);
     callback(blueprint);

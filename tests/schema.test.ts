@@ -1,11 +1,10 @@
 import { expect, test, describe } from "bun:test";
-import { Schema } from "../src/index.js";
+import { Connection, Schema } from "../src/index.js";
 import { Blueprint } from "../src/schema/Blueprint.js";
 import { SQLiteGrammar } from "../src/schema/grammars/SQLiteGrammar.js";
 import { MySqlGrammar } from "../src/schema/grammars/MySqlGrammar.js";
 import { PostgresGrammar } from "../src/schema/grammars/PostgresGrammar.js";
 import { setupTestDb, teardownTestDb } from "./helpers.js";
-import type { Connection } from "../src/index.js";
 
 describe("Schema Builder", () => {
   let connection: Connection;
@@ -103,6 +102,22 @@ describe("Schema Builder", () => {
     expect(calls[0].bindings).toEqual([maliciousTable]);
     expect(calls[1].sql).toContain('PRAGMA table_info("safe_table")');
     expect(calls[1].sql).not.toContain(maliciousColumn);
+  });
+
+  test("schema helpers reject unsafe schema identifiers", async () => {
+    const postgres = new Connection({ url: "postgres://user:pass@localhost:5432/app" });
+    const calls: string[] = [];
+    postgres.run = async (sql: string) => {
+      calls.push(sql);
+      return [];
+    };
+    Schema.setConnection(postgres);
+
+    await Schema.createSchema("tenant_acme");
+    expect(calls[0]).toBe('CREATE SCHEMA IF NOT EXISTS "tenant_acme"');
+    await expect(Schema.createSchema('tenant"; DROP SCHEMA public; --')).rejects.toThrow("Invalid schema name");
+    expect(() => postgres.withSchema("tenant_acme").qualifyTable("users")).not.toThrow();
+    expect(() => postgres.withSchema("tenant_acme").qualifyTable('users;DROP')).toThrow("Invalid table name");
   });
 
   test("sqlite grammar compileCreate with uuid primary key", () => {

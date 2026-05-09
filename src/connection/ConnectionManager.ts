@@ -2,10 +2,19 @@ import { Connection } from "./Connection.js";
 import type { ConnectionConfig } from "../types/index.js";
 import type { ActiveTenantContext } from "./TenantContext.js";
 
+export interface TenantCachePolicy {
+  ttl?: number;
+  closeOnPurge?: boolean;
+}
+
+type TenantResolutionOptions = TenantCachePolicy & {
+  cache?: TenantCachePolicy;
+};
+
 export type TenantResolution =
-  | { strategy: "database"; name: string; config: ConnectionConfig }
-  | { strategy: "schema"; name: string; config?: ConnectionConfig; connection?: string | Connection; schema: string; mode?: "qualify" | "search_path" }
-  | { strategy: "rls"; name: string; config?: ConnectionConfig; connection?: string | Connection; tenantId?: string; setting?: string };
+  | ({ strategy: "database"; name: string; config: ConnectionConfig } & TenantResolutionOptions)
+  | ({ strategy: "schema"; name: string; config?: ConnectionConfig; connection?: string | Connection; schema: string; mode?: "qualify" | "search_path" } & TenantResolutionOptions)
+  | ({ strategy: "rls"; name: string; config?: ConnectionConfig; connection?: string | Connection; tenantId?: string; setting?: string } & TenantResolutionOptions);
 
 export type TenantResolver = (tenantId: string) => TenantResolution | Promise<TenantResolution>;
 
@@ -186,14 +195,20 @@ export class ConnectionManager {
 
   static async resolveTenant(tenantId: string): Promise<ActiveTenantContext> {
     const cached = this.tenantCache.get(tenantId);
-    if (cached) return cached;
+    if (cached) {
+      if (!cached.expiresAt || cached.expiresAt > Date.now()) return cached;
+      await this.closeTenant(tenantId);
+    }
     if (!this.tenantResolver) {
       throw new Error("No tenant resolver configured.");
     }
 
     const resolution = await this.tenantResolver(tenantId);
+    const policy = { ...resolution.cache, ttl: resolution.ttl ?? resolution.cache?.ttl, closeOnPurge: resolution.closeOnPurge ?? resolution.cache?.closeOnPurge };
+    const resolvedAt = Date.now();
     const schema = resolution.strategy === "schema" ? resolution.schema : undefined;
     const schemaMode = resolution.strategy === "schema" ? resolution.mode || "qualify" : undefined;
+    let ownsConnection = false;
     let connection = (resolution.strategy === "schema" || resolution.strategy === "rls") && resolution.connection instanceof Connection
       ? resolution.connection
       : (resolution.strategy === "schema" || resolution.strategy === "rls") && typeof resolution.connection === "string"
@@ -214,6 +229,7 @@ export class ConnectionManager {
       }
       connection = new Connection(config, { schema });
       this.connections.set(resolution.name, connection);
+      ownsConnection = true;
     } else if (schema && schemaMode === "qualify") {
       connection = connection.withSchema(schema);
     }
@@ -223,6 +239,10 @@ export class ConnectionManager {
       connection,
       connectionName: resolution.name,
       strategy: resolution.strategy,
+      resolvedAt,
+      expiresAt: policy.ttl ? resolvedAt + policy.ttl : undefined,
+      closeOnPurge: policy.closeOnPurge ?? ownsConnection,
+      ownsConnection,
       schema,
       schemaMode,
       rlsTenantId: resolution.strategy === "rls" ? resolution.tenantId || tenantId : undefined,
@@ -233,20 +253,52 @@ export class ConnectionManager {
   }
 
   static getResolvedTenant(tenantId: string): ActiveTenantContext | undefined {
-    return this.tenantCache.get(tenantId);
+    const context = this.tenantCache.get(tenantId);
+    if (!context || !context.expiresAt || context.expiresAt > Date.now()) return context;
+    this.tenantCache.delete(tenantId);
+    return undefined;
   }
 
   static purgeTenant(tenantId: string): void {
     this.tenantCache.delete(tenantId);
   }
 
+  static async purgeExpiredTenants(options: { close?: boolean } = {}): Promise<string[]> {
+    const now = Date.now();
+    const purged: string[] = [];
+    for (const [tenantId, context] of [...this.tenantCache.entries()]) {
+      if (!context.expiresAt || context.expiresAt > now) continue;
+      purged.push(tenantId);
+      if (options.close ?? context.closeOnPurge) {
+        await this.closeTenant(tenantId);
+      } else {
+        this.tenantCache.delete(tenantId);
+      }
+    }
+    return purged;
+  }
+
   static async closeTenant(tenantId: string): Promise<void> {
     const context = this.tenantCache.get(tenantId);
     if (!context) return;
     this.tenantCache.delete(tenantId);
+    if (!context.closeOnPurge) return;
+
     const connection = this.connections.get(context.connectionName);
-    this.connections.delete(context.connectionName);
-    await connection?.close();
+    if (connection === context.connection) {
+      this.connections.delete(context.connectionName);
+      await connection.close();
+    } else if (context.ownsConnection) {
+      await context.connection.close();
+    }
+
+    const pool = this.pools.get(context.connectionName);
+    if (pool) {
+      this.pools.delete(context.connectionName);
+      for (const { connection } of pool) {
+        await connection.close().catch(() => null);
+      }
+    }
   }
 
   static async closeAll(): Promise<void> {

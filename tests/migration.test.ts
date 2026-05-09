@@ -9,6 +9,8 @@ const TEST_MIGRATIONS_DIR_A = join(process.cwd(), "tests", "temp_migrations_a");
 const TEST_MIGRATIONS_DIR_B = join(process.cwd(), "tests", "temp_migrations_b");
 const TEST_MIGRATIONS_DIR_C = join(process.cwd(), "tests", "temp_migrations_c");
 const TEST_MIGRATIONS_DIR_D = join(process.cwd(), "tests", "temp_migrations_d");
+const TEST_MIGRATIONS_DIR_TENANT = join(process.cwd(), "tests", "temp_migrations_tenant");
+const TEST_MIGRATIONS_DIR_LOCKS = join(process.cwd(), "tests", "temp_migrations_locks");
 
 describe("MigrationCreator", () => {
   test("creates migration file with class", async () => {
@@ -191,7 +193,7 @@ describe("Migrator multi-path support", () => {
   });
 
   afterAll(async () => {
-    for (const dir of [TEST_MIGRATIONS_DIR_A, TEST_MIGRATIONS_DIR_B, TEST_MIGRATIONS_DIR_C, TEST_MIGRATIONS_DIR_D]) {
+    for (const dir of [TEST_MIGRATIONS_DIR_A, TEST_MIGRATIONS_DIR_B, TEST_MIGRATIONS_DIR_C, TEST_MIGRATIONS_DIR_D, TEST_MIGRATIONS_DIR_TENANT, TEST_MIGRATIONS_DIR_LOCKS]) {
       await rm(dir, { recursive: true, force: true });
     }
   });
@@ -283,5 +285,57 @@ export default class CreateTenantNotesTable extends Migration {
 
     expect(await Schema.hasTable("landlord_settings")).toBe(true);
     expect(await Schema.hasTable("tenant_notes")).toBe(true);
+  });
+
+  test("scopes migration status and records by tenant", async () => {
+    await mkdir(TEST_MIGRATIONS_DIR_TENANT, { recursive: true });
+    const fileName = "20260405000000_create_tenant_status_marker.ts";
+    await Bun.write(
+      join(TEST_MIGRATIONS_DIR_TENANT, fileName),
+      `
+import { Migration, Schema } from "../../src/index.js";
+export default class CreateTenantStatusMarker extends Migration {
+  async up(): Promise<void> {
+    await Schema.create("tenant_status_marker", (table) => {
+      table.increments("id");
+    });
+  }
+  async down(): Promise<void> {
+    await Schema.dropIfExists("tenant_status_marker");
+  }
+}`
+    );
+
+    const acmeMigrator = new Migrator(connection, TEST_MIGRATIONS_DIR_TENANT, undefined, {}, { tenantId: "acme" });
+    const betaMigrator = new Migrator(connection, TEST_MIGRATIONS_DIR_TENANT, undefined, {}, { tenantId: "beta" });
+    await acmeMigrator.run();
+
+    const acmeStatus = await acmeMigrator.status();
+    const betaStatus = await betaMigrator.status();
+    const rows = await connection.query("SELECT migration, tenant FROM migrations WHERE migration LIKE ?", [`%${fileName}`]);
+
+    expect(acmeStatus[0]).toMatchObject({ status: "Ran", tenant: "acme" });
+    expect(betaStatus[0]).toMatchObject({ status: "Pending", tenant: "beta" });
+    expect(rows.some((row: any) => row.tenant === "acme")).toBe(true);
+    expect(rows.some((row: any) => row.tenant === "beta")).toBe(false);
+  });
+
+  test("uses separate migration locks per tenant", async () => {
+    await mkdir(TEST_MIGRATIONS_DIR_LOCKS, { recursive: true });
+    const acmeMigrator = new Migrator(connection, TEST_MIGRATIONS_DIR_LOCKS, undefined, {}, { tenantId: "acme" });
+    await acmeMigrator.run();
+
+    await connection.run(
+      "INSERT INTO migration_locks (name, owner, created_at) VALUES (?, ?, ?)",
+      ["migrations:tenant:acme", "test-owner", new Date().toISOString()]
+    );
+
+    const lockedAcme = new Migrator(connection, TEST_MIGRATIONS_DIR_LOCKS, undefined, {}, { tenantId: "acme", lockTimeoutMs: 1 });
+    const betaMigrator = new Migrator(connection, TEST_MIGRATIONS_DIR_LOCKS, undefined, {}, { tenantId: "beta", lockTimeoutMs: 1 });
+
+    await expect(lockedAcme.run()).rejects.toThrow('Could not acquire migration lock "migrations:tenant:acme"');
+    await betaMigrator.run();
+
+    await connection.run("DELETE FROM migration_locks WHERE name = ?", ["migrations:tenant:acme"]);
   });
 });

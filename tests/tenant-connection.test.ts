@@ -165,6 +165,58 @@ describe("tenant connection switching", () => {
     expect(context.rlsSetting).toBe("app.current_tenant_id");
   });
 
+  test("expires cached tenants and closes only owned tenant connections", async () => {
+    let resolverCalls = 0;
+    ConnectionManager.setTenantResolver((tenantId) => {
+      resolverCalls++;
+      return {
+        strategy: "database",
+        name: `ttl:${tenantId}:${resolverCalls}`,
+        config: { url: "sqlite://:memory:" },
+        ttl: 1,
+      };
+    });
+
+    const first = await ConnectionManager.resolveTenant("acme");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = await ConnectionManager.resolveTenant("acme");
+
+    expect(second.connectionName).not.toBe(first.connectionName);
+    expect(resolverCalls).toBe(2);
+    expect(ConnectionManager.get(first.connectionName)).toBeUndefined();
+  });
+
+  test("closeTenant does not close shared default tenant connections", async () => {
+    const connection = await createTenantDb("Shared");
+    ConnectionManager.setDefault(connection);
+    ConnectionManager.setTenantResolver((tenantId) => ({
+      strategy: "schema",
+      name: `shared:${tenantId}`,
+      schema: `tenant_${tenantId}`,
+      mode: "search_path",
+      ttl: 1,
+    }));
+
+    await ConnectionManager.resolveTenant("acme");
+    await ConnectionManager.closeTenant("acme");
+    const rows = await connection.query("SELECT name FROM tenant_users WHERE id = 1");
+
+    expect(rows[0].name).toBe("Shared User");
+  });
+
+  test("rejects unsafe tenant schema names before qualification", async () => {
+    const connection = new Connection({ url: "postgres://user:pass@localhost:5432/app" });
+    ConnectionManager.setDefault(connection);
+    ConnectionManager.setTenantResolver(() => ({
+      strategy: "schema",
+      name: "unsafe:schema",
+      schema: 'tenant"; DROP SCHEMA public; --',
+      mode: "qualify",
+    }));
+
+    await expect(ConnectionManager.resolveTenant("acme")).rejects.toThrow("Invalid schema name");
+  });
+
   test("configureBunny registers the default connection and tenant resolver", async () => {
     const acme = await createTenantDb("Acme");
     const { connection } = configureBunny({

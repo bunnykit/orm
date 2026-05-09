@@ -7,6 +7,10 @@ export interface ActiveTenantContext {
   connection: Connection;
   connectionName: string;
   strategy: "database" | "schema" | "rls";
+  resolvedAt: number;
+  expiresAt?: number;
+  closeOnPurge: boolean;
+  ownsConnection: boolean;
   schema?: string;
   schemaMode?: "qualify" | "search_path";
   rlsTenantId?: string;

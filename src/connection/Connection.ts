@@ -66,7 +66,25 @@ export class Connection {
     return this.schema;
   }
 
+  static isSafeIdentifier(value: string): boolean {
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+  }
+
+  static assertSafeIdentifier(value: string, label: string = "identifier"): void {
+    if (!this.isSafeIdentifier(value)) {
+      throw new Error(`Invalid ${label}: ${value}`);
+    }
+  }
+
+  static assertSafeQualifiedIdentifier(value: string, label: string = "identifier"): void {
+    const parts = value.split(".");
+    if (parts.length === 0 || parts.some((part) => !this.isSafeIdentifier(part))) {
+      throw new Error(`Invalid ${label}: ${value}`);
+    }
+  }
+
   withSchema(schema: string): Connection {
+    Connection.assertSafeIdentifier(schema, "schema name");
     if (this.schema === schema) return this;
     return new Connection(this.config, { driver: this.driver, schema, ownsDriver: false });
   }
@@ -77,11 +95,17 @@ export class Connection {
   }
 
   qualifyTable(table: string): string {
-    if (!this.schema || this.driverName === "sqlite" || table.includes(".")) return table;
+    if (table.includes(".")) {
+      Connection.assertSafeQualifiedIdentifier(table, "qualified table name");
+      return table;
+    }
+    if (!this.schema || this.driverName === "sqlite") return table;
+    Connection.assertSafeIdentifier(this.schema, "schema name");
+    Connection.assertSafeIdentifier(table, "table name");
     return `${this.schema}.${table}`;
   }
 
-  private quoteIdentifier(value: string): string {
+  quoteIdentifier(value: string): string {
     return `"${value.replace(/"/g, '""')}"`;
   }
 
@@ -159,6 +183,7 @@ export class Connection {
     if (this.driverName !== "postgres") {
       throw new Error("search_path schema switching is only supported for PostgreSQL connections.");
     }
+    Connection.assertSafeIdentifier(schema, "schema name");
     return await this.transaction(async (connection) => {
       await connection.run(`SET LOCAL search_path TO ${connection.quoteIdentifier(schema)}`);
       return await callback(connection.withoutSchema());
