@@ -400,28 +400,33 @@ await Schema.dropIfExists("old_table");
 await Schema.create("posts", (table) => {
   table.increments("id");
   table.integer("user_id").unsigned();
-  table.foreign("user_id").references("id").on("users").onDelete("cascade");
+table.foreign("user_id").references("id").on("users").onDelete("cascade");
 });
 ```
 
-The foreign key call adds the constraint only. Define the local column first, and make its type match the referenced column:
+### Indexes
 
 ```ts
-await Schema.create("users", (table) => {
-  table.uuid("id").primary();
-  table.string("email").unique();
-  table.timestamps();
-});
-
 await Schema.create("posts", (table) => {
   table.increments("id");
-  table.uuid("user_id");
-  table.foreign("user_id").references("id").on("users").onDelete("cascade");
   table.string("title");
-  table.text("content");
-  table.timestamps();
+  table.string("slug").index(); // Index on single column
+  table.index(["title", "slug"]); // Composite index with auto-generated name
+  table.uniqueIndex(["slug"], "posts_slug_unique"); // Unique index with custom name
 });
 ```
+
+Available index methods:
+
+| Method | Description |
+|--------|-------------|
+| `.index()` | Index the current column (auto-names the index) |
+| `.index(columns)` | Multi-column index with auto-generated name |
+| `.index(columns, name)` | Multi-column index with custom name |
+| `.unique()` | UNIQUE constraint on current column |
+| `.uniqueIndex(columns, name)` | Multi-column unique index |
+| `.dropIndex(name)` | Remove an index |
+| `.dropUnique(name)` | Remove a unique constraint |
 
 Shortcut form:
 
