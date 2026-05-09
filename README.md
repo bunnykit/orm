@@ -972,6 +972,48 @@ class User extends Model {
 const post = await user.latestPost().getResults();
 ```
 
+### Eager Loading
+
+Use `with()` to eager load relations for query results:
+
+```ts
+const users = await User.with("posts", "profile").get();
+const posts = await Post.with("author").get();
+```
+
+Nested relations use dot notation:
+
+```ts
+const users = await User.with("posts.comments").get();
+```
+
+You can constrain an eager-loaded relation by passing an object whose key is the relation name and whose value is a query callback:
+
+```ts
+const users = await User.with({
+  posts: (query) => {
+    query.where("status", "published").orderBy("created_at", "desc");
+  },
+}).get();
+```
+
+Nested eager loads can be constrained too:
+
+```ts
+const users = await User.with(
+  { posts: (query) => query.where("status", "published") },
+  { "posts.comments": (query) => query.where("approved", true) },
+).get();
+```
+
+Constrained eager loading is also available when loading relations onto an existing model:
+
+```ts
+await user.load({
+  posts: (query) => query.where("status", "published"),
+});
+```
+
 ### Relation Queries and Aggregates
 
 Filter models by related records:

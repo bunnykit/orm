@@ -14,6 +14,15 @@ import { IdentityMap } from "./IdentityMap.js";
 export type ModelConstructor<T extends Model = Model> = (new (...args: any[]) => T) & Omit<typeof Model, "prototype">;
 export type GlobalScope = (builder: Builder<any>, model: ModelConstructor) => void;
 export type LiteralUnion<T extends string> = T | (string & {});
+export type EagerLoadConstraint = (query: Builder<any>) => void | Builder<any>;
+export interface EagerLoadDefinition {
+  name: string;
+  constraint?: EagerLoadConstraint;
+}
+export type EagerLoadInput =
+  | string
+  | EagerLoadDefinition
+  | Record<string, EagerLoadConstraint | undefined>;
 type BaseModelInstanceKey =
   | "$attributes"
   | "$original"
@@ -783,7 +792,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().sharedLock();
   }
 
-  static with<M extends ModelConstructor>(this: M, ...relations: ModelRelationName<InstanceType<M>>[]): Builder<InstanceType<M>> {
+  static with<M extends ModelConstructor>(this: M, ...relations: (ModelRelationName<InstanceType<M>> | EagerLoadInput | EagerLoadInput[])[]): Builder<InstanceType<M>> {
     return this.query().with(...relations);
   }
 
@@ -863,31 +872,66 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().lazy(count) as AsyncGenerator<InstanceType<M>>;
   }
 
-  static async eagerLoadRelations(models: Model[], relations: string[]): Promise<void> {
-    for (const relationName of relations) {
-      if (relationName.includes(".")) {
-        const [first, ...rest] = relationName.split(".");
-        await this.eagerLoadRelation(models, first);
-        const nestedModels: Model[] = [];
-        for (const model of models) {
-          const related = model.getRelation(first);
-          if (Array.isArray(related)) nestedModels.push(...related);
-          else if (related) nestedModels.push(related);
-        }
-        if (nestedModels.length > 0) {
-          await this.eagerLoadRelations(nestedModels, [rest.join(".")]);
-        }
+  static normalizeEagerLoads(relations: (EagerLoadInput | EagerLoadInput[])[]): EagerLoadDefinition[] {
+    const normalized: EagerLoadDefinition[] = [];
+    for (const relation of relations.flat()) {
+      if (typeof relation === "string") {
+        normalized.push({ name: relation });
+      } else if ("name" in relation && typeof (relation as EagerLoadDefinition).name === "string") {
+        normalized.push(relation as EagerLoadDefinition);
       } else {
-        await this.eagerLoadRelation(models, relationName);
+        for (const [name, constraint] of Object.entries(relation) as [string, EagerLoadConstraint | undefined][]) {
+          normalized.push({ name, constraint });
+        }
+      }
+    }
+    return normalized;
+  }
+
+  static async eagerLoadRelations(models: Model[], relations: (string | EagerLoadDefinition)[]): Promise<void> {
+    const normalized = this.normalizeEagerLoads(relations as EagerLoadInput[]);
+    const groups = new Map<string, EagerLoadDefinition[]>();
+
+    for (const definition of normalized) {
+      const [first] = definition.name.split(".");
+      const group = groups.get(first) || [];
+      group.push(definition);
+      groups.set(first, group);
+    }
+
+    for (const [relationName, definitions] of groups) {
+      const direct = definitions.find((definition) => definition.name === relationName);
+      await this.eagerLoadRelation(models, relationName, direct?.constraint);
+
+      const nestedDefinitions = definitions
+        .filter((definition) => definition.name.includes("."))
+        .map((definition) => ({
+          name: definition.name.split(".").slice(1).join("."),
+          constraint: definition.constraint,
+        }));
+
+      if (nestedDefinitions.length === 0) continue;
+
+      const nestedModels: Model[] = [];
+      for (const model of models) {
+        const related = model.getRelation(relationName);
+        if (Array.isArray(related)) nestedModels.push(...related);
+        else if (related) nestedModels.push(related);
+      }
+      if (nestedModels.length > 0) {
+        await this.eagerLoadRelations(nestedModels, nestedDefinitions);
       }
     }
   }
 
-  static async eagerLoadRelation(models: Model[], relationName: string): Promise<void> {
+  static async eagerLoadRelation(models: Model[], relationName: string, constraint?: EagerLoadConstraint): Promise<void> {
     if (models.length === 0) return;
     const firstModel = models[0];
     const relation = (firstModel as any)[relationName]() as Relation<any>;
     relation.addEagerConstraints(models);
+    if (constraint) {
+      constraint(relation.getQuery());
+    }
     const results = await relation.getEager();
     relation.match(models, results, relationName);
   }
@@ -1180,9 +1224,9 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.increment(column, -amount, extra);
   }
 
-  async load(...relations: string[]): Promise<this> {
+  async load(...relations: (string | EagerLoadInput | EagerLoadInput[])[]): Promise<this> {
     const constructor = this.constructor as typeof Model;
-    await constructor.eagerLoadRelations([this], relations);
+    await constructor.eagerLoadRelations([this], relations as any);
     return this;
   }
 

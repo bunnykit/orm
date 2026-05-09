@@ -19,6 +19,14 @@ class EBook extends Model {
   author() {
     return this.belongsTo(EAuthor, "author_id");
   }
+  chapters() {
+    return this.hasMany(EChapter, "book_id");
+  }
+}
+
+class EChapter extends Model {
+  static table = "e_chapters";
+  static timestamps = false;
 }
 
 class EProfile extends Model {
@@ -39,6 +47,12 @@ describe("Eager Loading", () => {
     await Schema.create("e_books", (table) => {
       table.increments("id");
       table.integer("author_id");
+      table.string("title");
+      table.boolean("published").default(true);
+    });
+    await Schema.create("e_chapters", (table) => {
+      table.increments("id");
+      table.integer("book_id");
       table.string("title");
     });
     await Schema.create("e_profiles", (table) => {
@@ -96,5 +110,50 @@ describe("Eager Loading", () => {
     const found = await EAuthor.with("books").where("name", "Eve").first();
     expect(found).not.toBeNull();
     expect(found!.getRelation("books")).toHaveLength(1);
+  });
+
+  test("with constrains eager loaded hasMany relation", async () => {
+    const author = await EAuthor.create({ name: "Frank" });
+    await EBook.create({ author_id: author.getAttribute("id"), title: "Published", published: true });
+    await EBook.create({ author_id: author.getAttribute("id"), title: "Draft", published: false });
+
+    const authors = await EAuthor.with({ books: (query) => query.where("published", true).orderBy("title") })
+      .where("name", "Frank")
+      .get();
+
+    const books = authors[0].getRelation("books");
+    expect(books).toHaveLength(1);
+    expect(books[0].getAttribute("title")).toBe("Published");
+  });
+
+  test("with constrains nested eager loaded relation without reloading parent relation", async () => {
+    const author = await EAuthor.create({ name: "Grace" });
+    const publicBook = await EBook.create({ author_id: author.getAttribute("id"), title: "Public", published: true });
+    const draftBook = await EBook.create({ author_id: author.getAttribute("id"), title: "Private", published: false });
+    await EChapter.create({ book_id: publicBook.getAttribute("id"), title: "Intro" });
+    await EChapter.create({ book_id: publicBook.getAttribute("id"), title: "Appendix" });
+    await EChapter.create({ book_id: draftBook.getAttribute("id"), title: "Secret" });
+
+    const authors = await EAuthor.with(
+      { books: (query) => query.where("published", true) },
+      { "books.chapters": (query) => query.where("title", "Intro") }
+    )
+      .where("name", "Grace")
+      .get();
+
+    const books = authors[0].getRelation("books");
+    expect(books).toHaveLength(1);
+    expect(books[0].getAttribute("title")).toBe("Public");
+    expect(books[0].getRelation("chapters").map((chapter: EChapter) => chapter.getAttribute("title"))).toEqual(["Intro"]);
+  });
+
+  test("load supports constrained eager loading", async () => {
+    const author = await EAuthor.create({ name: "Helen" });
+    await EBook.create({ author_id: author.getAttribute("id"), title: "Visible", published: true });
+    await EBook.create({ author_id: author.getAttribute("id"), title: "Hidden", published: false });
+
+    await author.load({ books: (query) => query.where("published", true) });
+
+    expect(author.getRelation("books").map((book: EBook) => book.getAttribute("title"))).toEqual(["Visible"]);
   });
 });

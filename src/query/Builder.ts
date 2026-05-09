@@ -1,6 +1,6 @@
 import { Connection } from "../connection/Connection.js";
 import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../types/index.js";
-import type { Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName } from "../model/Model.js";
+import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
 import { IdentityMap } from "../model/IdentityMap.js";
 
@@ -29,7 +29,7 @@ export class Builder<T = Record<string, any>> {
   joins: string[] = [];
   distinctFlag = false;
   model?: ModelConstructor;
-  eagerLoads: string[] = [];
+  eagerLoads: EagerLoadDefinition[] = [];
   randomOrderFlag = false;
   lockMode?: string;
   unions: UnionClause[] = [];
@@ -50,6 +50,22 @@ export class Builder<T = Record<string, any>> {
 
   private invalidateSqlCache(): void {
     this.sqlCache = undefined;
+  }
+
+  private normalizeEagerLoads(relations: (EagerLoadInput | EagerLoadInput[])[]): EagerLoadDefinition[] {
+    const normalized: EagerLoadDefinition[] = [];
+    for (const relation of relations.flat() as EagerLoadInput[]) {
+      if (typeof relation === "string") {
+        normalized.push({ name: relation });
+      } else if ("name" in relation && typeof (relation as EagerLoadDefinition).name === "string") {
+        normalized.push(relation as EagerLoadDefinition);
+      } else {
+        for (const [name, constraint] of Object.entries(relation) as [string, EagerLoadDefinition["constraint"]][]) {
+          normalized.push({ name, constraint });
+        }
+      }
+    }
+    return normalized;
   }
 
   setModel(model: ModelConstructor): this {
@@ -426,8 +442,8 @@ export class Builder<T = Record<string, any>> {
     return this.union(query, true);
   }
 
-  with(...relations: ModelRelationName<T>[]): this {
-    this.eagerLoads.push(...relations);
+  with(...relations: (EagerLoadInput | EagerLoadInput[])[]): this {
+    this.eagerLoads.push(...this.normalizeEagerLoads(relations));
     return this;
   }
 
