@@ -181,6 +181,34 @@ describe("Schema Builder", () => {
     expect(grammar.compileIndexes(blueprint, "posts")).toContain('CREATE INDEX "posts_taggable_type_taggable_id_index" ON "posts" ("taggable_type", "taggable_id")');
   });
 
+  test("introspects indexes and foreign keys", async () => {
+    connection = setupTestDb();
+    await connection.run("PRAGMA foreign_keys = ON");
+    await Schema.create("introspect_parents", (table) => {
+      table.increments("id");
+    });
+    await Schema.create("introspect_children", (table) => {
+      table.increments("id");
+      table.integer("parent_id");
+      table.string("email").unique();
+      table.index("parent_id", "children_parent_idx");
+      table.foreign("parent_id").references("id").on("introspect_parents").cascadeOnDelete();
+    });
+
+    const indexes = await Schema.getIndexes("introspect_children");
+    const foreignKeys = await Schema.getForeignKeys("introspect_children");
+
+    expect(await Schema.hasIndex("introspect_children", "children_parent_idx")).toBe(true);
+    expect(await Schema.hasIndex("introspect_children", ["parent_id"])).toBe(true);
+    expect(indexes.some((index) => index.columns.includes("email") && index.unique)).toBe(true);
+    expect(await Schema.hasForeignKey("introspect_children", ["parent_id"])).toBe(true);
+    expect(foreignKeys[0]).toMatchObject({
+      columns: ["parent_id"],
+      references: ["id"],
+      onTable: "introspect_parents",
+    });
+  });
+
   test("grammar compiles column changes where supported", () => {
     const mysql = new MySqlGrammar();
     const postgres = new PostgresGrammar();

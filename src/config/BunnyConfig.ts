@@ -9,6 +9,7 @@ import type { ConnectionConfig } from "../types/index.js";
 export interface BunnyConfig {
   connection: ConnectionConfig;
   migrationsPath?: string | string[];
+  seedersPath?: string | string[];
   migrations?: {
     landlord?: string | string[];
     tenant?: string | string[];

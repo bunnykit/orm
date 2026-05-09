@@ -7,6 +7,22 @@ import { PostgresGrammar } from "./grammars/PostgresGrammar.js";
 import { ConnectionManager } from "../connection/ConnectionManager.js";
 import { TenantContext } from "../connection/TenantContext.js";
 
+export interface SchemaIndex {
+  name: string;
+  columns: string[];
+  unique: boolean;
+  primary?: boolean;
+}
+
+export interface SchemaForeignKey {
+  name?: string;
+  columns: string[];
+  references: string[];
+  onTable: string;
+  onDelete?: string;
+  onUpdate?: string;
+}
+
 export class Schema {
   static connection: Connection;
 
@@ -209,6 +225,206 @@ export class Schema {
     }
     const result = await connection.query(sql, bindings);
     return result.length > 0;
+  }
+
+  static async getIndexes(table: string): Promise<SchemaIndex[]> {
+    const connection = this.getConnection();
+    const driver = connection.getDriverName();
+    const grammar = this.getGrammar();
+    const schema = connection.getSchema() || "public";
+
+    if (driver === "sqlite") {
+      const indexes = await connection.query(`PRAGMA index_list(${grammar.wrap(table)})`);
+      const results: SchemaIndex[] = [];
+      for (const index of indexes as any[]) {
+        const name = String(index.name);
+        const columns = await connection.query(`PRAGMA index_info(${grammar.wrap(name)})`);
+        results.push({
+          name,
+          columns: columns.map((row: any) => String(row.name)),
+          unique: Number(index.unique) === 1,
+          primary: String(index.origin || "") === "pk",
+        });
+      }
+      return results;
+    }
+
+    if (driver === "mysql") {
+      const rows = await connection.query(
+        `SELECT index_name, column_name, non_unique
+         FROM information_schema.statistics
+         WHERE table_schema = DATABASE() AND table_name = ?
+         ORDER BY index_name, seq_in_index`,
+        [table]
+      );
+      return this.groupIndexRows(rows as any[], "index_name", "column_name", (row) => Number(row.non_unique) === 0);
+    }
+
+    const rows = await connection.query(
+      `SELECT
+         i.relname AS index_name,
+         a.attname AS column_name,
+         ix.indisunique AS is_unique,
+         ix.indisprimary AS is_primary,
+         k.ordinality
+       FROM pg_class t
+       JOIN pg_namespace n ON n.oid = t.relnamespace
+       JOIN pg_index ix ON t.oid = ix.indrelid
+       JOIN pg_class i ON i.oid = ix.indexrelid
+       JOIN unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ordinality) ON true
+       JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+       WHERE n.nspname = $1 AND t.relname = $2
+       ORDER BY i.relname, k.ordinality`,
+      [schema, table]
+    );
+    return this.groupIndexRows(rows as any[], "index_name", "column_name", (row) => !!row.is_unique, (row) => !!row.is_primary);
+  }
+
+  static async hasIndex(table: string, indexOrColumns: string | string[]): Promise<boolean> {
+    const expectedColumns = Array.isArray(indexOrColumns) ? indexOrColumns : undefined;
+    const indexes = await this.getIndexes(table);
+    if (!expectedColumns) {
+      return indexes.some((index) => index.name === indexOrColumns);
+    }
+    return indexes.some((index) => (
+      index.columns.length === expectedColumns.length &&
+      index.columns.every((column, indexPosition) => column === expectedColumns[indexPosition])
+    ));
+  }
+
+  static async getForeignKeys(table: string): Promise<SchemaForeignKey[]> {
+    const connection = this.getConnection();
+    const driver = connection.getDriverName();
+    const grammar = this.getGrammar();
+    const schema = connection.getSchema() || "public";
+
+    if (driver === "sqlite") {
+      const rows = await connection.query(`PRAGMA foreign_key_list(${grammar.wrap(table)})`);
+      const grouped = new Map<string, SchemaForeignKey>();
+      for (const row of rows as any[]) {
+        const key = String(row.id);
+        const fk = grouped.get(key) || {
+          name: undefined,
+          columns: [],
+          references: [],
+          onTable: String(row.table),
+          onDelete: row.on_delete ? String(row.on_delete).toLowerCase() : undefined,
+          onUpdate: row.on_update ? String(row.on_update).toLowerCase() : undefined,
+        };
+        fk.columns.push(String(row.from));
+        fk.references.push(String(row.to));
+        grouped.set(key, fk);
+      }
+      return [...grouped.values()];
+    }
+
+    if (driver === "mysql") {
+      const rows = await connection.query(
+        `SELECT
+           k.constraint_name,
+           k.column_name,
+           k.referenced_table_name,
+           k.referenced_column_name,
+           rc.delete_rule,
+           rc.update_rule,
+           k.ordinal_position
+         FROM information_schema.key_column_usage k
+         JOIN information_schema.referential_constraints rc
+           ON rc.constraint_schema = k.constraint_schema
+          AND rc.constraint_name = k.constraint_name
+         WHERE k.table_schema = DATABASE()
+           AND k.table_name = ?
+           AND k.referenced_table_name IS NOT NULL
+         ORDER BY k.constraint_name, k.ordinal_position`,
+        [table]
+      );
+      return this.groupForeignKeyRows(rows as any[], "constraint_name", "column_name", "referenced_table_name", "referenced_column_name", "delete_rule", "update_rule");
+    }
+
+    const rows = await connection.query(
+      `SELECT
+         tc.constraint_name,
+         kcu.column_name,
+         ccu.table_name AS referenced_table_name,
+         ccu.column_name AS referenced_column_name,
+         rc.delete_rule,
+         rc.update_rule,
+         kcu.ordinal_position
+       FROM information_schema.table_constraints tc
+       JOIN information_schema.key_column_usage kcu
+         ON tc.constraint_name = kcu.constraint_name
+        AND tc.table_schema = kcu.table_schema
+       JOIN information_schema.constraint_column_usage ccu
+         ON ccu.constraint_name = tc.constraint_name
+        AND ccu.table_schema = tc.table_schema
+       JOIN information_schema.referential_constraints rc
+         ON rc.constraint_name = tc.constraint_name
+        AND rc.constraint_schema = tc.table_schema
+       WHERE tc.constraint_type = 'FOREIGN KEY'
+         AND tc.table_schema = $1
+         AND tc.table_name = $2
+       ORDER BY tc.constraint_name, kcu.ordinal_position`,
+      [schema, table]
+    );
+    return this.groupForeignKeyRows(rows as any[], "constraint_name", "column_name", "referenced_table_name", "referenced_column_name", "delete_rule", "update_rule");
+  }
+
+  static async hasForeignKey(table: string, keyOrColumns: string | string[]): Promise<boolean> {
+    const expectedColumns = Array.isArray(keyOrColumns) ? keyOrColumns : undefined;
+    const foreignKeys = await this.getForeignKeys(table);
+    if (!expectedColumns) {
+      return foreignKeys.some((fk) => fk.name === keyOrColumns);
+    }
+    return foreignKeys.some((fk) => (
+      fk.columns.length === expectedColumns.length &&
+      fk.columns.every((column, indexPosition) => column === expectedColumns[indexPosition])
+    ));
+  }
+
+  private static groupIndexRows(
+    rows: any[],
+    nameKey: string,
+    columnKey: string,
+    unique: (row: any) => boolean,
+    primary: (row: any) => boolean = () => false
+  ): SchemaIndex[] {
+    const grouped = new Map<string, SchemaIndex>();
+    for (const row of rows) {
+      const name = String(row[nameKey]);
+      const index = grouped.get(name) || { name, columns: [], unique: unique(row), primary: primary(row) };
+      index.columns.push(String(row[columnKey]));
+      index.unique = index.unique || unique(row);
+      index.primary = index.primary || primary(row);
+      grouped.set(name, index);
+    }
+    return [...grouped.values()];
+  }
+
+  private static groupForeignKeyRows(
+    rows: any[],
+    nameKey: string,
+    columnKey: string,
+    tableKey: string,
+    referenceKey: string,
+    deleteKey: string,
+    updateKey: string
+  ): SchemaForeignKey[] {
+    const grouped = new Map<string, SchemaForeignKey>();
+    for (const row of rows) {
+      const name = String(row[nameKey]);
+      const fk = grouped.get(name) || {
+        name,
+        columns: [],
+        references: [],
+        onTable: String(row[tableKey]),
+        onDelete: row[deleteKey] ? String(row[deleteKey]).toLowerCase() : undefined,
+        onUpdate: row[updateKey] ? String(row[updateKey]).toLowerCase() : undefined,
+      };
+      fk.columns.push(String(row[columnKey]));
+      fk.references.push(String(row[referenceKey]));
+      grouped.set(name, fk);
+    }
+    return [...grouped.values()];
   }
 
   static async getColumn(

@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "fs";
-import { mkdir, readdir, writeFile } from "fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "fs/promises";
 import { basename, join, relative, resolve } from "path";
 import { Connection } from "../connection/Connection.js";
 import { Schema } from "../schema/Schema.js";
@@ -15,12 +16,15 @@ interface MigrationRecord {
   migration: string;
   batch: number;
   tenant?: string | null;
+  checksum?: string | null;
 }
 
 export interface MigrationStatusRow {
   migration: string;
   status: string;
   tenant: string | null;
+  checksum?: string;
+  storedChecksum?: string | null;
 }
 
 export interface MigratorOptions {
@@ -69,6 +73,7 @@ export class Migrator {
         table.increments("id");
         table.string("migration");
         table.string("tenant").nullable().index();
+        table.string("checksum").nullable();
         table.integer("batch");
       });
       return;
@@ -77,6 +82,11 @@ export class Migrator {
     if (!(await Schema.hasColumn("migrations", "tenant"))) {
       await Schema.table("migrations", (table: Blueprint) => {
         table.string("tenant").nullable().index();
+      });
+    }
+    if (!(await Schema.hasColumn("migrations", "checksum"))) {
+      await Schema.table("migrations", (table: Blueprint) => {
+        table.string("checksum").nullable();
       });
     }
   }
@@ -167,8 +177,8 @@ export class Migrator {
     return (result as any)?.batch || 0;
   }
 
-  private async getMigrationFiles(): Promise<{ id: string; fileName: string; fullPath: string }[]> {
-    const files: { id: string; fileName: string; fullPath: string }[] = [];
+  private async getMigrationFiles(): Promise<{ id: string; fileName: string; fullPath: string; checksum: string }[]> {
+    const files: { id: string; fileName: string; fullPath: string; checksum: string }[] = [];
 
     for (const path of this.getPaths()) {
       if (!existsSync(path)) continue;
@@ -180,11 +190,17 @@ export class Migrator {
           id: toPosixPath(relative(process.cwd(), fullPath)),
           fileName,
           fullPath,
+          checksum: await this.checksumFile(fullPath),
         });
       }
     }
 
     return files.sort((a, b) => a.fileName.localeCompare(b.fileName) || a.id.localeCompare(b.id));
+  }
+
+  private async checksumFile(path: string): Promise<string> {
+    const contents = await readFile(path);
+    return createHash("sha256").update(contents).digest("hex");
   }
 
   async run(): Promise<void> {
@@ -211,6 +227,7 @@ export class Migrator {
         await new Builder(this.connection, "migrations").insert({
           migration: file.id,
           tenant: this.getTenantId(),
+          checksum: file.checksum,
           batch,
         });
         await this.emit("migrated", { migration: file.id, batch });
@@ -226,18 +243,18 @@ export class Migrator {
     }
   }
 
-  async rollback(): Promise<void> {
+  async rollback(steps: number = 1): Promise<void> {
     await this.ensureMigrationsTable();
     const locked = await this.acquireLock();
     try {
-      const batch = await this.getLastBatchNumber();
-      if (batch === 0) {
+      const batches = await this.getRollbackBatches(steps);
+      if (batches.length === 0) {
         console.log("Nothing to rollback.");
         return;
       }
 
       const records = (await this.scopedMigrations()
-        .where("batch", batch)
+        .whereIn("batch", batches)
         .orderBy("id", "desc")
         .get()) as MigrationRecord[];
 
@@ -250,12 +267,12 @@ export class Migrator {
       for (const record of records) {
         const migration = await this.resolve(record.migration);
         console.log(`Rolling back: ${record.migration}`);
-        await this.emit("rollingBack", { migration: record.migration, batch });
+        await this.emit("rollingBack", { migration: record.migration, batch: record.batch });
         await migration.down();
         await new Builder(this.connection, "migrations")
           .where("id", record.id)
           .delete();
-        await this.emit("rolledBack", { migration: record.migration, batch });
+        await this.emit("rolledBack", { migration: record.migration, batch: record.batch });
         console.log(`Rolled back:  ${record.migration}`);
       }
       await this.connection.commit();
@@ -266,6 +283,38 @@ export class Migrator {
     } finally {
       if (locked) await this.releaseLock();
     }
+  }
+
+  private async getRollbackBatches(steps: number): Promise<number[]> {
+    await this.ensureMigrationsTable();
+    const rows = await this.scopedMigrations()
+      .select("batch")
+      .orderBy("batch", "desc")
+      .get();
+    const batches: number[] = [];
+    for (const row of rows as any[]) {
+      const batch = Number(row.batch);
+      if (!Number.isFinite(batch) || batches.includes(batch)) continue;
+      batches.push(batch);
+      if (batches.length >= steps) break;
+    }
+    return batches;
+  }
+
+  async reset(): Promise<void> {
+    while ((await this.getLastBatchNumber()) > 0) {
+      await this.rollback();
+    }
+  }
+
+  async refresh(): Promise<void> {
+    await this.reset();
+    await this.run();
+  }
+
+  async fresh(): Promise<void> {
+    await this.dropAllTables();
+    await this.run();
   }
 
   private async generateTypesIfNeeded(): Promise<void> {
@@ -285,14 +334,20 @@ export class Migrator {
 
   async status(): Promise<MigrationStatusRow[]> {
     await this.ensureMigrationsTable();
-    const ran = await this.getRan();
+    const ran = await this.getRanRecords();
     const files = await this.getMigrationFiles();
     const tenant = this.getTenantId();
-    return files.map((file) => ({
-      migration: file.id,
-      status: ran.has(file.id) || ran.has(file.fileName) ? "Ran" : "Pending",
-      tenant,
-    }));
+    return files.map((file) => {
+      const record = ran.get(file.id) || ran.get(file.fileName);
+      const storedChecksum = record?.checksum ?? null;
+      return {
+        migration: file.id,
+        status: !record ? "Pending" : storedChecksum && storedChecksum !== file.checksum ? "Changed" : "Ran",
+        tenant,
+        checksum: file.checksum,
+        storedChecksum,
+      };
+    });
   }
 
   async dumpSchema(path: string): Promise<string> {
@@ -316,6 +371,7 @@ export class Migrator {
         await new Builder(this.connection, "migrations").insert({
           migration: file.id,
           tenant: this.getTenantId(),
+          checksum: file.checksum,
           batch,
         });
       }
@@ -400,6 +456,49 @@ export class Migrator {
     return statements.join("\n\n") + "\n";
   }
 
+  private async dropAllTables(): Promise<void> {
+    const driver = this.connection.getDriverName();
+    const grammar = this.connection.getGrammar();
+
+    if (driver === "sqlite") {
+      await this.connection.run("PRAGMA foreign_keys = OFF");
+      try {
+        const rows = await this.connection.query(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        );
+        for (const row of rows as any[]) {
+          await this.connection.run(`DROP TABLE IF EXISTS ${grammar.wrap(String(row.name))}`);
+        }
+      } finally {
+        await this.connection.run("PRAGMA foreign_keys = ON");
+      }
+      return;
+    }
+
+    if (driver === "mysql") {
+      const tables = await this.connection.query("SHOW TABLES");
+      const key = Object.keys(tables[0] ?? {})[0];
+      await this.connection.run("SET FOREIGN_KEY_CHECKS = 0");
+      try {
+        for (const row of tables as any[]) {
+          await this.connection.run(`DROP TABLE IF EXISTS ${grammar.wrap(String(row[key]))}`);
+        }
+      } finally {
+        await this.connection.run("SET FOREIGN_KEY_CHECKS = 1");
+      }
+      return;
+    }
+
+    const schema = this.connection.getSchema() || "public";
+    const tables = await this.connection.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE'",
+      [schema]
+    );
+    for (const row of tables as any[]) {
+      await this.connection.run(`DROP TABLE IF EXISTS ${grammar.wrap(`${schema}.${row.table_name}`)} CASCADE`);
+    }
+  }
+
   private async resolve(file: string): Promise<Migration> {
     const normalized = toPosixPath(file);
     const candidates = new Set<string>();
@@ -429,17 +528,27 @@ export class Migrator {
   }
 
   private async getRan(): Promise<Set<string>> {
+    const results = await this.getRanRecords();
+    const ran = new Set<string>();
+    for (const migration of results.keys()) {
+      ran.add(migration);
+      ran.add(basename(migration));
+    }
+    return ran;
+  }
+
+  private async getRanRecords(): Promise<Map<string, MigrationRecord>> {
     await this.ensureMigrationsTable();
     const results = await this.scopedMigrations()
       .orderBy("id", "asc")
       .get();
 
-    const ran = new Set<string>();
-    for (const row of results as any[]) {
+    const records = new Map<string, MigrationRecord>();
+    for (const row of results as MigrationRecord[]) {
       const migration = toPosixPath(String(row.migration));
-      ran.add(migration);
-      ran.add(basename(migration));
+      records.set(migration, row);
+      records.set(basename(migration), row);
     }
-    return ran;
+    return records;
   }
 }

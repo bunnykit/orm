@@ -6,6 +6,7 @@ import { configureBunny } from "../src/config/BunnyConfig.js";
 import type { BunnyConfig } from "../src/config/BunnyConfig.js";
 import { Migrator } from "../src/migration/Migrator.js";
 import { MigrationCreator } from "../src/migration/MigrationCreator.js";
+import { SeederRunner } from "../src/seeding/Seeder.js";
 import { TypeGenerator } from "../src/typegen/TypeGenerator.js";
 import { existsSync } from "fs";
 import { mkdir, readdir, rm, writeFile } from "fs/promises";
@@ -36,7 +37,7 @@ import {
   Model,
 } from "../src/index.js";
 
-type MigrationCommand = "migrate" | "migrate:rollback" | "migrate:status";
+type MigrationCommand = "migrate" | "migrate:rollback" | "migrate:status" | "migrate:reset" | "migrate:refresh" | "migrate:fresh";
 type MigrationTarget =
   | { scope: "default" }
   | { scope: "landlord" }
@@ -100,6 +101,18 @@ async function runMigratorCommand(
   }
   if (command === "migrate:rollback") {
     await migrator.rollback();
+    return;
+  }
+  if (command === "migrate:reset") {
+    await migrator.reset();
+    return;
+  }
+  if (command === "migrate:refresh") {
+    await migrator.refresh();
+    return;
+  }
+  if (command === "migrate:fresh") {
+    await migrator.fresh();
     return;
   }
   const status = await migrator.status();
@@ -402,6 +415,7 @@ async function loadConfig(allowFallback = false): Promise<BunnyConfig> {
     return {
       connection: { url },
       migrationsPath: parseEnvPathSetting(process.env.MIGRATIONS_PATH) || "./database/migrations",
+      seedersPath: parseEnvPathSetting(process.env.SEEDERS_PATH),
       modelsPath: parseEnvPathSetting(process.env.MODELS_PATH),
     };
   }
@@ -419,6 +433,7 @@ async function loadConfig(allowFallback = false): Promise<BunnyConfig> {
         filename: process.env.DB_DATABASE,
       },
       migrationsPath: parseEnvPathSetting(process.env.MIGRATIONS_PATH) || "./database/migrations",
+      seedersPath: parseEnvPathSetting(process.env.SEEDERS_PATH),
       modelsPath: parseEnvPathSetting(process.env.MODELS_PATH),
     };
   }
@@ -427,6 +442,7 @@ async function loadConfig(allowFallback = false): Promise<BunnyConfig> {
     return {
       connection: { url: "sqlite://:memory:" },
       migrationsPath: parseEnvPathSetting(process.env.MIGRATIONS_PATH) || "./database/migrations",
+      seedersPath: parseEnvPathSetting(process.env.SEEDERS_PATH),
       modelsPath: parseEnvPathSetting(process.env.MODELS_PATH),
     };
   }
@@ -503,8 +519,23 @@ async function main() {
     await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
   } else if (command === "migrate:rollback") {
     await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
+  } else if (command === "migrate:reset") {
+    await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
+  } else if (command === "migrate:refresh") {
+    await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
+  } else if (command === "migrate:fresh") {
+    await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
   } else if (command === "migrate:status") {
     await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
+  } else if (command === "db:seed") {
+    const target = args[1];
+    const seederPath = config.seedersPath || "./database/seeders";
+    const runner = new SeederRunner(connection);
+    if (target) {
+      await runner.runTarget(target, seederPath);
+    } else {
+      await runner.runPaths(seederPath);
+    }
   } else {
     console.log("Usage:");
     console.log("  bun run bunny migrate              Run landlord migrations, then all tenant migrations when configured");
@@ -513,7 +544,12 @@ async function main() {
     console.log("  bun run bunny migrate --tenant <id> Run one tenant's migrations only");
     console.log("  bun run bunny migrate:make <name> [dir] Create a new migration");
     console.log("  bun run bunny migrate:rollback     Rollback the last batch");
+    console.log("  bun run bunny migrate:reset        Rollback all migrations");
+    console.log("  bun run bunny migrate:refresh      Reset and rerun migrations");
+    console.log("  bun run bunny migrate:fresh        Drop all tables and rerun migrations");
     console.log("  bun run bunny migrate:status       Show migration status");
+    console.log("  bun run bunny db:seed              Run seeders from seedersPath");
+    console.log("  bun run bunny db:seed <seeder>     Run one seeder by file path or name");
     console.log("  bun run bunny schema:dump [path]   Dump the current database schema");
     console.log("  bun run bunny schema:squash [path] Dump schema and mark configured migrations as ran");
     console.log("  bun run bunny types:generate [dir] Generate model type declarations from DB schema");

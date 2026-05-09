@@ -23,7 +23,8 @@ An **Eloquent-inspired ORM** built specifically for [Bun](https://bun.sh)'s nati
 - 🧬 **Eloquent-style Models** — Property attributes, defaults, casts, dirty tracking, soft deletes, scopes, find-or-fail, first-or-create
 - 🔗 **Relations** — Standard, many-to-many, polymorphic, through, one-of-many, and relation queries
 - 👁️ **Observers** — Lifecycle hooks (`creating`, `created`, `updating`, `updated`, etc.)
-- 🚀 **Migrations & CLI** — Create, run, and rollback migrations from the command line
+- 🚀 **Migrations & CLI** — Create, run, reset, refresh, and inspect migrations from the command line
+- 🌱 **Seeders & Factories** — Run all seeders or target one seeder by name/file, plus lightweight model factories
 - 💬 **REPL** — Inspect models and run queries interactively with `bunny repl`
 - ⚡ **Streaming** — `chunk`, `cursor`, `each`, and `lazy` for memory-efficient large dataset processing
 
@@ -71,6 +72,7 @@ export default {
   //   }),
   //   listTenants: async () => await getAllTenantIds(),
   // },
+  seedersPath: "./database/seeders",
   modelsPath: ["./src/models", "./src/admin/models"],
   // Optional legacy type output directory
   // typesOutDir: "./src/generated/model-types",
@@ -87,6 +89,7 @@ Or use environment variables:
 ```bash
 export DATABASE_URL="sqlite://app.db"
 export MIGRATIONS_PATH="./database/migrations,./database/tenant-migrations"
+export SEEDERS_PATH="./database/seeders"
 export MODELS_PATH="./src/models,./src/admin/models"
 export TYPES_OUT_DIR="./src/generated/model-types"
 ```
@@ -1108,6 +1111,84 @@ ObserverRegistry.register(User, {
 
 ---
 
+## Seeders and Factories
+
+Set `seedersPath` in `bunny.config.ts` to define the default directory used by `db:seed`:
+
+```ts
+export default {
+  connection: { url: "sqlite://app.db" },
+  seedersPath: "./database/seeders",
+};
+```
+
+`seedersPath` can also be an array:
+
+```ts
+export default {
+  connection: { url: "sqlite://app.db" },
+  seedersPath: ["./database/seeders", "./modules/demo/seeders"],
+};
+```
+
+Create a seeder by extending `Seeder`:
+
+```ts
+import { Seeder } from "@bunnykit/orm";
+import { User } from "../models/User";
+
+export default class UserSeeder extends Seeder {
+  async run(): Promise<void> {
+    await User.create({ name: "Ada Lovelace", email: "ada@example.test" });
+  }
+}
+```
+
+Run every seeder in `seedersPath`:
+
+```bash
+bun run bunny db:seed
+```
+
+Run one seeder by class/file name from `seedersPath`:
+
+```bash
+bun run bunny db:seed UserSeeder
+```
+
+Run one seeder by direct file path:
+
+```bash
+bun run bunny db:seed ./database/seeders/UserSeeder.ts
+```
+
+Programmatic seeding is available through `SeederRunner`:
+
+```ts
+import { SeederRunner } from "@bunnykit/orm";
+
+await new SeederRunner(connection).runTarget("UserSeeder", "./database/seeders");
+await new SeederRunner(connection).runFile("./database/seeders/UserSeeder.ts");
+```
+
+Factories can create raw attributes, unsaved models, or persisted records:
+
+```ts
+import { factory } from "@bunnykit/orm";
+import { User } from "../models/User";
+
+const users = factory(User, (sequence) => ({
+  name: `User ${sequence}`,
+  email: `user${sequence}@example.test`,
+}));
+
+const attributes = users.raw();
+const model = users.make();
+const created = await users.count(3).state({ role: "admin" }).create();
+```
+
+---
+
 ## Migrations
 
 ### CLI Commands
@@ -1125,8 +1206,26 @@ bun run bunny migrate
 # Rollback the last batch
 bun run bunny migrate:rollback
 
+# Rollback all migrations
+bun run bunny migrate:reset
+
+# Reset and rerun migrations
+bun run bunny migrate:refresh
+
+# Drop all tables and rerun migrations
+bun run bunny migrate:fresh
+
 # Show migration status
 bun run bunny migrate:status
+
+# Run all seeders in seedersPath
+bun run bunny db:seed
+
+# Run one seeder by name from seedersPath
+bun run bunny db:seed UserSeeder
+
+# Run one seeder by direct file path
+bun run bunny db:seed ./database/seeders/UserSeeder.ts
 
 # Dump the current database schema
 bun run bunny schema:dump ./database/schema.sql

@@ -11,6 +11,7 @@ const TEST_MIGRATIONS_DIR_C = join(process.cwd(), "tests", "temp_migrations_c");
 const TEST_MIGRATIONS_DIR_D = join(process.cwd(), "tests", "temp_migrations_d");
 const TEST_MIGRATIONS_DIR_TENANT = join(process.cwd(), "tests", "temp_migrations_tenant");
 const TEST_MIGRATIONS_DIR_LOCKS = join(process.cwd(), "tests", "temp_migrations_locks");
+const TEST_MIGRATIONS_DIR_COMMANDS = join(process.cwd(), "tests", "temp_migrations_commands");
 
 describe("MigrationCreator", () => {
   test("creates migration file with class", async () => {
@@ -193,7 +194,7 @@ describe("Migrator multi-path support", () => {
   });
 
   afterAll(async () => {
-    for (const dir of [TEST_MIGRATIONS_DIR_A, TEST_MIGRATIONS_DIR_B, TEST_MIGRATIONS_DIR_C, TEST_MIGRATIONS_DIR_D, TEST_MIGRATIONS_DIR_TENANT, TEST_MIGRATIONS_DIR_LOCKS]) {
+    for (const dir of [TEST_MIGRATIONS_DIR_A, TEST_MIGRATIONS_DIR_B, TEST_MIGRATIONS_DIR_C, TEST_MIGRATIONS_DIR_D, TEST_MIGRATIONS_DIR_TENANT, TEST_MIGRATIONS_DIR_LOCKS, TEST_MIGRATIONS_DIR_COMMANDS]) {
       await rm(dir, { recursive: true, force: true });
     }
   });
@@ -337,5 +338,95 @@ export default class CreateTenantStatusMarker extends Migration {
     await betaMigrator.run();
 
     await connection.run("DELETE FROM migration_locks WHERE name = ?", ["migrations:tenant:acme"]);
+  });
+
+  test("detects changed migration checksums", async () => {
+    await mkdir(TEST_MIGRATIONS_DIR_COMMANDS, { recursive: true });
+    const filePath = join(TEST_MIGRATIONS_DIR_COMMANDS, "20260406000000_create_checksum_table.ts");
+    const original = `
+import { Migration, Schema } from "../../src/index.js";
+export default class CreateChecksumTable extends Migration {
+  async up(): Promise<void> {
+    await Schema.create("checksum_table", (table) => {
+      table.increments("id");
+    });
+  }
+  async down(): Promise<void> {
+    await Schema.dropIfExists("checksum_table");
+  }
+}`;
+    await Bun.write(filePath, original);
+
+    const checksumConnection = setupTestDb();
+    const migrator = new Migrator(checksumConnection, TEST_MIGRATIONS_DIR_COMMANDS);
+    await migrator.run();
+    await Bun.write(filePath, original.replace("table.increments", "table.increments"));
+    await Bun.write(filePath, `${original}\n// changed after run\n`);
+
+    const status = await migrator.status();
+
+    expect(status[0].status).toBe("Changed");
+    expect(status[0].checksum).not.toBe(status[0].storedChecksum);
+    await checksumConnection.close();
+  });
+
+  test("supports reset, refresh, fresh, and multi-step rollback", async () => {
+    const commandDir = join(TEST_MIGRATIONS_DIR_COMMANDS, "commands");
+    await rm(commandDir, { recursive: true, force: true });
+    await mkdir(commandDir, { recursive: true });
+    await Bun.write(
+      join(commandDir, "20260407000000_create_command_a.ts"),
+      `
+import { Migration, Schema } from "../../../src/index.js";
+export default class CreateCommandA extends Migration {
+  async up(): Promise<void> {
+    await Schema.create("command_a", (table) => {
+      table.increments("id");
+    });
+  }
+  async down(): Promise<void> {
+    await Schema.dropIfExists("command_a");
+  }
+}`
+    );
+    const commandBPath = join(commandDir, "20260408000000_create_command_b.ts");
+    const commandB = `
+import { Migration, Schema } from "../../../src/index.js";
+export default class CreateCommandB extends Migration {
+  async up(): Promise<void> {
+    await Schema.create("command_b", (table) => {
+      table.increments("id");
+    });
+  }
+  async down(): Promise<void> {
+    await Schema.dropIfExists("command_b");
+  }
+}`;
+
+    const commandConnection = setupTestDb();
+    const migrator = new Migrator(commandConnection, commandDir);
+    await migrator.run();
+    await Bun.write(commandBPath, commandB);
+    await migrator.run();
+    await migrator.rollback(2);
+    expect(await Schema.hasTable("command_b")).toBe(false);
+    expect(await Schema.hasTable("command_a")).toBe(false);
+
+    await migrator.refresh();
+    expect(await Schema.hasTable("command_a")).toBe(true);
+    expect(await Schema.hasTable("command_b")).toBe(true);
+
+    await migrator.reset();
+    expect(await Schema.hasTable("command_a")).toBe(false);
+    expect(await Schema.hasTable("command_b")).toBe(false);
+
+    await Schema.create("unmanaged_table", (table) => {
+      table.increments("id");
+    });
+    await migrator.fresh();
+    expect(await Schema.hasTable("unmanaged_table")).toBe(false);
+    expect(await Schema.hasTable("command_a")).toBe(true);
+    expect(await Schema.hasTable("command_b")).toBe(true);
+    await commandConnection.close();
   });
 });

@@ -41,3 +41,7 @@ export type { MigrationEvent, MigrationEventListener, MigrationEventPayload, Mig
 export { MigrationCreator } from "./migration/MigrationCreator.js";
 export { TypeGenerator } from "./typegen/TypeGenerator.js";
 export { TypeMapper } from "./typegen/TypeMapper.js";
+
+export { Seeder, SeederRunner } from "./seeding/Seeder.js";
+export { Factory, factory } from "./seeding/Factory.js";
+export type { FactoryDefinition, FactoryState } from "./seeding/Factory.js";
