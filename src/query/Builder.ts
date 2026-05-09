@@ -35,6 +35,7 @@ export class Builder<T = Record<string, any>> {
   fromRaw?: string;
   updateJoins: string[] = [];
   bindings: any[] = [];
+  private parameterize = false;
 
   constructor(connection: Connection, table: string) {
     this.connection = connection;
@@ -336,12 +337,12 @@ export class Builder<T = Record<string, any>> {
   }
 
   having(column: ModelColumn<T>, operator: string, value: any): this {
-    this.havings.push({ sql: `${this.grammar.wrap(column)} ${operator} ${this.grammar.escape(value)}`, boolean: "and" });
+    this.havings.push({ column, operator, value, boolean: "and" });
     return this;
   }
 
   orHaving(column: ModelColumn<T>, operator: string, value: any): this {
-    this.havings.push({ sql: `${this.grammar.wrap(column)} ${operator} ${this.grammar.escape(value)}`, boolean: "or" });
+    this.havings.push({ column, operator, value, boolean: "or" });
     return this;
   }
 
@@ -582,18 +583,29 @@ export class Builder<T = Record<string, any>> {
     return this.grammar.escape(value);
   }
 
+  private addBinding(value: any): string {
+    this.bindings.push(value);
+    return this.grammar.placeholder(this.bindings.length);
+  }
+
   private compileWhereClause(where: WhereClause, prefix: string): string {
     if (where.type === "basic") {
-      return `${prefix} ${this.grammar.wrap(where.column)} ${where.operator} ${this.grammar.escape(where.value)}`;
+      const value = this.parameterize ? this.addBinding(where.value) : this.grammar.escape(where.value);
+      return `${prefix} ${this.grammar.wrap(where.column)} ${where.operator} ${value}`;
     } else if (where.type === "in") {
       const op = where.operator === "NOT IN" ? "NOT IN" : "IN";
-      return `${prefix} ${this.grammar.wrap(where.column)} ${op} (${(where.value as any[]).map((v: any) => this.grammar.escape(v)).join(", ")})`;
+      const values = this.parameterize
+        ? (where.value as any[]).map((v: any) => this.addBinding(v)).join(", ")
+        : (where.value as any[]).map((v: any) => this.grammar.escape(v)).join(", ");
+      return `${prefix} ${this.grammar.wrap(where.column)} ${op} (${values})`;
     } else if (where.type === "null") {
       const op = where.operator === "NOT NULL" ? "IS NOT NULL" : "IS NULL";
       return `${prefix} ${this.grammar.wrap(where.column)} ${op}`;
     } else if (where.type === "between") {
       const op = where.operator === "NOT BETWEEN" ? "NOT BETWEEN" : "BETWEEN";
-      return `${prefix} ${this.grammar.wrap(where.column)} ${op} ${this.grammar.escape((where.value as any[])[0])} AND ${this.grammar.escape((where.value as any[])[1])}`;
+      const low = this.parameterize ? this.addBinding((where.value as any[])[0]) : this.grammar.escape((where.value as any[])[0]);
+      const high = this.parameterize ? this.addBinding((where.value as any[])[1]) : this.grammar.escape((where.value as any[])[1]);
+      return `${prefix} ${this.grammar.wrap(where.column)} ${op} ${low} AND ${high}`;
     } else if (where.type === "raw") {
       return `${prefix} ${where.column}`;
     } else if (where.type === "column") {
@@ -639,7 +651,11 @@ export class Builder<T = Record<string, any>> {
     if (this.havings.length === 0) return "";
     const clauses = this.havings.map((h, index) => {
       const prefix = index === 0 ? "" : h.boolean.toUpperCase() + " ";
-      return prefix + h.sql;
+      if (h.sql) {
+        return prefix + h.sql;
+      }
+      const value = this.parameterize ? this.addBinding(h.value) : this.grammar.escape(h.value);
+      return prefix + `${this.grammar.wrap(h.column!)} ${h.operator} ${value}`;
     });
     return `HAVING ${clauses.join(" ")}`;
   }
@@ -681,7 +697,11 @@ export class Builder<T = Record<string, any>> {
   }
 
   async get(): Promise<T[]> {
-    const results = await this.connection.query(this.toSql());
+    this.bindings = [];
+    this.parameterize = true;
+    const sql = this.toSql();
+    this.parameterize = false;
+    const results = await this.connection.query(sql, this.bindings);
     const rows = Array.from(results);
 
     if (this.model) {
@@ -885,12 +905,16 @@ export class Builder<T = Record<string, any>> {
     if (records.length === 0) return;
 
     const columns = Object.keys(records[0]);
+    const bindings: any[] = [];
     const values = records.map((record) => {
-      return `(${columns.map((col) => this.grammar.escape((record as any)[col])).join(", ")})`;
+      return `(${columns.map((col) => {
+        bindings.push((record as any)[col]);
+        return this.grammar.placeholder(bindings.length);
+      }).join(", ")})`;
     });
 
     const sql = `INSERT INTO ${this.grammar.wrap(this.tableName)} (${columns.map((c) => this.grammar.wrap(c)).join(", ")}) VALUES ${values.join(", ")}`;
-    return await this.connection.run(sql);
+    return await this.connection.run(sql, bindings);
   }
 
   async insertGetId(data: ModelAttributeInput<T>, idColumn: ModelColumn<T> = "id"): Promise<any> {
@@ -903,8 +927,12 @@ export class Builder<T = Record<string, any>> {
     if (records.length === 0) return;
 
     const columns = Object.keys(records[0]);
+    const bindings: any[] = [];
     const values = records.map((record) => {
-      return `(${columns.map((col) => this.grammar.escape((record as any)[col])).join(", ")})`;
+      return `(${columns.map((col) => {
+        bindings.push((record as any)[col]);
+        return this.grammar.placeholder(bindings.length);
+      }).join(", ")})`;
     });
 
     const sql = this.grammar.compileInsertOrIgnore(
@@ -912,7 +940,7 @@ export class Builder<T = Record<string, any>> {
       columns,
       values
     );
-    return await this.connection.run(sql);
+    return await this.connection.run(sql, bindings);
   }
 
   async upsert(data: ModelAttributeInput<T> | ModelAttributeInput<T>[], uniqueBy: ModelColumn<T> | ModelColumn<T>[], updateColumns?: ModelColumn<T>[]): Promise<any> {
@@ -920,8 +948,12 @@ export class Builder<T = Record<string, any>> {
     if (records.length === 0) return;
 
     const columns = Object.keys(records[0]);
+    const bindings: any[] = [];
     const values = records.map((record) => {
-      return `(${columns.map((col) => this.grammar.escape((record as any)[col])).join(", ")})`;
+      return `(${columns.map((col) => {
+        bindings.push((record as any)[col]);
+        return this.grammar.placeholder(bindings.length);
+      }).join(", ")})`;
     });
 
     const uniqueCols = Array.isArray(uniqueBy) ? uniqueBy : [uniqueBy];
@@ -934,39 +966,53 @@ export class Builder<T = Record<string, any>> {
       uniqueCols,
       updateCols
     );
-    return await this.connection.run(sql);
+    return await this.connection.run(sql, bindings);
   }
 
   async update(data: ModelAttributeInput<T>): Promise<any> {
-    const sets = Object.entries(data)
-      .map(([key, value]) => `${this.grammar.wrap(key)} = ${this.grammar.escape(value)}`)
-      .join(", ");
+    this.bindings = [];
+    this.parameterize = true;
+    const sets = Object.entries(data).map(([key, value]) => {
+      this.bindings.push(value);
+      return `${this.grammar.wrap(key)} = ${this.grammar.placeholder(this.bindings.length)}`;
+    });
+    const whereSql = this.compileWheres();
+    this.parameterize = false;
     const sql = this.grammar.compileUpdate(
       this.grammar.wrap(this.tableName),
-      sets.split(", "),
-      this.compileWheres(),
+      sets,
+      whereSql,
       this.updateJoins
     );
-    return await this.connection.run(sql);
+    return await this.connection.run(sql, this.bindings);
   }
 
   async delete(): Promise<any> {
+    this.bindings = [];
+    this.parameterize = true;
+    const whereSql = this.compileWheres();
+    this.parameterize = false;
     const sql = this.grammar.compileDelete(
       this.grammar.wrap(this.tableName),
-      this.compileWheres(),
+      whereSql,
       this.updateJoins,
       this.limitValue
     );
-    return await this.connection.run(sql);
+    return await this.connection.run(sql, this.bindings);
   }
 
   async increment(column: ModelColumn<T>, amount: number = 1, extra: ModelAttributeInput<T> = {}): Promise<any> {
+    this.bindings = [];
+    this.parameterize = true;
     const sets = [`${this.grammar.wrap(column)} = ${this.grammar.wrap(column)} + ${amount}`];
     for (const [key, value] of Object.entries(extra)) {
-      sets.push(`${this.grammar.wrap(key)} = ${this.grammar.escape(value)}`);
+      this.bindings.push(value);
+      sets.push(`${this.grammar.wrap(key)} = ${this.grammar.placeholder(this.bindings.length)}`);
     }
-    const sql = `UPDATE ${this.grammar.wrap(this.tableName)} SET ${sets.join(", ")} ${this.compileWheres()}`;
-    return await this.connection.run(sql.trim());
+    const whereSql = this.compileWheres();
+    this.parameterize = false;
+    const sql = `UPDATE ${this.grammar.wrap(this.tableName)} SET ${sets.join(", ")} ${whereSql}`;
+    return await this.connection.run(sql.trim(), this.bindings);
   }
 
   async decrement(column: ModelColumn<T>, amount: number = 1, extra: ModelAttributeInput<T> = {}): Promise<any> {
@@ -1017,8 +1063,11 @@ export class Builder<T = Record<string, any>> {
   }
 
   async explain(): Promise<any[]> {
+    this.bindings = [];
+    this.parameterize = true;
     const sql = this.grammar.compileExplain(this.toSql());
-    const results = await this.connection.query(sql);
+    this.parameterize = false;
+    const results = await this.connection.query(sql, this.bindings);
     return Array.from(results);
   }
 

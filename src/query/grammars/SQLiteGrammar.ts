@@ -13,6 +13,10 @@ export class SQLiteGrammar extends Grammar {
     return `"${value}"`;
   }
 
+  placeholder(_index: number): string {
+    return "?";
+  }
+
   compileRandomOrder(): string {
     return "ORDER BY RANDOM()";
   }

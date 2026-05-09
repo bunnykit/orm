@@ -66,7 +66,10 @@ export interface OrderClause {
 }
 
 export interface HavingClause {
-  sql: string;
+  column?: string;
+  operator?: string;
+  value?: any;
+  sql?: string;
   boolean: "and" | "or";
 }
 

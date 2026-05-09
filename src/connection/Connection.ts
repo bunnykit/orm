@@ -83,12 +83,12 @@ export class Connection {
     return `"${value.replace(/"/g, '""')}"`;
   }
 
-  async query(sqlString: string): Promise<any[]> {
-    return (await this.driver.unsafe(sqlString)) as any[];
+  async query(sqlString: string, bindings?: any[]): Promise<any[]> {
+    return (await this.driver.unsafe(sqlString, bindings)) as any[];
   }
 
-  async run(sqlString: string): Promise<any> {
-    return await this.driver.unsafe(sqlString);
+  async run(sqlString: string, bindings?: any[]): Promise<any> {
+    return await this.driver.unsafe(sqlString, bindings);
   }
 
   async beginTransaction(): Promise<void> {
@@ -123,7 +123,7 @@ export class Connection {
       return await this.transaction(callback);
     }
     return await this.transaction(async (connection) => {
-      await connection.run(`SET LOCAL ${setting} = ${connection.getGrammar().escape(tenantId)}`);
+      await connection.run(`SET LOCAL ${setting} = ${connection.getGrammar().placeholder(1)}`, [tenantId]);
       return await callback(connection);
     });
   }

@@ -13,6 +13,10 @@ export class PostgresGrammar extends Grammar {
     return `"${value}"`;
   }
 
+  placeholder(index: number): string {
+    return `$${index}`;
+  }
+
   compileRandomOrder(): string {
     return "ORDER BY RANDOM()";
   }

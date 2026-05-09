@@ -5,6 +5,8 @@ export abstract class Grammar {
     return values.map((v) => this.wrap(v));
   }
 
+  abstract placeholder(index: number): string;
+
   escape(value: any): string {
     if (value === null) return "NULL";
     if (typeof value === "boolean") return value ? "1" : "0";
