@@ -315,6 +315,8 @@ export class ConnectionManager {
     this.connections.clear();
     this.pools.clear();
     this.tenantCache.clear();
+    this.defaultConnection = undefined;
+    this.tenantResolver = undefined;
 
     // Reject all pending waiters
     for (const [name, poolWaiters] of this.waiters) {

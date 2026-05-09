@@ -137,15 +137,19 @@ async function runTenantMigrationCommand(
   tenantId: string,
   typesOutDir?: string
 ): Promise<void> {
-  await TenantContext.run(tenantId, async () => {
-    const context = TenantContext.current();
-    if (!context) {
-      throw new Error(`Tenant "${tenantId}" did not resolve to an active context.`);
-    }
-    console.log(`Tenant: ${tenantId}`);
-    const migrator = new Migrator(context.connection, tenantPath, typesOutDir, createTypeGeneratorOptions(config));
-    await runMigratorCommand(command, migrator);
-  });
+  try {
+    await TenantContext.run(tenantId, async () => {
+      const context = TenantContext.current();
+      if (!context) {
+        throw new Error(`Tenant "${tenantId}" did not resolve to an active context.`);
+      }
+      console.log(`Tenant: ${tenantId}`);
+      const migrator = new Migrator(context.connection, tenantPath, typesOutDir, createTypeGeneratorOptions(config));
+      await runMigratorCommand(command, migrator);
+    });
+  } finally {
+    await ConnectionManager.closeTenant(tenantId);
+  }
 }
 
 async function runConfiguredMigrationCommand(
@@ -505,56 +509,60 @@ async function main() {
   const config = await loadConfig();
   const { connection } = configureBunny(config);
 
-  if (command === "schema:dump" || command === "schema:squash") {
-    const outputPath = args[1] || "./database/schema.sql";
-    const migrator = new Migrator(connection, getDefaultMigrationsPath(config), config.typesOutDir, createTypeGeneratorOptions(config));
-    if (command === "schema:dump") {
-      await migrator.dumpSchema(outputPath);
-      console.log(`Schema dumped to ${outputPath}`);
+  try {
+    if (command === "schema:dump" || command === "schema:squash") {
+      const outputPath = args[1] || "./database/schema.sql";
+      const migrator = new Migrator(connection, getDefaultMigrationsPath(config), config.typesOutDir, createTypeGeneratorOptions(config));
+      if (command === "schema:dump") {
+        await migrator.dumpSchema(outputPath);
+        console.log(`Schema dumped to ${outputPath}`);
+      } else {
+        await migrator.squash(outputPath);
+        console.log(`Schema squashed to ${outputPath}`);
+      }
+    } else if (command === "migrate") {
+      await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
+    } else if (command === "migrate:rollback") {
+      await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
+    } else if (command === "migrate:reset") {
+      await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
+    } else if (command === "migrate:refresh") {
+      await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
+    } else if (command === "migrate:fresh") {
+      await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
+    } else if (command === "migrate:status") {
+      await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
+    } else if (command === "db:seed") {
+      const target = args[1];
+      const seederPath = config.seedersPath || "./database/seeders";
+      const runner = new SeederRunner(connection);
+      if (target) {
+        await runner.runTarget(target, seederPath);
+      } else {
+        await runner.runPaths(seederPath);
+      }
     } else {
-      await migrator.squash(outputPath);
-      console.log(`Schema squashed to ${outputPath}`);
+      console.log("Usage:");
+      console.log("  bun run bunny migrate              Run landlord migrations, then all tenant migrations when configured");
+      console.log("  bun run bunny migrate --landlord   Run landlord migrations only");
+      console.log("  bun run bunny migrate --tenants    Run all tenant migrations only");
+      console.log("  bun run bunny migrate --tenant <id> Run one tenant's migrations only");
+      console.log("  bun run bunny migrate:make <name> [dir] Create a new migration");
+      console.log("  bun run bunny migrate:rollback     Rollback the last batch");
+      console.log("  bun run bunny migrate:reset        Rollback all migrations");
+      console.log("  bun run bunny migrate:refresh      Reset and rerun migrations");
+      console.log("  bun run bunny migrate:fresh        Drop all tables and rerun migrations");
+      console.log("  bun run bunny migrate:status       Show migration status");
+      console.log("  bun run bunny db:seed              Run seeders from seedersPath");
+      console.log("  bun run bunny db:seed <seeder>     Run one seeder by file path or name");
+      console.log("  bun run bunny schema:dump [path]   Dump the current database schema");
+      console.log("  bun run bunny schema:squash [path] Dump schema and mark configured migrations as ran");
+      console.log("  bun run bunny types:generate [dir] Generate model type declarations from DB schema");
+      console.log("  bun run bunny repl                 Start a Bunny REPL with Model, Schema, and db loaded");
+      console.log("                                     Falls back to in-memory SQLite when no config is present");
     }
-  } else if (command === "migrate") {
-    await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
-  } else if (command === "migrate:rollback") {
-    await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
-  } else if (command === "migrate:reset") {
-    await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
-  } else if (command === "migrate:refresh") {
-    await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
-  } else if (command === "migrate:fresh") {
-    await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
-  } else if (command === "migrate:status") {
-    await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
-  } else if (command === "db:seed") {
-    const target = args[1];
-    const seederPath = config.seedersPath || "./database/seeders";
-    const runner = new SeederRunner(connection);
-    if (target) {
-      await runner.runTarget(target, seederPath);
-    } else {
-      await runner.runPaths(seederPath);
-    }
-  } else {
-    console.log("Usage:");
-    console.log("  bun run bunny migrate              Run landlord migrations, then all tenant migrations when configured");
-    console.log("  bun run bunny migrate --landlord   Run landlord migrations only");
-    console.log("  bun run bunny migrate --tenants    Run all tenant migrations only");
-    console.log("  bun run bunny migrate --tenant <id> Run one tenant's migrations only");
-    console.log("  bun run bunny migrate:make <name> [dir] Create a new migration");
-    console.log("  bun run bunny migrate:rollback     Rollback the last batch");
-    console.log("  bun run bunny migrate:reset        Rollback all migrations");
-    console.log("  bun run bunny migrate:refresh      Reset and rerun migrations");
-    console.log("  bun run bunny migrate:fresh        Drop all tables and rerun migrations");
-    console.log("  bun run bunny migrate:status       Show migration status");
-    console.log("  bun run bunny db:seed              Run seeders from seedersPath");
-    console.log("  bun run bunny db:seed <seeder>     Run one seeder by file path or name");
-    console.log("  bun run bunny schema:dump [path]   Dump the current database schema");
-    console.log("  bun run bunny schema:squash [path] Dump schema and mark configured migrations as ran");
-    console.log("  bun run bunny types:generate [dir] Generate model type declarations from DB schema");
-    console.log("  bun run bunny repl                 Start a Bunny REPL with Model, Schema, and db loaded");
-    console.log("                                     Falls back to in-memory SQLite when no config is present");
+  } finally {
+    await ConnectionManager.closeAll();
   }
 }
 
