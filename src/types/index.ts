@@ -52,7 +52,7 @@ export interface ForeignKeyDefinition {
 }
 
 export interface WhereClause {
-  type: "basic" | "in" | "null" | "raw" | "between" | "column" | "exists" | "like" | "regexp" | "fulltext" | "json_contains" | "json_length" | "date" | "all" | "any";
+  type: "basic" | "in" | "null" | "raw" | "nested" | "between" | "column" | "exists" | "like" | "regexp" | "fulltext" | "json_contains" | "json_length" | "date" | "all" | "any";
   column: string;
   columns?: string[];
   operator?: string;
@@ -61,6 +61,7 @@ export interface WhereClause {
   scope?: string;
   not?: boolean;
   dateType?: string;
+  query?: WhereClause[];
 }
 
 export interface OrderClause {

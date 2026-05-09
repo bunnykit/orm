@@ -78,6 +78,33 @@ describe("Schema Builder", () => {
     expect(await Schema.hasColumn("meta_test", "nope")).toBe(false);
   });
 
+  test("schema introspection parameterizes names and preserves existing tables", async () => {
+    connection = setupTestDb();
+    await Schema.create("safe_table", (table) => {
+      table.increments("id");
+      table.string("name");
+    });
+
+    const calls: { sql: string; bindings: any[] }[] = [];
+    const originalQuery = connection.query.bind(connection);
+    connection.query = async (sql: string, bindings?: any[]) => {
+      calls.push({ sql, bindings: bindings || [] });
+      return originalQuery(sql, bindings);
+    };
+
+    const maliciousTable = "safe_table'; DROP TABLE safe_table; --";
+    const maliciousColumn = "name'; DROP TABLE safe_table; --";
+
+    expect(await Schema.hasTable(maliciousTable)).toBe(false);
+    expect(await Schema.hasColumn("safe_table", maliciousColumn)).toBe(false);
+    expect(await Schema.hasTable("safe_table")).toBe(true);
+
+    expect(calls[0].sql).toContain("name = ?");
+    expect(calls[0].bindings).toEqual([maliciousTable]);
+    expect(calls[1].sql).toContain('PRAGMA table_info("safe_table")');
+    expect(calls[1].sql).not.toContain(maliciousColumn);
+  });
+
   test("sqlite grammar compileCreate with uuid primary key", () => {
     const grammar = new SQLiteGrammar();
     const blueprint = new Blueprint("users");

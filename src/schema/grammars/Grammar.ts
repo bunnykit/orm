@@ -9,7 +9,7 @@ export abstract class Grammar {
       return value.split(".").map((v) => this.wrap(v)).join(".");
     }
     const { prefix, suffix } = this.wrappers;
-    return `${prefix}${value}${suffix}`;
+    return `${prefix}${value.replaceAll(suffix, `${suffix}${suffix}`)}${suffix}`;
   }
 
   wrapArray(values: string[]): string[] {

@@ -1,5 +1,5 @@
 import { expect, test, describe } from "bun:test";
-import { Builder } from "../src/index.js";
+import { Builder, Model, Schema } from "../src/index.js";
 import { setupTestDb } from "./helpers.js";
 
 describe("Parameterized Queries", () => {
@@ -160,6 +160,25 @@ describe("Parameterized Queries", () => {
     expect(check).toHaveLength(1);
   });
 
+  test("nested where clauses use placeholders and bindings", async () => {
+    const connection = setupTestDb();
+    await connection.run("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)");
+    await connection.run("INSERT INTO users (name, age) VALUES ('Alice', 30)");
+
+    const malicious = "CURRENT_TIMESTAMP OR 1=1 --";
+    const calls = captureExecution(connection);
+    const rows = await new Builder(connection, "users")
+      .where((query) => {
+        query.where("name", malicious).orWhere("age", 99);
+      })
+      .get();
+
+    expect(calls[0].sql).toContain('WHERE ("name" = ? OR "age" = ?)');
+    expect(calls[0].sql).not.toContain(malicious);
+    expect(calls[0].bindings).toEqual([malicious, 99]);
+    expect(rows).toHaveLength(0);
+  });
+
   test("handles strings containing commas safely in update", async () => {
     const connection = setupTestDb();
     await connection.run("CREATE TABLE items (id INTEGER PRIMARY KEY, desc TEXT)");
@@ -241,5 +260,31 @@ describe("Parameterized Queries", () => {
 
     expect(queryCalls[2].sql).toContain('"id" > ?');
     expect(queryCalls[2].bindings).toEqual([4]);
+  });
+
+  test("cursor() does not skip duplicate values when ordered by a non-unique column", async () => {
+    const connection = setupTestDb();
+    Schema.setConnection(connection);
+
+    class CursorItem extends Model {
+      static table = "cursor_items";
+      static timestamps = false;
+    }
+    CursorItem.setConnection(connection);
+
+    await Schema.create("cursor_items", (table) => {
+      table.increments("id");
+      table.string("group_name");
+    });
+    await CursorItem.create({ group_name: "a" });
+    await CursorItem.create({ group_name: "a" });
+    await CursorItem.create({ group_name: "b" });
+
+    const seen: string[] = [];
+    for await (const item of CursorItem.orderBy("group_name").cursor(1)) {
+      seen.push(`${item.id}:${item.group_name}`);
+    }
+
+    expect(seen).toEqual(["1:a", "2:a", "3:b"]);
   });
 });

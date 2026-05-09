@@ -45,4 +45,12 @@ describe("Connection", () => {
     const rows = await conn.query("SELECT * FROM tx_test");
     expect(rows).toHaveLength(0);
   });
+
+  test("rejects unsafe PostgreSQL tenant setting names", async () => {
+    const conn = new Connection({ url: "postgres://user:pass@localhost:5432/db" });
+
+    await expect(
+      conn.withTenant("tenant-1", async () => {}, "app.tenant_id; RESET search_path; --")
+    ).rejects.toThrow("Invalid PostgreSQL setting name");
+  });
 });

@@ -95,8 +95,7 @@ export class Builder<T = Record<string, any>> {
     const nested = new Builder<T>(this.connection, this.tableName);
     callback(nested);
     if (nested.wheres.length > 0) {
-      const sql = this.compileNestedWheres(nested);
-      this.wheres.push({ type: "raw", column: `(${sql})`, boolean, scope: undefined });
+      this.wheres.push({ type: "nested", column: "", query: nested.wheres, boolean, scope: undefined });
     }
     return this;
   }
@@ -600,6 +599,9 @@ export class Builder<T = Record<string, any>> {
       return `${prefix} ${this.grammar.wrap(where.column)} ${op} ${low} AND ${high}`;
     } else if (where.type === "raw") {
       return `${prefix} ${where.column}`;
+    } else if (where.type === "nested") {
+      const sql = this.compileWhereClauses(where.query || [], "");
+      return `${prefix} (${sql})`;
     } else if (where.type === "like") {
       const sql = this.grammar.compileLike(this.grammar.wrap(where.column), where.value as string, !!where.not, this.parameterize ? (v) => this.addBinding(v) : undefined);
       return `${prefix} ${sql}`;
@@ -645,19 +647,15 @@ export class Builder<T = Record<string, any>> {
   }
 
   private compileWheres(): string {
-    if (this.wheres.length === 0) return "";
-    const clauses = this.wheres.map((where, index) => {
-      const prefix = index === 0 ? "WHERE" : where.boolean.toUpperCase();
-      return this.compileWhereClause(where, prefix);
-    });
-    return clauses.join(" ");
+    return this.compileWhereClauses(this.wheres, "WHERE");
   }
 
-  private compileNestedWheres(builder: Builder<any>): string {
-    if (builder.wheres.length === 0) return "";
-    const clauses = builder.wheres.map((where, index) => {
-      const prefix = index === 0 ? "" : where.boolean.toUpperCase();
-      return this.compileWhereClause(where, prefix);
+  private compileWhereClauses(wheres: WhereClause[], firstPrefix: string): string {
+    if (wheres.length === 0) return "";
+    const clauses = wheres.map((where, index) => {
+      const prefix = index === 0 ? "WHERE" : where.boolean.toUpperCase();
+      const adjustedPrefix = index === 0 ? firstPrefix : prefix;
+      return this.compileWhereClause(where, adjustedPrefix);
     });
     return clauses.join(" ").trim();
   }
@@ -912,10 +910,8 @@ export class Builder<T = Record<string, any>> {
 
     const orderColumn = this.orders[0]?.column || primaryKey;
     const orderDirection = this.orders[0]?.direction || "asc";
-    // Use unqualified column name for property access on model instances
-    const accessColumn = orderColumn.includes(".") ? orderColumn.split(".")[1] : orderColumn;
 
-    let lastValue: any = undefined;
+    let lastValues: any[] | undefined = undefined;
 
     while (true) {
       const builder = this.clone();
@@ -928,23 +924,15 @@ export class Builder<T = Record<string, any>> {
       builder.offsetValue = undefined;
       builder.limitValue = chunkSize;
 
-      if (lastValue !== undefined) {
-        const op = orderDirection === "asc" ? ">" : "<";
+      if (lastValues !== undefined) {
         // Parenthesize existing wheres when appending cursor condition to preserve OR precedence
         if (builder.wheres.length > 0) {
           const hasOr = builder.wheres.some((w) => w.boolean === "or");
           if (hasOr) {
-            builder.wheres = [{ type: "raw", column: `(${builder.compileWheres().replace(/^WHERE /, "")})`, boolean: "and", scope: undefined }];
+            builder.wheres = [{ type: "nested", column: "", query: builder.wheres, boolean: "and", scope: undefined }];
           }
         }
-        builder.wheres.push({
-          type: "basic",
-          column: orderColumn,
-          operator: op,
-          value: lastValue,
-          boolean: "and",
-          scope: undefined,
-        });
+        builder.wheres.push({ type: "nested", column: "", query: this.compileCursorWheres(builder.orders, lastValues), boolean: "and", scope: undefined });
       }
 
       const items = await builder.get();
@@ -957,10 +945,49 @@ export class Builder<T = Record<string, any>> {
       if (items.length < chunkSize) break;
 
       const lastItem = items[items.length - 1];
-      lastValue = lastItem && typeof lastItem === "object"
-        ? (lastItem as any)[accessColumn]
+      lastValues = lastItem && typeof lastItem === "object"
+        ? builder.orders.map((order) => (lastItem as any)[this.getResultAccessColumn(order.column)])
         : undefined;
     }
+  }
+
+  private getResultAccessColumn(column: string): string {
+    return column.includes(".") ? column.split(".").at(-1)! : column;
+  }
+
+  private compileCursorWheres(orders: OrderClause[], values: any[], index: number = 0): WhereClause[] {
+    const order = orders[index];
+    const op = order.direction === "asc" ? ">" : "<";
+    const clauses: WhereClause[] = [{
+      type: "basic",
+      column: order.column,
+      operator: op,
+      value: values[index],
+      boolean: "and",
+      scope: undefined,
+    }];
+
+    if (index < orders.length - 1) {
+      clauses.push({
+        type: "nested",
+        column: "",
+        query: [
+          {
+            type: "basic",
+            column: order.column,
+            operator: "=",
+            value: values[index],
+            boolean: "and",
+            scope: undefined,
+          },
+          ...this.compileCursorWheres(orders, values, index + 1),
+        ],
+        boolean: "or",
+        scope: undefined,
+      });
+    }
+
+    return clauses;
   }
 
   async *lazy(count: number = 1000): AsyncGenerator<T> {

@@ -130,6 +130,9 @@ export class Connection {
     if (this.driverName !== "postgres") {
       return await this.transaction(callback);
     }
+    if (!/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/.test(setting)) {
+      throw new Error(`Invalid PostgreSQL setting name: ${setting}`);
+    }
     return await this.transaction(async (connection) => {
       await connection.run(`SET LOCAL ${setting} = ${connection.getGrammar().placeholder(1)}`, [tenantId]);
       return await callback(connection);

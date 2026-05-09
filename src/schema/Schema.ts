@@ -149,14 +149,18 @@ export class Schema {
     const driver = connection.getDriverName();
     const schema = connection.getSchema() || "public";
     let sql: string;
+    let bindings: any[] = [];
     if (driver === "sqlite") {
-      sql = `SELECT name FROM sqlite_master WHERE type='table' AND name='${table}'`;
+      sql = "SELECT name FROM sqlite_master WHERE type='table' AND name = ?";
+      bindings = [table];
     } else if (driver === "mysql") {
-      sql = `SHOW TABLES LIKE '${table}'`;
+      sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?";
+      bindings = [table];
     } else {
-      sql = `SELECT * FROM information_schema.tables WHERE table_schema = '${schema}' AND table_name = '${table}'`;
+      sql = "SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2";
+      bindings = [schema, table];
     }
-    const result = await connection.query(sql);
+    const result = await connection.query(sql, bindings);
     return result.length > 0;
   }
 
@@ -164,17 +168,21 @@ export class Schema {
     const connection = this.getConnection();
     const driver = connection.getDriverName();
     const schema = connection.getSchema() || "public";
+    const grammar = this.getGrammar();
     let sql: string;
+    let bindings: any[] = [];
     if (driver === "sqlite") {
-      sql = `PRAGMA table_info(${table})`;
+      sql = `PRAGMA table_info(${grammar.wrap(table)})`;
       const result = await connection.query(sql);
       return result.some((row: any) => row.name === column);
     } else if (driver === "mysql") {
-      sql = `SHOW COLUMNS FROM ${table} LIKE '${column}'`;
+      sql = "SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?";
+      bindings = [table, column];
     } else {
-      sql = `SELECT column_name FROM information_schema.columns WHERE table_schema = '${schema}' AND table_name = '${table}' AND column_name = '${column}'`;
+      sql = "SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND column_name = $3";
+      bindings = [schema, table, column];
     }
-    const result = await connection.query(sql);
+    const result = await connection.query(sql, bindings);
     return result.length > 0;
   }
 
@@ -185,14 +193,18 @@ export class Schema {
     const connection = this.getConnection();
     const driver = connection.getDriverName();
     const schema = connection.getSchema() || "public";
+    const grammar = this.getGrammar();
     if (driver === "sqlite") {
-      const rows = await connection.query(`PRAGMA table_info(${table})`);
+      const rows = await connection.query(`PRAGMA table_info(${grammar.wrap(table)})`);
       const row = rows.find((item: any) => item.name === column);
       return row ? { name: row.name, type: row.type, primary: row.pk > 0, autoIncrement: false } as any : null;
     }
 
     if (driver === "mysql") {
-      const rows = await connection.query(`SHOW COLUMNS FROM ${table} LIKE '${column}'`);
+      const rows = await connection.query(
+        "SELECT column_name AS Field, column_type AS Type, column_key AS `Key`, extra AS Extra FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?",
+        [table, column]
+      );
       const row = rows[0];
       return row ? { name: row.Field, type: row.Type, primary: row.Key === "PRI", autoIncrement: String(row.Extra || "").toLowerCase().includes("auto_increment") } as any : null;
     }
@@ -207,9 +219,10 @@ export class Schema {
        LEFT JOIN information_schema.table_constraints tc
          ON kcu.table_schema = tc.table_schema
         AND kcu.constraint_name = tc.constraint_name
-       WHERE c.table_schema = '${schema}'
-         AND c.table_name = '${table}'
-         AND c.column_name = '${column}'`
+       WHERE c.table_schema = $1
+         AND c.table_name = $2
+         AND c.column_name = $3`,
+      [schema, table, column]
     );
     const row = rows[0];
     return row ? { name: row.column_name, type: row.data_type, primary: !!row.primary_key, autoIncrement: false } as any : null;
