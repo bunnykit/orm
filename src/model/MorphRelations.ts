@@ -17,6 +17,18 @@ export class MorphTo<T extends Model = Model> {
     this.typeColumn = `${name}_type`;
     this.idColumn = `${name}_id`;
     this.typeMap = typeMap;
+
+    // Wrap getResults with lazy-loading guard
+    const originalGetResults = (this as any).getResults.bind(this);
+    (this as any).getResults = async () => {
+      if ((this.parent.constructor as any).preventLazyLoading) {
+        throw new Error(
+          `Lazy loading is prevented on ${(this.parent.constructor as any).name}. ` +
+            `Eager load the relation using with().`
+        );
+      }
+      return await originalGetResults();
+    };
   }
 
   async getResults(): Promise<T | null> {
@@ -121,6 +133,18 @@ export class MorphOne<T extends Model = Model> {
     this.builder = (related as any).on(parent.getConnection());
     this.builder.where(this.typeColumn, this.getMorphType());
     this.builder.where(this.idColumn, this.parent.getAttribute(this.localKey));
+
+    // Wrap getResults with lazy-loading guard
+    const originalGetResults = (this as any).getResults.bind(this);
+    (this as any).getResults = async () => {
+      if ((this.parent.constructor as any).preventLazyLoading) {
+        throw new Error(
+          `Lazy loading is prevented on ${(this.parent.constructor as any).name}. ` +
+            `Eager load the relation using with().`
+        );
+      }
+      return await originalGetResults();
+    };
   }
 
   protected getMorphType(): string {
@@ -209,6 +233,18 @@ export class MorphMany<T extends Model = Model> {
     this.builder = (related as any).on(parent.getConnection());
     this.builder.where(this.typeColumn, this.getMorphType());
     this.builder.where(this.idColumn, this.parent.getAttribute(this.localKey));
+
+    // Wrap getResults with lazy-loading guard
+    const originalGetResults = (this as any).getResults.bind(this);
+    (this as any).getResults = async () => {
+      if ((this.parent.constructor as any).preventLazyLoading) {
+        throw new Error(
+          `Lazy loading is prevented on ${(this.parent.constructor as any).name}. ` +
+            `Eager load the relation using with().`
+        );
+      }
+      return await originalGetResults();
+    };
   }
 
   protected getMorphType(): string {
@@ -306,6 +342,18 @@ export class MorphToMany<T extends Model = Model> {
     this.relatedPivotKey = relatedPivotKey || `${snakeCase(related.name)}_id`;
     this.builder = (related as any).on(parent.getConnection());
     this.addConstraints();
+
+    // Wrap getResults with lazy-loading guard
+    const originalGetResults = (this as any).getResults.bind(this);
+    (this as any).getResults = async () => {
+      if ((this.parent.constructor as any).preventLazyLoading) {
+        throw new Error(
+          `Lazy loading is prevented on ${(this.parent.constructor as any).name}. ` +
+            `Eager load the relation using with().`
+        );
+      }
+      return await originalGetResults();
+    };
   }
 
   protected addConstraints(): void {

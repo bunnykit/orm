@@ -35,6 +35,18 @@ export class BelongsToMany<T extends Model = Model> {
     this.relatedPivotKey = relatedPivotKey || `${snakeCase(related.name)}_id`;
     this.builder = (related as any).on(parent.getConnection());
     this.addConstraints();
+
+    // Wrap getResults with lazy-loading guard
+    const originalGetResults = (this as any).getResults.bind(this);
+    (this as any).getResults = async () => {
+      if ((this.parent.constructor as any).preventLazyLoading) {
+        throw new Error(
+          `Lazy loading is prevented on ${(this.parent.constructor as any).name}. ` +
+            `Eager load the relation using with().`
+        );
+      }
+      return await originalGetResults();
+    };
   }
 
   protected addConstraints(): void {

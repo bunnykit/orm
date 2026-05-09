@@ -484,6 +484,27 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
         }
         return Reflect.set(target, prop, value, receiver);
       },
+      has(target, prop) {
+        if (typeof prop === "string" && prop in target.$attributes) return true;
+        return Reflect.has(target, prop);
+      },
+      getOwnPropertyDescriptor(target, prop) {
+        if (typeof prop === "string" && prop in target.$attributes) {
+          return {
+            enumerable: true,
+            configurable: true,
+            value: target.getAttribute(prop),
+          };
+        }
+        return Reflect.getOwnPropertyDescriptor(target, prop);
+      },
+      ownKeys(target) {
+        const keys = new Set(Reflect.ownKeys(target) as string[]);
+        for (const key of Object.keys(target.$attributes)) {
+          if (!key.startsWith("$")) keys.add(key);
+        }
+        return Array.from(keys);
+      },
     });
   }
 
@@ -498,7 +519,16 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   }
 
   private syncAttributeProperties(): void {
-    for (const key of Object.keys(this.$attributes)) {
+    const currentKeys = new Set(Object.keys(this.$attributes));
+    // Remove stale attribute properties
+    for (const key of Reflect.ownKeys(this) as string[]) {
+      if (key.startsWith("$") || typeof key !== "string") continue;
+      const desc = Object.getOwnPropertyDescriptor(this, key);
+      if (desc && desc.get && desc.configurable && !currentKeys.has(key)) {
+        delete (this as any)[key];
+      }
+    }
+    for (const key of currentKeys) {
       this.defineAttributeProperty(key);
     }
   }
@@ -1176,6 +1206,11 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       this.$exists = false;
     }
 
+    const identityMap = IdentityMap.current();
+    if (identityMap) {
+      IdentityMap.delete(constructor.getTable(), pk);
+    }
+
     await ObserverRegistry.dispatch("deleted", this);
     return true;
   }
@@ -1206,6 +1241,12 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       .where(constructor.primaryKey, pk)
       .delete();
     this.$exists = false;
+
+    const identityMap = IdentityMap.current();
+    if (identityMap) {
+      IdentityMap.delete(constructor.getTable(), pk);
+    }
+
     return true;
   }
 
@@ -1214,11 +1255,21 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     const pk = this.getAttribute(constructor.primaryKey);
     if (!pk) return this;
 
+    // Bypass identity map to fetch fresh data
+    const identityMap = IdentityMap.current();
+    if (identityMap) {
+      IdentityMap.delete(constructor.getTable(), pk);
+    }
+
     const result = await constructor.find(pk);
     if (result) {
       this.$attributes = result.$attributes as T;
       this.$original = { ...result.$attributes } as Partial<T>;
       this.syncAttributeProperties();
+      // Ensure this instance is the canonical one in the identity map
+      if (identityMap) {
+        IdentityMap.set(constructor.getTable(), pk, this);
+      }
     }
     return this;
   }

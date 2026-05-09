@@ -64,12 +64,12 @@ export class ConnectionManager {
     const now = Date.now();
     const idleTimeout = poolConfig.idleTimeout || 30000;
 
+    // Reuse a healthy idle connection
     while (pool.length > 0) {
       const idx = pool.findIndex((c) => !c.inUse && (now - c.lastUsed) < idleTimeout);
       if (idx === -1) break;
 
       const pooled = pool[idx];
-      pool.splice(idx, 1);
 
       try {
         await pooled.connection.query("SELECT 1");
@@ -77,6 +77,15 @@ export class ConnectionManager {
         return pooled.connection;
       } catch {
         await pooled.connection.close().catch(() => null);
+        pool.splice(idx, 1);
+      }
+    }
+
+    // Clean up expired idle connections
+    for (let i = pool.length - 1; i >= 0; i--) {
+      if (!pool[i].inUse && (now - pool[i].lastUsed) >= idleTimeout) {
+        await pool[i].connection.close().catch(() => null);
+        pool.splice(i, 1);
       }
     }
 
@@ -253,6 +262,15 @@ export class ConnectionManager {
     this.connections.clear();
     this.pools.clear();
     this.tenantCache.clear();
+
+    // Reject all pending waiters
+    for (const [name, poolWaiters] of this.waiters) {
+      for (const waiter of poolWaiters) {
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error(`Connection pool "${name}" is closing`));
+      }
+    }
+    this.waiters.clear();
 
     for (const connection of connections) {
       await connection.close();

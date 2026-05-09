@@ -29,4 +29,10 @@ export class IdentityMap {
     if (!map) return;
     map.clear();
   }
+
+  static delete(table: string, key: string | number): void {
+    const map = this.current();
+    if (!map) return;
+    map.delete(`${table}:${String(key)}`);
+  }
 }

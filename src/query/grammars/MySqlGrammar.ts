@@ -21,20 +21,21 @@ export class MySqlGrammar extends Grammar {
     return "ORDER BY RAND()";
   }
 
-  compileDateWhere(type: string, column: string, operator: string, value: any): string {
+  compileDateWhere(type: string, column: string, operator: string, value: any, binding?: (value: any) => string): string {
+    const val = binding ? binding(value) : this.escape(value);
     switch (type) {
       case "date":
-        return `DATE(${column}) ${operator} ${this.escape(value)}`;
+        return `DATE(${column}) ${operator} ${val}`;
       case "day":
-        return `DAY(${column}) ${operator} ${this.escape(value)}`;
+        return `DAY(${column}) ${operator} ${val}`;
       case "month":
-        return `MONTH(${column}) ${operator} ${this.escape(value)}`;
+        return `MONTH(${column}) ${operator} ${val}`;
       case "year":
-        return `YEAR(${column}) ${operator} ${this.escape(value)}`;
+        return `YEAR(${column}) ${operator} ${val}`;
       case "time":
-        return `TIME(${column}) ${operator} ${this.escape(value)}`;
+        return `TIME(${column}) ${operator} ${val}`;
       default:
-        return `${column} ${operator} ${this.escape(value)}`;
+        return `${column} ${operator} ${val}`;
     }
   }
 
@@ -55,21 +56,21 @@ export class MySqlGrammar extends Grammar {
     return `INSERT INTO ${table} (${columns.map((c) => this.wrap(c)).join(", ")}) VALUES ${values.join(", ")} ON DUPLICATE KEY UPDATE ${updateCols}`;
   }
 
-  compileJsonContains(column: string, value: any): string {
-    return `JSON_CONTAINS(${column}, ${this.escape(JSON.stringify(value))})`;
+  compileJsonContains(column: string, value: any, binding?: (value: any) => string): string {
+    return `JSON_CONTAINS(${column}, ${binding ? binding(JSON.stringify(value)) : this.escape(JSON.stringify(value))})`;
   }
 
-  compileJsonLength(column: string, operator: string, value: any): string {
-    return `JSON_LENGTH(${column}) ${operator} ${this.escape(value)}`;
+  compileJsonLength(column: string, operator: string, value: any, binding?: (value: any) => string): string {
+    return `JSON_LENGTH(${column}) ${operator} ${binding ? binding(value) : this.escape(value)}`;
   }
 
-  compileRegexp(column: string, value: string, not: boolean): string {
+  compileRegexp(column: string, value: string, not: boolean, binding?: (value: any) => string): string {
     const op = not ? "NOT REGEXP" : "REGEXP";
-    return `${column} ${op} ${this.escape(value)}`;
+    return `${column} ${op} ${binding ? binding(value) : this.escape(value)}`;
   }
 
-  compileFullText(columns: string[], value: string): string {
-    return `MATCH (${columns.join(", ")}) AGAINST (${this.escape(value)})`;
+  compileFullText(columns: string[], value: string, binding?: (value: any) => string): string {
+    return `MATCH (${columns.join(", ")}) AGAINST (${binding ? binding(value) : this.escape(value)})`;
   }
 
   compileExplain(sql: string): string {

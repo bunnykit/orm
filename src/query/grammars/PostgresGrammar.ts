@@ -21,20 +21,21 @@ export class PostgresGrammar extends Grammar {
     return "ORDER BY RANDOM()";
   }
 
-  compileDateWhere(type: string, column: string, operator: string, value: any): string {
+  compileDateWhere(type: string, column: string, operator: string, value: any, binding?: (value: any) => string): string {
+    const val = binding ? binding(value) : this.escape(value);
     switch (type) {
       case "date":
-        return `(${column})::date ${operator} ${this.escape(value)}`;
+        return `(${column})::date ${operator} ${val}`;
       case "day":
-        return `EXTRACT(DAY FROM ${column}) ${operator} ${this.escape(value)}`;
+        return `EXTRACT(DAY FROM ${column}) ${operator} ${val}`;
       case "month":
-        return `EXTRACT(MONTH FROM ${column}) ${operator} ${this.escape(value)}`;
+        return `EXTRACT(MONTH FROM ${column}) ${operator} ${val}`;
       case "year":
-        return `EXTRACT(YEAR FROM ${column}) ${operator} ${this.escape(value)}`;
+        return `EXTRACT(YEAR FROM ${column}) ${operator} ${val}`;
       case "time":
-        return `(${column})::time ${operator} ${this.escape(value)}`;
+        return `(${column})::time ${operator} ${val}`;
       default:
-        return `${column} ${operator} ${this.escape(value)}`;
+        return `${column} ${operator} ${val}`;
     }
   }
 
@@ -55,24 +56,24 @@ export class PostgresGrammar extends Grammar {
     return `INSERT INTO ${table} (${columns.map((c) => this.wrap(c)).join(", ")}) VALUES ${values.join(", ")} ON CONFLICT (${uniqueBy.map((c) => this.wrap(c)).join(", ")}) DO UPDATE SET ${updateCols}`;
   }
 
-  compileJsonContains(column: string, value: any): string {
-    return `${column} @> ${this.escape(JSON.stringify([value]))}`;
+  compileJsonContains(column: string, value: any, binding?: (value: any) => string): string {
+    return `${column} @> ${binding ? binding(JSON.stringify([value])) : this.escape(JSON.stringify([value]))}`;
   }
 
-  compileJsonLength(column: string, operator: string, value: any): string {
-    return `jsonb_array_length(${column}) ${operator} ${this.escape(value)}`;
+  compileJsonLength(column: string, operator: string, value: any, binding?: (value: any) => string): string {
+    return `jsonb_array_length(${column}) ${operator} ${binding ? binding(value) : this.escape(value)}`;
   }
 
-  compileRegexp(column: string, value: string, not: boolean): string {
+  compileRegexp(column: string, value: string, not: boolean, binding?: (value: any) => string): string {
     const op = not ? "!~" : "~";
-    return `${column} ${op} ${this.escape(value)}`;
+    return `${column} ${op} ${binding ? binding(value) : this.escape(value)}`;
   }
 
-  compileFullText(columns: string[], value: string): string {
+  compileFullText(columns: string[], value: string, binding?: (value: any) => string): string {
     const cols = columns.length > 1
       ? `concat_ws(' ', ${columns.join(", ")})`
       : columns[0];
-    return `to_tsvector('english', ${cols}) @@ plainto_tsquery('english', ${this.escape(value)})`;
+    return `to_tsvector('english', ${cols}) @@ plainto_tsquery('english', ${binding ? binding(value) : this.escape(value)})`;
   }
 
   compileExplain(sql: string): string {

@@ -52,12 +52,15 @@ export interface ForeignKeyDefinition {
 }
 
 export interface WhereClause {
-  type: "basic" | "in" | "null" | "raw" | "between" | "column" | "exists";
+  type: "basic" | "in" | "null" | "raw" | "between" | "column" | "exists" | "like" | "regexp" | "fulltext" | "json_contains" | "json_length" | "date" | "all" | "any";
   column: string;
+  columns?: string[];
   operator?: string;
   value?: any;
   boolean: "and" | "or";
   scope?: string;
+  not?: boolean;
+  dateType?: string;
 }
 
 export interface OrderClause {

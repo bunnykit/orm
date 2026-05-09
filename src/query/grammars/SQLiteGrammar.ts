@@ -26,20 +26,21 @@ export class SQLiteGrammar extends Grammar {
     return `${limitSql}OFFSET ${offset}`;
   }
 
-  compileDateWhere(type: string, column: string, operator: string, value: any): string {
+  compileDateWhere(type: string, column: string, operator: string, value: any, binding?: (value: any) => string): string {
+    const val = binding ? binding(value) : this.escape(value);
     switch (type) {
       case "date":
-        return `date(${column}) ${operator} ${this.escape(value)}`;
+        return `date(${column}) ${operator} ${val}`;
       case "day":
-        return `CAST(strftime('%d', ${column}) AS INTEGER) ${operator} ${this.escape(value)}`;
+        return `CAST(strftime('%d', ${column}) AS INTEGER) ${operator} ${val}`;
       case "month":
-        return `CAST(strftime('%m', ${column}) AS INTEGER) ${operator} ${this.escape(value)}`;
+        return `CAST(strftime('%m', ${column}) AS INTEGER) ${operator} ${val}`;
       case "year":
-        return `CAST(strftime('%Y', ${column}) AS INTEGER) ${operator} ${this.escape(value)}`;
+        return `CAST(strftime('%Y', ${column}) AS INTEGER) ${operator} ${val}`;
       case "time":
-        return `time(${column}) ${operator} ${this.escape(value)}`;
+        return `time(${column}) ${operator} ${val}`;
       default:
-        return `${column} ${operator} ${this.escape(value)}`;
+        return `${column} ${operator} ${val}`;
     }
   }
 
@@ -60,21 +61,21 @@ export class SQLiteGrammar extends Grammar {
     return `INSERT INTO ${table} (${columns.map((c) => this.wrap(c)).join(", ")}) VALUES ${values.join(", ")} ON CONFLICT(${uniqueBy.map((c) => this.wrap(c)).join(", ")}) DO UPDATE SET ${updateCols}`;
   }
 
-  compileJsonContains(column: string, value: any): string {
-    return `${column} IN (SELECT value FROM json_each(${column})) AND ${this.escape(value)} IN (SELECT value FROM json_each(${column}))`;
+  compileJsonContains(column: string, value: any, binding?: (value: any) => string): string {
+    return `${column} IN (SELECT value FROM json_each(${column})) AND ${binding ? binding(value) : this.escape(value)} IN (SELECT value FROM json_each(${column}))`;
   }
 
-  compileJsonLength(column: string, operator: string, value: any): string {
-    return `(SELECT COUNT(*) FROM json_each(${column})) ${operator} ${this.escape(value)}`;
+  compileJsonLength(column: string, operator: string, value: any, binding?: (value: any) => string): string {
+    return `(SELECT COUNT(*) FROM json_each(${column})) ${operator} ${binding ? binding(value) : this.escape(value)}`;
   }
 
-  compileRegexp(column: string, value: string, not: boolean): string {
+  compileRegexp(column: string, value: string, not: boolean, binding?: (value: any) => string): string {
     const op = not ? "NOT REGEXP" : "REGEXP";
-    return `${column} ${op} ${this.escape(value)}`;
+    return `${column} ${op} ${binding ? binding(value) : this.escape(value)}`;
   }
 
-  compileFullText(columns: string[], value: string): string {
-    return columns.map((c) => `${this.wrap(c)} LIKE ${this.escape(`%${value}%`)}`).join(" OR ");
+  compileFullText(columns: string[], value: string, binding?: (value: any) => string): string {
+    return columns.map((c) => `${this.wrap(c)} LIKE ${binding ? binding(`%${value}%`) : this.escape(`%${value}%`)}`).join(" OR ");
   }
 
   compileExplain(sql: string): string {

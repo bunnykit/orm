@@ -25,7 +25,7 @@ export abstract class Grammar {
     return lockMode ? ` ${lockMode}` : "";
   }
 
-  abstract compileDateWhere(type: string, column: string, operator: string, value: any): string;
+  abstract compileDateWhere(type: string, column: string, operator: string, value: any, binding?: (value: any) => string): string;
 
   abstract compileInsertOrIgnore(table: string, columns: string[], values: string[]): string;
 
@@ -57,18 +57,18 @@ export abstract class Grammar {
     return sql.trim();
   }
 
-  abstract compileJsonContains(column: string, value: any): string;
+  abstract compileJsonContains(column: string, value: any, binding?: (value: any) => string): string;
 
-  abstract compileJsonLength(column: string, operator: string, value: any): string;
+  abstract compileJsonLength(column: string, operator: string, value: any, binding?: (value: any) => string): string;
 
-  compileLike(column: string, value: string, not: boolean): string {
+  compileLike(column: string, value: string, not: boolean, binding?: (value: any) => string): string {
     const op = not ? "NOT LIKE" : "LIKE";
-    return `${column} ${op} ${this.escape(value)}`;
+    return `${column} ${op} ${binding ? binding(value) : this.escape(value)}`;
   }
 
-  abstract compileRegexp(column: string, value: string, not: boolean): string;
+  abstract compileRegexp(column: string, value: string, not: boolean, binding?: (value: any) => string): string;
 
-  abstract compileFullText(columns: string[], value: string): string;
+  abstract compileFullText(columns: string[], value: string, binding?: (value: any) => string): string;
 
   abstract compileExplain(sql: string): string;
 }

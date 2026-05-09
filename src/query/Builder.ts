@@ -248,9 +248,7 @@ export class Builder<T = Record<string, any>> {
   }
 
   whereJsonContains(column: ModelColumn<T>, value: any, boolean: "and" | "or" = "and", not: boolean = false): this {
-    let sql = this.grammar.compileJsonContains(this.grammar.wrap(column), value);
-    if (not) sql = `NOT (${sql})`;
-    this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
+    this.wheres.push({ type: "json_contains", column, value, boolean, scope: undefined, not });
     return this;
   }
 
@@ -259,15 +257,12 @@ export class Builder<T = Record<string, any>> {
       value = operator as number;
       operator = "=";
     }
-    let sql = this.grammar.compileJsonLength(this.grammar.wrap(column), String(operator), value);
-    if (not) sql = `NOT (${sql})`;
-    this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
+    this.wheres.push({ type: "json_length", column, operator: String(operator), value, boolean, scope: undefined, not });
     return this;
   }
 
   whereLike(column: ModelColumn<T>, value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
-    const sql = this.grammar.compileLike(this.grammar.wrap(column), value, not);
-    this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
+    this.wheres.push({ type: "like", column, value, boolean, scope: undefined, not });
     return this;
   }
 
@@ -276,28 +271,23 @@ export class Builder<T = Record<string, any>> {
   }
 
   whereRegexp(column: ModelColumn<T>, value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
-    const sql = this.grammar.compileRegexp(this.grammar.wrap(column), value, not);
-    this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
+    this.wheres.push({ type: "regexp", column, value, boolean, scope: undefined, not });
     return this;
   }
 
   whereFullText(columns: ModelColumn<T> | ModelColumn<T>[], value: string, boolean: "and" | "or" = "and", not: boolean = false): this {
     const cols = Array.isArray(columns) ? columns : [columns];
-    let sql = this.grammar.compileFullText(cols.map((c) => this.grammar.wrap(c)), value);
-    if (not) sql = `NOT (${sql})`;
-    this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
+    this.wheres.push({ type: "fulltext", column: "", columns: cols as string[], value, boolean, scope: undefined, not });
     return this;
   }
 
   whereAll(columns: ModelColumn<T>[], operator: string, value: any, boolean: "and" | "or" = "and"): this {
-    const sql = columns.map((c) => `${this.grammar.wrap(c)} ${operator} ${this.grammar.escape(value)}`).join(" AND ");
-    this.wheres.push({ type: "raw", column: `(${sql})`, boolean, scope: undefined });
+    this.wheres.push({ type: "all", column: "", columns: columns as string[], operator, value, boolean, scope: undefined });
     return this;
   }
 
   whereAny(columns: ModelColumn<T>[], operator: string, value: any, boolean: "and" | "or" = "and"): this {
-    const sql = columns.map((c) => `${this.grammar.wrap(c)} ${operator} ${this.grammar.escape(value)}`).join(" OR ");
-    this.wheres.push({ type: "raw", column: `(${sql})`, boolean, scope: undefined });
+    this.wheres.push({ type: "any", column: "", columns: columns as string[], operator, value, boolean, scope: undefined });
     return this;
   }
 
@@ -573,6 +563,7 @@ export class Builder<T = Record<string, any>> {
     cloned.fromRaw = this.fromRaw;
     cloned.updateJoins = [...this.updateJoins];
     cloned.bindings = [...this.bindings];
+    cloned.parameterize = this.parameterize;
     return cloned;
   }
 
@@ -609,6 +600,42 @@ export class Builder<T = Record<string, any>> {
       return `${prefix} ${this.grammar.wrap(where.column)} ${op} ${low} AND ${high}`;
     } else if (where.type === "raw") {
       return `${prefix} ${where.column}`;
+    } else if (where.type === "like") {
+      const sql = this.grammar.compileLike(this.grammar.wrap(where.column), where.value as string, !!where.not, this.parameterize ? (v) => this.addBinding(v) : undefined);
+      return `${prefix} ${sql}`;
+    } else if (where.type === "regexp") {
+      const sql = this.grammar.compileRegexp(this.grammar.wrap(where.column), where.value as string, !!where.not, this.parameterize ? (v) => this.addBinding(v) : undefined);
+      return `${prefix} ${sql}`;
+    } else if (where.type === "fulltext") {
+      const cols = (where.columns || []).map((c) => this.grammar.wrap(c));
+      let sql = this.grammar.compileFullText(cols, where.value as string, this.parameterize ? (v) => this.addBinding(v) : undefined);
+      if (where.not) sql = `NOT (${sql})`;
+      return `${prefix} ${sql}`;
+    } else if (where.type === "json_contains") {
+      let sql = this.grammar.compileJsonContains(this.grammar.wrap(where.column), where.value, this.parameterize ? (v) => this.addBinding(v) : undefined);
+      if (where.not) sql = `NOT (${sql})`;
+      return `${prefix} ${sql}`;
+    } else if (where.type === "json_length") {
+      let sql = this.grammar.compileJsonLength(this.grammar.wrap(where.column), where.operator || "=", where.value, this.parameterize ? (v) => this.addBinding(v) : undefined);
+      if (where.not) sql = `NOT (${sql})`;
+      return `${prefix} ${sql}`;
+    } else if (where.type === "date") {
+      const sql = this.grammar.compileDateWhere(where.dateType || "date", this.grammar.wrap(where.column), where.operator || "=", where.value, this.parameterize ? (v) => this.addBinding(v) : undefined);
+      return `${prefix} ${sql}`;
+    } else if (where.type === "all") {
+      const cols = (where.columns || []).map((c) => this.grammar.wrap(c));
+      const inner = cols.map((c) => {
+        const val = this.parameterize ? this.addBinding(where.value) : this.grammar.escape(where.value);
+        return `${c} ${where.operator} ${val}`;
+      }).join(" AND ");
+      return `${prefix} (${inner})`;
+    } else if (where.type === "any") {
+      const cols = (where.columns || []).map((c) => this.grammar.wrap(c));
+      const inner = cols.map((c) => {
+        const val = this.parameterize ? this.addBinding(where.value) : this.grammar.escape(where.value);
+        return `${c} ${where.operator} ${val}`;
+      }).join(" OR ");
+      return `${prefix} (${inner})`;
     } else if (where.type === "column") {
       return `${prefix} ${this.grammar.wrap(where.column)} ${where.operator} ${this.grammar.wrap(where.value)}`;
     } else if (where.type === "exists") {
@@ -877,19 +904,39 @@ export class Builder<T = Record<string, any>> {
   async *cursor(chunkSize: number = 1000): AsyncGenerator<T> {
     const model = this.model;
     const primaryKey = model ? (model as any).primaryKey || "id" : "id";
+
+    // Cursor pagination is incompatible with random ordering
+    if (this.randomOrderFlag) {
+      throw new Error("cursor() does not support inRandomOrder(). Use lazy() instead.");
+    }
+
     const orderColumn = this.orders[0]?.column || primaryKey;
     const orderDirection = this.orders[0]?.direction || "asc";
+    // Use unqualified column name for property access on model instances
+    const accessColumn = orderColumn.includes(".") ? orderColumn.split(".")[1] : orderColumn;
 
     let lastValue: any = undefined;
 
     while (true) {
       const builder = this.clone();
-      builder.orders = [{ column: orderColumn, direction: orderDirection as "asc" | "desc" }];
+      // Preserve multi-column ORDER BY, appending PK tie-breaker if not present
+      builder.orders = this.orders.length > 0 ? [...this.orders] : [{ column: orderColumn, direction: orderDirection as "asc" | "desc" }];
+      const hasPkOrder = builder.orders.some((o) => o.column === primaryKey);
+      if (!hasPkOrder) {
+        builder.orders.push({ column: primaryKey, direction: orderDirection as "asc" | "desc" });
+      }
       builder.offsetValue = undefined;
       builder.limitValue = chunkSize;
 
       if (lastValue !== undefined) {
         const op = orderDirection === "asc" ? ">" : "<";
+        // Parenthesize existing wheres when appending cursor condition to preserve OR precedence
+        if (builder.wheres.length > 0) {
+          const hasOr = builder.wheres.some((w) => w.boolean === "or");
+          if (hasOr) {
+            builder.wheres = [{ type: "raw", column: `(${builder.compileWheres().replace(/^WHERE /, "")})`, boolean: "and", scope: undefined }];
+          }
+        }
         builder.wheres.push({
           type: "basic",
           column: orderColumn,
@@ -911,7 +958,7 @@ export class Builder<T = Record<string, any>> {
 
       const lastItem = items[items.length - 1];
       lastValue = lastItem && typeof lastItem === "object"
-        ? (lastItem as any)[orderColumn]
+        ? (lastItem as any)[accessColumn]
         : undefined;
     }
   }
@@ -1145,8 +1192,7 @@ export class Builder<T = Record<string, any>> {
       value = operator;
       operator = "=";
     }
-    const sql = this.grammar.compileDateWhere(type, this.grammar.wrap(column), operator, value);
-    this.wheres.push({ type: "raw", column: sql, boolean, scope: undefined });
+    this.wheres.push({ type: "date", column: column as string, operator, value, boolean, scope: undefined, dateType: type });
     return this;
   }
 
