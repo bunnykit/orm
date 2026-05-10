@@ -4,6 +4,13 @@ import type { ColumnDefinition } from "../../types/index.js";
 export class PostgresGrammar extends Grammar {
   protected wrappers = { prefix: '"', suffix: '"' };
 
+  protected getDefaultValue(value: any): string {
+    if (typeof value === "boolean") {
+      return value ? "TRUE" : "FALSE";
+    }
+    return super.getDefaultValue(value);
+  }
+
   protected getType(column: ColumnDefinition): string {
     switch (column.type) {
       case "string":

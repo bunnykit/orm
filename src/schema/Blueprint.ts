@@ -1,7 +1,18 @@
-import type { ColumnDefinition, IndexDefinition, ColumnType } from "../types/index.js";
+import type {
+  ColumnDefinition,
+  IndexDefinition,
+  ColumnType,
+} from "../types/index.js";
 
 export class ForeignKeyBuilder {
-  fk: { name?: string; columns: string[]; references: string[]; onTable: string; onDelete?: string; onUpdate?: string };
+  fk: {
+    name?: string;
+    columns: string[];
+    references: string[];
+    onTable: string;
+    onDelete?: string;
+    onUpdate?: string;
+  };
   blueprint: Blueprint;
 
   constructor(blueprint: Blueprint, columns: string[], name?: string) {
@@ -254,7 +265,10 @@ export class Blueprint {
     if (!this.currentColumn) {
       throw new Error("change() must be called after a column definition.");
     }
-    this.commands.push({ name: "change", parameters: { column: this.currentColumn } });
+    this.commands.push({
+      name: "change",
+      parameters: { column: this.currentColumn },
+    });
   }
 
   timestamps(): void {
@@ -269,25 +283,37 @@ export class Blueprint {
   morphs(name: string): void {
     this.string(`${name}_type`);
     this.bigInteger(`${name}_id`).unsigned();
-    this.index([`${name}_type`, `${name}_id`], `${this.table}_${name}_type_${name}_id_index`);
+    this.index(
+      [`${name}_type`, `${name}_id`],
+      `${this.table}_${name}_type_${name}_id_index`,
+    );
   }
 
   nullableMorphs(name: string): void {
     this.string(`${name}_type`).nullable();
     this.bigInteger(`${name}_id`).unsigned().nullable();
-    this.index([`${name}_type`, `${name}_id`], `${this.table}_${name}_type_${name}_id_index`);
+    this.index(
+      [`${name}_type`, `${name}_id`],
+      `${this.table}_${name}_type_${name}_id_index`,
+    );
   }
 
   uuidMorphs(name: string): void {
     this.string(`${name}_type`);
     this.uuid(`${name}_id`);
-    this.index([`${name}_type`, `${name}_id`], `${this.table}_${name}_type_${name}_id_index`);
+    this.index(
+      [`${name}_type`, `${name}_id`],
+      `${this.table}_${name}_type_${name}_id_index`,
+    );
   }
 
   nullableUuidMorphs(name: string): void {
     this.string(`${name}_type`).nullable();
     this.uuid(`${name}_id`).nullable();
-    this.index([`${name}_type`, `${name}_id`], `${this.table}_${name}_type_${name}_id_index`);
+    this.index(
+      [`${name}_type`, `${name}_id`],
+      `${this.table}_${name}_type_${name}_id_index`,
+    );
   }
 
   foreign(columns: string | string[], name?: string): ForeignKeyBuilder {
@@ -297,7 +323,9 @@ export class Blueprint {
 
   constrained(table?: string, column: string = "id"): ForeignKeyBuilder {
     if (!this.currentColumn) {
-      throw new Error("constrained() must be called after a column definition.");
+      throw new Error(
+        "constrained() must be called after a column definition.",
+      );
     }
     const localColumn = this.currentColumn.name;
     const foreignTable = table || this.guessConstrainedTable(localColumn);
@@ -324,7 +352,10 @@ export class Blueprint {
   }
 
   dropColumn(column: string | string[]): void {
-    this.commands.push({ name: "dropColumn", parameters: { column: Array.isArray(column) ? column : [column] } });
+    this.commands.push({
+      name: "dropColumn",
+      parameters: { column: Array.isArray(column) ? column : [column] },
+    });
   }
 
   renameColumn(from: string, to: string): void {

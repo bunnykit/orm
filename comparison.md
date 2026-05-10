@@ -1,0 +1,48 @@
+# Laravel vs `@bunnykit/orm`
+
+| Feature                  | Laravel style                                                                             | `@bunnykit/orm` style                                                                  |
+| ------------------------ | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Runtime                  | Full PHP framework with Eloquent, Artisan, and Blade around it                            | Bun-only ORM built on `Bun.SQL`                                                        |
+| Package shape            | Application framework plus ORM                                                            | ORM package focused on models, query builder, schema, migrations, and CLI              |
+| Model definition         | `class User extends Model { protected $table = 'users'; }`                                | `class User extends Model { static table = "users"; }`                                 |
+| Relationship definition  | `public function posts() { return $this->hasMany(Post::class); }`                         | `posts() { return this.hasMany(Post); }`                                               |
+| Model queries            | `User::where(...)->get()`                                                                 | `User.where(...).get()`                                                                |
+| Single row lookup        | `User::find(1)`, `firstOrFail()`                                                          | `User.find(1)`, `firstOrFail()`                                                        |
+| Multi-row results        | `Illuminate\Support\Collection`                                                           | `Collection<T>`                                                                        |
+| Plain array escape hatch | `->all()` on a collection                                                                 | `getArray()` on the builder, or `collection.all()`                                     |
+| Collection helpers       | `map`, `filter`, `pluck`, `groupBy`, `keyBy`, `sum`, `avg`                                | Same style helpers on `Collection<T>`                                                  |
+| TypeScript typing        | PHPDoc / static analysis tooling                                                          | Native TypeScript generics throughout                                                  |
+| Model defaults           | `$attributes` or constructor defaults via app code                                        | `static attributes`                                                                    |
+| Attribute casting        | Casts and accessors / mutators                                                            | `static casts`, custom casts, and runtime `mergeCasts()`                               |
+| Dirty tracking           | `$model->isDirty()`                                                                       | `isDirty()`, `getDirty()`, and proxy-based property access                             |
+| Save / refresh           | `$model->save()`, `$model->refresh()`                                                     | `save()`, `refresh()`, and `touch()`                                                   |
+| Bulk writes              | `createMany`, `upsert`, `saveMany` via collections/packages                               | Built-in `createMany`, `upsert`, `saveMany`, `insert`, and chunking                    |
+| Eager loading            | `with("posts", "profile")`                                                                | `with("posts", "profile")`                                                             |
+| Lazy loading on a model  | `$user->load("posts")`                                                                    | `await user.load("posts")`                                                             |
+| Relations                | `hasMany`, `belongsTo`, `hasOne`, `belongsToMany`, `morphTo`, `morphMany`                 | Same relation families through model helpers                                           |
+| Relation aggregates      | `withCount`, `withSum`, `withAvg`, `withMin`, `withMax`                                   | Same aggregate helpers on the builder                                                  |
+| Query scopes             | Local and global scopes                                                                   | Local and global scopes                                                                |
+| Soft deletes             | `SoftDeletes`, `withTrashed()`, `onlyTrashed()`                                           | `softDeletes`, `withTrashed()`, `onlyTrashed()`                                        |
+| Force delete / restore   | `forceDelete()`, `restore()`                                                              | `forceDelete()`, `restore()`                                                           |
+| Query builder filters    | `where`, `orWhere`, `whereIn`, date helpers, `groupBy`, `having`                          | Same chainable style with typed builder methods                                        |
+| Query debug helpers      | `toSql()`, `dump()`, `dd()`                                                               | Same helpers, plus typed builders and `explain()`                                      |
+| Streaming large sets     | `chunk`, `cursor`, `lazy`, `each`                                                         | `chunk`, `cursor`, `lazy`, `each`                                                      |
+| Pagination               | `paginate()` returns a paginator object with `data` collection                            | `paginate()` returns a paginator object with `data: Collection<T>`                     |
+| Migrations               | `artisan migrate`, migration classes, `Schema` facade                                     | `bun run bunny migrate`, migration classes, `Schema`                                   |
+| Migration variants       | `migrate:rollback`, `migrate:reset`, `migrate:refresh`, `migrate:fresh`, `migrate:status` | Same CLI commands                                                                      |
+| Migration storage        | `migrations` table                                                                        | `migrations` table, auto-created on first run                                          |
+| Schema dumps             | `schema:dump`, `schema:load` workflows                                                    | `schema:dump` and `schema:squash`                                                      |
+| Seeders                  | `artisan db:seed`, seeder classes                                                         | `bun run bunny seed`, seeder classes and paths                                         |
+| Factories                | Model factories and factory states                                                        | Lightweight factories with `Factory` / `factory()`                                     |
+| Observers                | `creating`, `created`, `updating`, `updated`, etc.                                        | `ObserverRegistry` with the same lifecycle events                                      |
+| REPL / shell             | `php artisan tinker`                                                                      | `bunny repl`                                                                           |
+| REPL globals             | Laravel helpers and resolved app state                                                    | `Model`, `Schema`, `Connection`, `Collection`, `collect`, `Models`, `db`               |
+| Database support         | MySQL, PostgreSQL, SQLite via PDO drivers                                                 | SQLite, MySQL, PostgreSQL via Bun connections                                          |
+| Transactions             | Connection / database transactions, nested savepoints                                     | Built-in `Connection.transaction()` and manual transaction support                     |
+| Tenant resolution        | Usually custom app code or packages like tenancy libraries                                | Built-in `ConnectionManager` and `TenantContext` for database, schema, and RLS tenancy |
+| Tenant migrations        | Often separate app code or tenancy package conventions                                    | First-class landlord / tenant migration paths and grouped CLI execution                |
+| Type safety              | PHP type hints and static analysis via tools                                              | Native TypeScript generics and typed `Collection<T>` results                           |
+| Query result ergonomics  | Collections are first-class and array-like in PHP                                         | Collections are first-class, iterable, JSON-serializable, and array-like in JS/TS      |
+| Type generation          | Mostly external tooling                                                                   | Built-in type generation and automatic regeneration after migrations                   |
+| Relationship existence   | `has`, `whereHas`, `doesntHave`                                                           | Same relation existence helpers                                                        |
+| Polymorphic mapping      | `morphMap` / custom relation config                                                       | `MorphMap.register()` and polymorphic relation helpers                                 |

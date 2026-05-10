@@ -37,10 +37,12 @@ describe("Schema Builder", () => {
     const blueprint = new Blueprint("users");
     blueprint.bigIncrements("id");
     blueprint.string("name");
+    blueprint.boolean("active").default(false);
     blueprint.timestamps();
     const sql = grammar.compileCreate(blueprint, "users");
     expect(sql).toContain('"id" BIGINT NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY');
     expect(sql).toContain('"name" VARCHAR(255) NOT NULL');
+    expect(sql).toContain('"active" BOOLEAN NOT NULL DEFAULT FALSE');
   });
 
   test("creates and drops table via Schema", async () => {
