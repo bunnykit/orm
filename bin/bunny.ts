@@ -161,6 +161,27 @@ async function getTenantIds(config: BunnyConfig): Promise<string[]> {
   return tenantIds.map((tenantId) => String(tenantId));
 }
 
+async function runTenantMigrator(
+  command: MigrationCommand,
+  config: BunnyConfig,
+  connectionPath: string | string[],
+  tenantId: string,
+  typesOutDir?: string
+): Promise<void> {
+  await TenantContext.run(tenantId, async () => {
+    const context = TenantContext.current();
+    if (!context) {
+      throw new Error(`Tenant "${tenantId}" did not resolve to an active context.`);
+    }
+    console.log(`Tenant: ${tenantId}`);
+    const migrator = new Migrator(context.connection, connectionPath, typesOutDir, createTypeGeneratorOptions(config), {
+      tenantId,
+      ...createMigrationOptions(config),
+    });
+    await runMigratorCommand(command, migrator);
+  });
+}
+
 async function runSeederCommand(
   config: BunnyConfig,
   connection: Connection,
@@ -211,18 +232,7 @@ async function runTenantMigrationCommand(
   typesOutDir?: string
 ): Promise<void> {
   try {
-    await TenantContext.run(tenantId, async () => {
-      const context = TenantContext.current();
-      if (!context) {
-        throw new Error(`Tenant "${tenantId}" did not resolve to an active context.`);
-      }
-      console.log(`Tenant: ${tenantId}`);
-      const migrator = new Migrator(context.connection, tenantPath, typesOutDir, createTypeGeneratorOptions(config), {
-        tenantId,
-        ...createMigrationOptions(config),
-      });
-      await runMigratorCommand(command, migrator);
-    });
+    await runTenantMigrator(command, config, tenantPath, tenantId, typesOutDir);
   } finally {
     await ConnectionManager.closeTenant(tenantId);
   }
@@ -235,7 +245,23 @@ async function runConfiguredMigrationCommand(
   target: MigrationTarget
 ): Promise<void> {
   if (!config.migrations) {
-    const migrator = new Migrator(connection, getDefaultMigrationsPath(config), config.typesOutDir, createTypeGeneratorOptions(config));
+    const defaultPath = getDefaultMigrationsPath(config);
+    if (target.scope === "tenant" || target.scope === "tenants") {
+      if (!config.tenancy?.resolveTenant) {
+        throw new Error("Tenant migrations require tenancy.resolveTenant() in bunny.config.ts.");
+      }
+      ConnectionManager.setTenantResolver(config.tenancy.resolveTenant);
+      if (target.scope === "tenant") {
+        await runTenantMigrationCommand(command, config, defaultPath, target.tenantId, config.typesOutDir);
+        return;
+      }
+      const tenantIds = await getTenantIds(config);
+      for (const tenantId of tenantIds) {
+        await runTenantMigrationCommand(command, config, defaultPath, tenantId, config.typesOutDir);
+      }
+      return;
+    }
+    const migrator = new Migrator(connection, defaultPath, config.typesOutDir, createTypeGeneratorOptions(config));
     await runMigratorCommand(command, migrator);
     return;
   }
@@ -278,11 +304,11 @@ async function runConfiguredMigrationCommand(
     return;
   }
 
-    if (command === "migrate:rollback") {
-      await runAllTenants();
-      await runLandlord();
-      return;
-    }
+  if (command === "migrate:rollback") {
+    await runAllTenants();
+    await runLandlord();
+    return;
+  }
   await runLandlord();
   await runAllTenants();
 }

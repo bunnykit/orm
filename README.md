@@ -266,6 +266,10 @@ bun run bunny migrate
 bun run bunny migrate --landlord
 bun run bunny migrate --tenants
 bun run bunny migrate --tenant acme
+bun run bunny migrate:rollback --tenant acme
+bun run bunny migrate:refresh --tenant acme
+bun run bunny migrate:fresh --tenant acme
+bun run bunny migrate:status --tenant acme
 ```
 
 ### Create Tables
