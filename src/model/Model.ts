@@ -682,10 +682,14 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return instance;
   }
 
-  static async create<M extends ModelConstructor>(this: M, attributes: ModelAttributeInput<InstanceType<M>>): Promise<InstanceType<M>> {
+  static async create<M extends ModelConstructor>(
+    this: M,
+    attributes: ModelAttributeInput<InstanceType<M>>,
+    options: SaveOptions = {}
+  ): Promise<InstanceType<M>> {
     const instance = new this() as InstanceType<M>;
     instance.fill(attributes as any);
-    await instance.save();
+    await instance.save(options);
     return instance;
   }
 

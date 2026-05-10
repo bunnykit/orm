@@ -908,6 +908,15 @@ const user = await User.updateOrInsert(
 );
 ```
 
+#### Model.create(attributes, options?)
+
+Create and persist a single model instance. Pass `{ events: false }` to bypass observers for that insert.
+
+```ts
+const user = await User.create({ name: "Ada Lovelace", email: "ada@example.test" });
+await User.create({ name: "Silent", email: "silent@example.test" }, { events: false });
+```
+
 #### Model.createMany(records, options?)
 
 Create multiple model instances with full ORM support. Fires `creating` / `created` observers by default. Pass `{ events: false }` to bypass observers for better performance.

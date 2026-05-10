@@ -45,6 +45,21 @@ describe("Observers", () => {
     expect(events).toContain("created");
   });
 
+  test("can suppress events during create", async () => {
+    const events: string[] = [];
+    ObserverRegistry.register(ObservedUser, {
+      creating() {
+        events.push("creating");
+      },
+      created() {
+        events.push("created");
+      },
+    });
+
+    await ObservedUser.create({ name: "Silent Alice" }, { events: false });
+    expect(events).toEqual([]);
+  });
+
   test("fires updating and updated events", async () => {
     const events: string[] = [];
     ObserverRegistry.register(ObservedUser, {
