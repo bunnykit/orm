@@ -76,6 +76,31 @@ function parseMigrationTarget(args: string[]): MigrationTarget {
   return { scope: "default" };
 }
 
+function parseSeederInvocation(args: string[]): { target?: string; scope: MigrationTarget } {
+  const flags: string[] = [];
+  const rest: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--landlord" || arg === "--tenants") {
+      flags.push(arg);
+      continue;
+    }
+    if (arg === "--tenant") {
+      const tenantId = args[++i];
+      if (!tenantId) {
+        throw new Error("Usage: bun run bunny db:seed [--tenant <tenantId>] [seeder]");
+      }
+      flags.push(arg, tenantId);
+      continue;
+    }
+    rest.push(arg);
+  }
+  return {
+    target: rest[0],
+    scope: parseMigrationTarget(flags),
+  };
+}
+
 function createTypeGeneratorOptions(config: BunnyConfig) {
   const modelRoots = normalizePathList(config.modelsPath || config.typeDeclarationModelsDir);
   return {
@@ -134,6 +159,48 @@ async function getTenantIds(config: BunnyConfig): Promise<string[]> {
   }
   const tenantIds = await config.tenancy.listTenants();
   return tenantIds.map((tenantId) => String(tenantId));
+}
+
+async function runSeederCommand(
+  config: BunnyConfig,
+  connection: Connection,
+  scope: MigrationTarget,
+  target?: string
+): Promise<void> {
+  const seederPath = config.seedersPath || "./database/seeders";
+  const runner = new SeederRunner(connection);
+
+  const runDefault = async () => {
+    if (target) {
+      await runner.runTarget(target, seederPath);
+      return;
+    }
+    await runner.runPaths(seederPath);
+  };
+
+  if (scope.scope === "default" || scope.scope === "landlord") {
+    await runDefault();
+    return;
+  }
+
+  if (!config.tenancy?.resolveTenant) {
+    throw new Error("Tenant seeding requires tenancy.resolveTenant() in bunny.config.ts.");
+  }
+  ConnectionManager.setTenantResolver(config.tenancy.resolveTenant);
+
+  if (scope.scope === "tenant") {
+    await TenantContext.run(scope.tenantId, async () => {
+      await runDefault();
+    });
+    return;
+  }
+
+  const tenantIds = await getTenantIds(config);
+  for (const tenantId of tenantIds) {
+    await TenantContext.run(tenantId, async () => {
+      await runDefault();
+    });
+  }
 }
 
 async function runTenantMigrationCommand(
@@ -587,14 +654,8 @@ async function main() {
     } else if (command === "migrate:status") {
       await runConfiguredMigrationCommand(command, config, connection, parseMigrationTarget(args.slice(1)));
     } else if (command === "db:seed") {
-      const target = args[1];
-      const seederPath = config.seedersPath || "./database/seeders";
-      const runner = new SeederRunner(connection);
-      if (target) {
-        await runner.runTarget(target, seederPath);
-      } else {
-        await runner.runPaths(seederPath);
-      }
+      const { target, scope } = parseSeederInvocation(args.slice(1));
+      await runSeederCommand(config, connection, scope, target);
     } else {
       console.log("Usage:");
       console.log("  bun run bunny migrate              Run landlord migrations, then all tenant migrations when configured");
@@ -609,6 +670,8 @@ async function main() {
       console.log("  bun run bunny migrate:status       Show migration status");
       console.log("  bun run bunny db:seed              Run seeders from seedersPath");
       console.log("  bun run bunny db:seed <seeder>     Run one seeder by file path or name");
+      console.log("  bun run bunny db:seed --tenant <id> Run seeders for one tenant");
+      console.log("  bun run bunny db:seed --tenants    Run seeders for every tenant");
       console.log("  bun run bunny schema:dump [path]   Dump the current database schema");
       console.log("  bun run bunny schema:squash [path] Dump schema and mark configured migrations as ran");
       console.log("  bun run bunny types:generate [dir] Generate model type declarations from DB schema");

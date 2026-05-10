@@ -3,6 +3,7 @@ import { readdir, stat } from "fs/promises";
 import { basename, extname, resolve } from "path";
 import { pathToFileURL } from "url";
 import { Connection } from "../connection/Connection.js";
+import { TenantContext } from "../connection/TenantContext.js";
 import { Schema } from "../schema/Schema.js";
 import { normalizePathList, toPosixPath } from "../utils.js";
 
@@ -20,11 +21,16 @@ export abstract class Seeder {
 }
 
 export class SeederRunner {
-  constructor(private connection: Connection = Schema.getConnection()) {}
+  constructor(private connection?: Connection) {}
+
+  private getConnection(): Connection {
+    return TenantContext.current()?.connection || this.connection || Schema.getConnection();
+  }
 
   async run(seeders: (Seeder | (new (connection?: Connection) => Seeder))[]): Promise<void> {
+    const connection = this.getConnection();
     for (const seeder of seeders) {
-      const instance = typeof seeder === "function" ? new seeder(this.connection) : seeder;
+      const instance = typeof seeder === "function" ? new seeder(connection) : seeder;
       await instance.run();
     }
   }

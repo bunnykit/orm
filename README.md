@@ -1402,6 +1402,16 @@ Run one seeder by direct file path:
 bun run bunny db:seed ./database/seeders/UserSeeder.ts
 ```
 
+For multi-tenant apps, `db:seed` can run in tenant context too:
+
+```bash
+bun run bunny db:seed --tenant acme
+bun run bunny db:seed --tenant acme UserSeeder
+bun run bunny db:seed --tenants
+```
+
+When the command runs inside `TenantContext`, `SeederRunner` uses that active tenant connection automatically.
+
 Programmatic seeding is available through `SeederRunner`:
 
 ```ts

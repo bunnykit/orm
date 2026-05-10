@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "path";
 import { mkdir, rm } from "fs/promises";
-import { Model, Schema, Seeder, SeederRunner, factory } from "../src/index.js";
+import { ConnectionManager, Model, Schema, Seeder, SeederRunner, TenantContext, factory } from "../src/index.js";
 import { setupTestDb } from "./helpers.js";
 
 class SeedUser extends Model {
@@ -134,5 +134,40 @@ export default class SecondSeeder extends Seeder {
     expect((await SeedUser.orderBy("id").get()).map((user) => user.getAttribute("name"))).toEqual(["Second", "First"]);
 
     await rm(seedDir, { recursive: true, force: true });
+  });
+
+  test("SeederRunner uses the active tenant connection when running inside TenantContext", async () => {
+    setupTestDb();
+
+    const tenantDb = join(process.cwd(), "tests", "temp_tenant_seed.sqlite");
+    await rm(tenantDb, { force: true });
+
+    ConnectionManager.setTenantResolver((tenantId) => ({
+      strategy: "database",
+      name: `tenant:${tenantId}`,
+      config: { url: `sqlite://${tenantDb}` },
+    }));
+
+    await TenantContext.run("acme", async () => {
+      await Schema.create("seed_users", (table) => {
+        table.increments("id");
+        table.string("name");
+        table.string("email");
+      });
+
+      class TenantSeeder extends Seeder {
+        async run(): Promise<void> {
+          await SeedUser.create({ name: "Tenant", email: "tenant@example.test" });
+        }
+      }
+
+      const runner = new SeederRunner();
+      await runner.run([TenantSeeder]);
+
+      expect((await SeedUser.all()).map((user) => user.getAttribute("name"))).toEqual(["Tenant"]);
+    });
+
+    await ConnectionManager.closeAll();
+    await rm(tenantDb, { force: true });
   });
 });
