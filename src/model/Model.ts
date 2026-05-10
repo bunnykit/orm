@@ -1521,6 +1521,10 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return result;
   }
 
+  json(): Record<string, any> {
+    return this.toJSON();
+  }
+
   toString(): string {
     return JSON.stringify(this.toJSON());
   }

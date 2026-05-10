@@ -124,6 +124,12 @@ describe("Model", () => {
     expect(json).not.toHaveProperty("$exists");
   });
 
+  test("json aliases toJSON", async () => {
+    const user = await TestUser.create({ name: "Iris" });
+    expect(user.json()).toEqual(user.toJSON());
+    expect(user.json().name).toBe("Iris");
+  });
+
   test("all returns all records", async () => {
     await TestUser.create({ name: "Jack" });
     const all = await TestUser.all();

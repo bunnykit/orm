@@ -56,6 +56,10 @@ export class Collection<T = any> extends Array<T> {
     return this.map((item: any) => typeof item?.toJSON === "function" ? item.toJSON() : item);
   }
 
+  json(): any[] {
+    return this.toJSON();
+  }
+
   isEmpty(): boolean {
     return this.length === 0;
   }

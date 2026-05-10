@@ -74,6 +74,11 @@ describe("Collection", () => {
     expect(json.map((user: any) => user.name)).toEqual(["Ada", "Linus", "Grace"]);
   });
 
+  test("collection json aliases toJSON", async () => {
+    const users = await CollectionUser.orderBy("id").get();
+    expect(users.json()).toEqual(users.toJSON());
+  });
+
   test("getArray returns a plain array compatibility escape hatch", async () => {
     const users = await CollectionUser.orderBy("id").getArray();
     expect(users).toBeArray();
