@@ -3,7 +3,9 @@ import { readdir, stat } from "fs/promises";
 import { basename, extname, resolve } from "path";
 import { pathToFileURL } from "url";
 import { Connection } from "../connection/Connection.js";
+import { ConnectionManager } from "../connection/ConnectionManager.js";
 import { TenantContext } from "../connection/TenantContext.js";
+import { Model } from "../model/Model.js";
 import { Schema } from "../schema/Schema.js";
 import { normalizePathList, toPosixPath } from "../utils.js";
 
@@ -56,16 +58,26 @@ export class SeederRunner {
     const connection = this.getConnection();
     const context = TenantContext.current();
     const usesTenantTransaction = context?.strategy === "schema" && context.schemaMode === "search_path" || context?.strategy === "rls";
+    const previousDefaultConnection = ConnectionManager.getDefault();
+
+    const bind = async (boundConnection: Connection, runner: () => T | Promise<T>): Promise<T> => {
+      Schema.setConnection(boundConnection);
+      Model.setConnection(boundConnection);
+      try {
+        return await TenantContext.withConnection(boundConnection, runner);
+      } finally {
+        if (previousDefaultConnection) {
+          Schema.setConnection(previousDefaultConnection);
+          Model.setConnection(previousDefaultConnection);
+        }
+      }
+    };
 
     if (connection.isInTransaction() || usesTenantTransaction) {
-      return await TenantContext.withConnection(connection, async () => {
-        return await callback(connection);
-      });
+      return await bind(connection, async () => await callback(connection));
     }
     return await connection.transaction(async (txConnection) => {
-      return await TenantContext.withConnection(txConnection, async () => {
-        return await callback(txConnection);
-      });
+      return await bind(txConnection, async () => await callback(txConnection));
     });
   }
 
