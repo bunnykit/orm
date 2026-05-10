@@ -1556,16 +1556,34 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this;
   }
 
-  toJSON(): Record<string, any> {
+  private serialize(includeRelations: boolean = true): Record<string, any> {
     const result: Record<string, any> = {};
     for (const key of Object.keys(this.$attributes)) {
       result[key] = this.getAttribute(key);
     }
+    if (includeRelations) {
+      for (const key of Object.keys(this.$relations)) {
+        const value = this.$relations[key];
+        if (value === null || value === undefined) {
+          result[key] = value;
+        } else if (typeof value.toJSON === "function") {
+          result[key] = value.toJSON();
+        } else if (Array.isArray(value)) {
+          result[key] = value.map((item: any) => typeof item?.toJSON === "function" ? item.toJSON() : item);
+        } else {
+          result[key] = value;
+        }
+      }
+    }
     return result;
   }
 
-  json(): Record<string, any> {
-    return this.toJSON();
+  toJSON(): Record<string, any> {
+    return this.serialize(true);
+  }
+
+  json(options?: { relations?: boolean }): Record<string, any> {
+    return this.serialize(options?.relations !== false);
   }
 
   toString(): string {

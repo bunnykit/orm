@@ -179,4 +179,56 @@ describe("Eager Loading", () => {
 
     expect(author.getRelation("books").map((book: EBook) => book.getAttribute("title"))).toEqual(["Visible"]);
   });
+
+  test("json includes eager loaded relations", async () => {
+    const author = await EAuthor.create({ name: "Kate" });
+    await EBook.create({ author_id: author.getAttribute("id"), title: "Book K" });
+    await EProfile.create({ author_id: author.getAttribute("id"), bio: "Bio K" });
+
+    const found = await EAuthor.with("books", "profile").where("name", "Kate").first();
+    expect(found).not.toBeNull();
+
+    const json = found!.json();
+    expect(json.name).toBe("Kate");
+    expect(json.books).toBeInstanceOf(Array);
+    expect(json.books).toHaveLength(1);
+    expect(json.books[0].title).toBe("Book K");
+    expect(json.profile).toBeInstanceOf(Object);
+    expect(json.profile.bio).toBe("Bio K");
+  });
+
+  test("json includes null relation for missing hasOne", async () => {
+    const author = await EAuthor.create({ name: "Leo" });
+
+    const found = await EAuthor.with("profile").where("name", "Leo").first();
+    expect(found).not.toBeNull();
+
+    const json = found!.json();
+    expect(json.profile).toBeNull();
+  });
+
+  test("json with relations false excludes eager loaded relations", async () => {
+    const author = await EAuthor.create({ name: "Mia" });
+    await EBook.create({ author_id: author.getAttribute("id"), title: "Book M" });
+
+    const found = await EAuthor.with("books").where("name", "Mia").first();
+    expect(found).not.toBeNull();
+
+    const json = found!.json({ relations: false });
+    expect(json.name).toBe("Mia");
+    expect(json).not.toHaveProperty("books");
+  });
+
+  test("json with relations true includes eager loaded relations", async () => {
+    const author = await EAuthor.create({ name: "Noah" });
+    await EBook.create({ author_id: author.getAttribute("id"), title: "Book N" });
+
+    const found = await EAuthor.with("books").where("name", "Noah").first();
+    expect(found).not.toBeNull();
+
+    const json = found!.json({ relations: true });
+    expect(json.name).toBe("Noah");
+    expect(json.books).toBeInstanceOf(Array);
+    expect(json.books).toHaveLength(1);
+  });
 });

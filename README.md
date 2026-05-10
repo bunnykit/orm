@@ -816,7 +816,8 @@ await user.delete();
 await user.refresh();
 await user.touch(); // update only timestamps
 await user.load("posts"); // lazy eager loading
-user.toJSON(); // plain object
+user.toJSON(); // plain object with attributes and relations
+user.json({ relations: false }); // attributes only
 
 // Increment / Decrement
 await user.increment("login_count");
@@ -859,6 +860,25 @@ await User.createMany(records, { events: false });
 await User.saveMany(models, { events: false });
 model.save({ events: false });
 ```
+
+### Serialization
+
+Models can be serialized to plain objects with `toJSON()` and `json()`. Both methods include a model's attributes and any eagerly loaded relations by default.
+
+```ts
+const user = await User.with("posts").first();
+
+user.toJSON();
+// { id: 1, name: "Alice", posts: [{ id: 1, title: "Hello" }, ...] }
+
+user.json();
+// Same as toJSON()
+
+user.json({ relations: false });
+// { id: 1, name: "Alice" } — attributes only, no relations
+```
+
+`toJSON()` is the standard JavaScript serialization hook, so `JSON.stringify(user)` will also include loaded relations. Use `json({ relations: false })` when you need only the model's attributes.
 
 ### Bulk Operations
 
