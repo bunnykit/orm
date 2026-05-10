@@ -152,6 +152,14 @@ describe("Schema Builder", () => {
     expect(sql).toContain('"name" VARCHAR(255) NOT NULL');
   });
 
+  test("postgres grammar qualifies foreign keys for schema tables", () => {
+    const grammar = new PostgresGrammar();
+    const blueprint = new Blueprint("strands");
+    blueprint.foreignId("educational_level_id").constrained("educational_levels");
+    const sql = grammar.compileForeignKeys(blueprint, "tenant_a.strands")[0];
+    expect(sql).toContain('ALTER TABLE "tenant_a"."strands" ADD FOREIGN KEY ("educational_level_id") REFERENCES "tenant_a"."educational_levels" ("id")');
+  });
+
   test("creates table with uuid primary key via Schema", async () => {
     connection = setupTestDb();
     await Schema.create("uuid_test", (table) => {

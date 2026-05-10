@@ -97,6 +97,20 @@ export class PostgresGrammar extends Grammar {
     return `CREATE ${type} ${this.wrap(index.name)} ON ${this.wrap(table)} (${this.wrapArray(index.columns).join(", ")})`;
   }
 
+  protected compileForeignKey(table: string, fk: any): string {
+    const constraint = fk.name ? ` CONSTRAINT ${this.wrap(fk.name)}` : "";
+    const referencedTable = fk.onTable.includes(".")
+      ? fk.onTable
+      : table.includes(".")
+      ? `${table.split(".")[0]}.${fk.onTable}`
+      : fk.onTable;
+    const sql = `ALTER TABLE ${this.wrap(table)} ADD${constraint} FOREIGN KEY (${this.wrapArray(fk.columns).join(", ")}) REFERENCES ${this.wrap(referencedTable)} (${this.wrapArray(fk.references).join(", ")})`;
+    let full = sql;
+    if (fk.onDelete) full += ` ON DELETE ${fk.onDelete}`;
+    if (fk.onUpdate) full += ` ON UPDATE ${fk.onUpdate}`;
+    return full;
+  }
+
   compileCreate(blueprint: any, table: string): string {
     const columns = this.getColumns(blueprint).map((col) => `    ${col}`).join(",\n");
     const sql = `CREATE TABLE ${this.wrap(table)} (\n${columns}\n)`;
