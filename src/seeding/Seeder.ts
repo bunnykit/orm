@@ -7,13 +7,38 @@ import { TenantContext } from "../connection/TenantContext.js";
 import { Schema } from "../schema/Schema.js";
 import { normalizePathList, toPosixPath } from "../utils.js";
 
+type SeederClass = new (connection?: Connection) => Seeder;
+type SeederEntry = Seeder | SeederClass;
+type SeederInput = SeederEntry | SeederEntry[] | Record<string, SeederEntry>;
+
+function isSeederClass(value: unknown): value is SeederClass {
+  return typeof value === "function";
+}
+
+function normalizeSeederEntries(input: SeederInput | SeederInput[]): SeederEntry[] {
+  const items = Array.isArray(input) ? input : [input];
+  const seeders: SeederEntry[] = [];
+  for (const item of items) {
+    if (Array.isArray(item)) {
+      seeders.push(...item);
+      continue;
+    }
+    if (item && typeof item === "object" && !isSeederClass(item) && !(item instanceof Seeder)) {
+      seeders.push(...Object.values(item as Record<string, SeederEntry>));
+      continue;
+    }
+    seeders.push(item as SeederEntry);
+  }
+  return seeders;
+}
+
 export abstract class Seeder {
   constructor(protected connection: Connection = Schema.getConnection()) {}
 
   abstract run(): Promise<void> | void;
 
-  protected async call(seeders: (Seeder | (new (connection?: Connection) => Seeder))[]): Promise<void> {
-    for (const seeder of seeders) {
+  protected async call(...seeders: SeederInput[]): Promise<void> {
+    for (const seeder of normalizeSeederEntries(seeders)) {
       const instance = typeof seeder === "function" ? new seeder(this.connection) : seeder;
       await instance.run();
     }
@@ -27,9 +52,9 @@ export class SeederRunner {
     return TenantContext.current()?.connection || this.connection || Schema.getConnection();
   }
 
-  async run(seeders: (Seeder | (new (connection?: Connection) => Seeder))[]): Promise<void> {
+  async run(...seeders: SeederInput[]): Promise<void> {
     const connection = this.getConnection();
-    for (const seeder of seeders) {
+    for (const seeder of normalizeSeederEntries(seeders)) {
       const instance = typeof seeder === "function" ? new seeder(connection) : seeder;
       await instance.run();
     }
@@ -49,7 +74,7 @@ export class SeederRunner {
     if (!SeederClass) {
       throw new Error(`Seeder ${file} does not export a class.`);
     }
-    await this.run([SeederClass as new (connection?: Connection) => Seeder]);
+    await this.run(SeederClass as SeederClass);
   }
 
   async runTarget(target: string, searchPaths: string | string[] = "./database/seeders"): Promise<void> {

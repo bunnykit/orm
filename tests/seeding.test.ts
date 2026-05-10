@@ -170,4 +170,34 @@ export default class SecondSeeder extends Seeder {
     await ConnectionManager.closeAll();
     await rm(tenantDb, { force: true });
   });
+
+  test("Seeder.call accepts a single seeder or an object map of seeders", async () => {
+    setupTestDb();
+    await Schema.create("seed_users", (table) => {
+      table.increments("id");
+      table.string("name");
+      table.string("email");
+    });
+
+    class AlphaSeeder extends Seeder {
+      async run(): Promise<void> {
+        await SeedUser.create({ name: "Alpha", email: "alpha@example.test" });
+      }
+    }
+
+    class BetaSeeder extends Seeder {
+      async run(): Promise<void> {
+        await SeedUser.create({ name: "Beta", email: "beta@example.test" });
+      }
+    }
+
+    class RootSeeder extends Seeder {
+      async run(): Promise<void> {
+        await this.call({ AlphaSeeder, BetaSeeder });
+      }
+    }
+
+    await new RootSeeder().run();
+    expect((await SeedUser.orderBy("id").get()).map((user) => user.getAttribute("name"))).toEqual(["Alpha", "Beta"]);
+  });
 });
