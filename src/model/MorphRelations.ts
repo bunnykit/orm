@@ -4,6 +4,10 @@ import { snakeCase } from "../utils.js";
 import { MorphMap } from "./MorphMap.js";
 import type { Model, ModelConstructor } from "./Model.js";
 
+function getModelConstructor(model: Model): typeof Model {
+  return Object.getPrototypeOf(model).constructor as typeof Model;
+}
+
 export class MorphTo<T extends Model = Model> {
   protected parent: Model;
   protected name: string;
@@ -22,9 +26,10 @@ export class MorphTo<T extends Model = Model> {
     // Wrap getResults with lazy-loading guard
     const originalGetResults = (this as any).getResults.bind(this);
     (this as any).getResults = async () => {
-      if ((this.parent.constructor as any).preventLazyLoading) {
+      const parentConstructor = getModelConstructor(this.parent);
+      if (parentConstructor.preventLazyLoading) {
         throw new Error(
-          `Lazy loading is prevented on ${(this.parent.constructor as any).name}. ` +
+          `Lazy loading is prevented on ${parentConstructor.name}. ` +
             `Eager load the relation using with().`
         );
       }
@@ -96,7 +101,7 @@ export class MorphTo<T extends Model = Model> {
   match(models: Model[], results: Collection<{ __morphType: string; model: Model }>, relationName: string): void {
     const dictionary: Record<string, Model> = {};
     for (const result of results) {
-      const key = result.model.getAttribute((result.model.constructor as ModelConstructor).primaryKey);
+      const key = result.model.getAttribute(getModelConstructor(result.model).primaryKey);
       dictionary[`${result.__morphType}:${String(key)}`] = result.model;
     }
 
@@ -130,7 +135,7 @@ export class MorphOne<T extends Model = Model> {
     this.name = name;
     this.typeColumn = typeColumn || `${name}_type`;
     this.idColumn = idColumn || `${name}_id`;
-    this.localKey = localKey || (parent.constructor as typeof Model).primaryKey;
+    this.localKey = localKey || getModelConstructor(parent).primaryKey;
     this.builder = (related as any).on(parent.getConnection());
     this.builder.where(this.typeColumn, this.getMorphType());
     this.builder.where(this.idColumn, this.parent.getAttribute(this.localKey));
@@ -138,9 +143,10 @@ export class MorphOne<T extends Model = Model> {
     // Wrap getResults with lazy-loading guard
     const originalGetResults = (this as any).getResults.bind(this);
     (this as any).getResults = async () => {
-      if ((this.parent.constructor as any).preventLazyLoading) {
+      const parentConstructor = getModelConstructor(this.parent);
+      if (parentConstructor.preventLazyLoading) {
         throw new Error(
-          `Lazy loading is prevented on ${(this.parent.constructor as any).name}. ` +
+          `Lazy loading is prevented on ${parentConstructor.name}. ` +
             `Eager load the relation using with().`
         );
       }
@@ -149,7 +155,8 @@ export class MorphOne<T extends Model = Model> {
   }
 
   protected getMorphType(): string {
-    return (this.parent.constructor as typeof Model).morphName || this.parent.constructor.name;
+    const parentConstructor = getModelConstructor(this.parent);
+    return parentConstructor.morphName || parentConstructor.name;
   }
 
   getQuery(): Builder<T> {
@@ -230,7 +237,7 @@ export class MorphMany<T extends Model = Model> {
     this.name = name;
     this.typeColumn = typeColumn || `${name}_type`;
     this.idColumn = idColumn || `${name}_id`;
-    this.localKey = localKey || (parent.constructor as typeof Model).primaryKey;
+    this.localKey = localKey || getModelConstructor(parent).primaryKey;
     this.builder = (related as any).on(parent.getConnection());
     this.builder.where(this.typeColumn, this.getMorphType());
     this.builder.where(this.idColumn, this.parent.getAttribute(this.localKey));
@@ -238,9 +245,10 @@ export class MorphMany<T extends Model = Model> {
     // Wrap getResults with lazy-loading guard
     const originalGetResults = (this as any).getResults.bind(this);
     (this as any).getResults = async () => {
-      if ((this.parent.constructor as any).preventLazyLoading) {
+      const parentConstructor = getModelConstructor(this.parent);
+      if (parentConstructor.preventLazyLoading) {
         throw new Error(
-          `Lazy loading is prevented on ${(this.parent.constructor as any).name}. ` +
+          `Lazy loading is prevented on ${parentConstructor.name}. ` +
             `Eager load the relation using with().`
         );
       }
@@ -249,7 +257,8 @@ export class MorphMany<T extends Model = Model> {
   }
 
   protected getMorphType(): string {
-    return (this.parent.constructor as typeof Model).morphName || this.parent.constructor.name;
+    const parentConstructor = getModelConstructor(this.parent);
+    return parentConstructor.morphName || parentConstructor.name;
   }
 
   getQuery(): Builder<T> {
@@ -332,13 +341,14 @@ export class MorphToMany<T extends Model = Model> {
     relatedKey?: string,
     morphType?: string
   ) {
+    const parentConstructor = getModelConstructor(parent);
     this.parent = parent;
     this.related = related;
     this.name = name;
     this.table = table || `${name}s`;
-    this.parentKey = parentKey || (parent.constructor as typeof Model).primaryKey;
+    this.parentKey = parentKey || parentConstructor.primaryKey;
     this.relatedKey = relatedKey || related.primaryKey;
-    this.morphType = morphType || (parent.constructor as typeof Model).morphName || parent.constructor.name;
+    this.morphType = morphType || parentConstructor.morphName || parentConstructor.name;
     this.foreignPivotKey = foreignPivotKey || `${snakeCase(name)}_id`;
     this.relatedPivotKey = relatedPivotKey || `${snakeCase(related.name)}_id`;
     this.builder = (related as any).on(parent.getConnection());
@@ -347,9 +357,10 @@ export class MorphToMany<T extends Model = Model> {
     // Wrap getResults with lazy-loading guard
     const originalGetResults = (this as any).getResults.bind(this);
     (this as any).getResults = async () => {
-      if ((this.parent.constructor as any).preventLazyLoading) {
+      const parentConstructor = getModelConstructor(this.parent);
+      if (parentConstructor.preventLazyLoading) {
         throw new Error(
-          `Lazy loading is prevented on ${(this.parent.constructor as any).name}. ` +
+          `Lazy loading is prevented on ${parentConstructor.name}. ` +
             `Eager load the relation using with().`
         );
       }

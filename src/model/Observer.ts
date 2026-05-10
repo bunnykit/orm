@@ -28,7 +28,7 @@ export class ObserverRegistry {
   }
 
   static async dispatch<T extends Model<any>>(event: keyof ObserverContract, model: T): Promise<void> {
-    const observers = this.get(model.constructor as typeof Model);
+    const observers = this.get(Object.getPrototypeOf(model).constructor as typeof Model);
     for (const observer of observers) {
       const handler = observer[event];
       if (handler) {

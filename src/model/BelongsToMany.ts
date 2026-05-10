@@ -3,8 +3,12 @@ import { Collection } from "../support/Collection.js";
 import { snakeCase } from "../utils.js";
 import type { Model, ModelConstructor } from "./Model.js";
 
+function getModelConstructor(model: Model): typeof Model {
+  return Object.getPrototypeOf(model).constructor as typeof Model;
+}
+
 function defaultPivotTable(parent: Model, related: ModelConstructor): string {
-  const names = [snakeCase(parent.constructor.name), snakeCase(related.name)].sort();
+  const names = [snakeCase(getModelConstructor(parent).name), snakeCase(related.name)].sort();
   return `${names[0]}_${names[1]}`;
 }
 
@@ -27,12 +31,13 @@ export class BelongsToMany<T extends Model = Model> {
     parentKey?: string,
     relatedKey?: string
   ) {
+    const parentConstructor = getModelConstructor(parent);
     this.parent = parent;
     this.related = related;
     this.table = table || defaultPivotTable(parent, related);
-    this.parentKey = parentKey || (parent.constructor as typeof Model).primaryKey;
+    this.parentKey = parentKey || parentConstructor.primaryKey;
     this.relatedKey = relatedKey || related.primaryKey;
-    this.foreignPivotKey = foreignPivotKey || `${snakeCase(parent.constructor.name)}_id`;
+    this.foreignPivotKey = foreignPivotKey || `${snakeCase(parentConstructor.name)}_id`;
     this.relatedPivotKey = relatedPivotKey || `${snakeCase(related.name)}_id`;
     this.builder = (related as any).on(parent.getConnection());
     this.addConstraints();
@@ -40,9 +45,10 @@ export class BelongsToMany<T extends Model = Model> {
     // Wrap getResults with lazy-loading guard
     const originalGetResults = (this as any).getResults.bind(this);
     (this as any).getResults = async () => {
-      if ((this.parent.constructor as any).preventLazyLoading) {
+      const parentConstructor = getModelConstructor(this.parent);
+      if (parentConstructor.preventLazyLoading) {
         throw new Error(
-          `Lazy loading is prevented on ${(this.parent.constructor as any).name}. ` +
+          `Lazy loading is prevented on ${parentConstructor.name}. ` +
             `Eager load the relation using with().`
         );
       }

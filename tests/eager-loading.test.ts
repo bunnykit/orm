@@ -112,6 +112,29 @@ describe("Eager Loading", () => {
     expect(found!.getRelation("books")).toHaveLength(1);
   });
 
+  test("eager loaded relations are available as properties", async () => {
+    const author = await EAuthor.create({ name: "Ivy" });
+    await EBook.create({ author_id: author.getAttribute("id"), title: "Book I" });
+    await EProfile.create({ author_id: author.getAttribute("id"), bio: "Bio I" });
+
+    const found = await EAuthor.with(["books", "profile"]).where("name", "Ivy").first();
+    expect(found).not.toBeNull();
+    expect((found as any).books).toHaveLength(1);
+    expect((found as any).books[0].getAttribute("title")).toBe("Book I");
+    expect((found as any).profile.getAttribute("bio")).toBe("Bio I");
+  });
+
+  test("load can refresh an already loaded relation", async () => {
+    const author = await EAuthor.create({ name: "Jules" });
+    await EBook.create({ author_id: author.getAttribute("id"), title: "Book J" });
+
+    const found = await EAuthor.with("books").where("name", "Jules").first();
+    expect((found as any).books).toHaveLength(1);
+
+    await found!.load("books");
+    expect((found as any).books).toHaveLength(1);
+  });
+
   test("with constrains eager loaded hasMany relation", async () => {
     const author = await EAuthor.create({ name: "Frank" });
     await EBook.create({ author_id: author.getAttribute("id"), title: "Published", published: true });
