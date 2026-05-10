@@ -60,6 +60,16 @@ describe("Benchmark: Common Operations", () => {
     console.log(`  Model.create x100: ${ms.toFixed(2)}ms (${(ms / 100).toFixed(3)}ms/op)`);
   });
 
+  test("Model.create x100 (events:false)", async () => {
+    await resetTable();
+    const start = performance.now();
+    for (let i = 0; i < 100; i++) {
+      await BenchUser.create({ name: `U${i}`, email: `ce${i}@t.com`, active: true }, { events: false });
+    }
+    const ms = performance.now() - start;
+    console.log(`  Model.create x100 (no events): ${ms.toFixed(2)}ms (${(ms / 100).toFixed(3)}ms/op)`);
+  });
+
   test("new + save x100", async () => {
     await resetTable();
     const start = performance.now();
