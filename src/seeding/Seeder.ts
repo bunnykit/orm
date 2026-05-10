@@ -52,19 +52,43 @@ export class SeederRunner {
     return TenantContext.current()?.connection || this.connection || Schema.getConnection();
   }
 
-  async run(...seeders: SeederInput[]): Promise<void> {
+  private async runAtomic<T>(callback: (connection: Connection) => T | Promise<T>): Promise<T> {
     const connection = this.getConnection();
-    for (const seeder of normalizeSeederEntries(seeders)) {
-      const instance = typeof seeder === "function" ? new seeder(connection) : seeder;
-      await instance.run();
+    if (connection.isInTransaction()) {
+      return await TenantContext.withConnection(connection, async () => {
+        return await callback(connection);
+      });
     }
+    return await connection.transaction(async (txConnection) => {
+      return await TenantContext.withConnection(txConnection, async () => {
+        return await callback(txConnection);
+      });
+    });
+  }
+
+  async run(...seeders: SeederInput[]): Promise<void> {
+    await this.runAtomic(async (txConnection) => {
+      for (const seeder of normalizeSeederEntries(seeders)) {
+        const instance = typeof seeder === "function" ? new seeder(txConnection) : seeder;
+        await instance.run();
+      }
+      return undefined;
+    });
   }
 
   async runPaths(paths: string | string[]): Promise<void> {
     const files = await this.getSeederFiles(paths);
+    const seeders: SeederClass[] = [];
     for (const file of files) {
-      await this.runFile(file);
+      const resolved = resolve(file);
+      const module = await import(pathToFileURL(resolved).href);
+      const SeederClass = module.default || Object.values(module)[0];
+      if (!SeederClass) {
+        throw new Error(`Seeder ${file} does not export a class.`);
+      }
+      seeders.push(SeederClass as SeederClass);
     }
+    await this.run(...seeders);
   }
 
   async runFile(file: string): Promise<void> {

@@ -1411,6 +1411,7 @@ bun run bunny db:seed --tenants
 ```
 
 When the command runs inside `TenantContext`, `SeederRunner` uses that active tenant connection automatically.
+Seeder runs are atomic: if any seeder throws, the whole run is rolled back.
 
 Programmatic seeding is available through `SeederRunner`:
 

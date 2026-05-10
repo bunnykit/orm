@@ -200,4 +200,29 @@ export default class SecondSeeder extends Seeder {
     await new RootSeeder().run();
     expect((await SeedUser.orderBy("id").get()).map((user) => user.getAttribute("name"))).toEqual(["Alpha", "Beta"]);
   });
+
+  test("SeederRunner rolls back the full run when a seeder fails", async () => {
+    setupTestDb();
+    await Schema.create("seed_users", (table) => {
+      table.increments("id");
+      table.string("name");
+      table.string("email");
+    });
+
+    class WriteSeeder extends Seeder {
+      async run(): Promise<void> {
+        await SeedUser.create({ name: "BeforeFail", email: "before@example.test" });
+      }
+    }
+
+    class FailSeeder extends Seeder {
+      async run(): Promise<void> {
+        throw new Error("seed failed");
+      }
+    }
+
+    const runner = new SeederRunner();
+    await expect(runner.run(WriteSeeder, FailSeeder)).rejects.toThrow("seed failed");
+    expect(await SeedUser.query().count()).toBe(0);
+  });
 });
