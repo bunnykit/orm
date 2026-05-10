@@ -225,4 +225,41 @@ export default class SecondSeeder extends Seeder {
     await expect(runner.run(WriteSeeder, FailSeeder)).rejects.toThrow("seed failed");
     expect(await SeedUser.query().count()).toBe(0);
   });
+
+  test("SeederRunner does not open a nested transaction for search_path tenants", async () => {
+    const originalCurrent = TenantContext.current;
+    const calls: string[] = [];
+    const connection = {
+      isInTransaction: () => false,
+      transaction: async () => {
+        calls.push("transaction");
+        throw new Error("should not open transaction");
+      },
+    } as any;
+
+    TenantContext.current = () => ({
+      tenantId: "demo",
+      connection,
+      connectionName: "tenant:demo",
+      strategy: "schema",
+      resolvedAt: Date.now(),
+      closeOnPurge: false,
+      ownsConnection: false,
+      schema: "demo",
+      schemaMode: "search_path",
+    });
+
+    class SearchPathSeeder extends Seeder {
+      async run(): Promise<void> {
+        calls.push("run");
+      }
+    }
+
+    try {
+      await new SeederRunner().run(SearchPathSeeder);
+      expect(calls).toEqual(["run"]);
+    } finally {
+      TenantContext.current = originalCurrent;
+    }
+  });
 });

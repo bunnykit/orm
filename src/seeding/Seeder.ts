@@ -54,7 +54,10 @@ export class SeederRunner {
 
   private async runAtomic<T>(callback: (connection: Connection) => T | Promise<T>): Promise<T> {
     const connection = this.getConnection();
-    if (connection.isInTransaction()) {
+    const context = TenantContext.current();
+    const usesTenantTransaction = context?.strategy === "schema" && context.schemaMode === "search_path" || context?.strategy === "rls";
+
+    if (connection.isInTransaction() || usesTenantTransaction) {
       return await TenantContext.withConnection(connection, async () => {
         return await callback(connection);
       });
