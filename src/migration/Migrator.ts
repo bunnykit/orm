@@ -12,6 +12,7 @@ import { TypeGenerator } from "../typegen/TypeGenerator.js";
 import type { TypeGeneratorOptions } from "../typegen/TypeGenerator.js";
 import type { Migration } from "./Migration.js";
 import { normalizePathList, toPosixPath } from "../utils.js";
+import type { ConnectionConfig } from "../types/index.js";
 
 interface MigrationRecord {
   id: number;
@@ -33,6 +34,10 @@ export interface MigratorOptions {
   tenantId?: string | null;
   lock?: boolean;
   lockTimeoutMs?: number;
+  createIfMissing?: boolean | {
+    database?: boolean;
+    schema?: boolean;
+  };
 }
 
 export type MigrationEvent =
@@ -95,6 +100,85 @@ export class Migrator {
 
   private getTenantId(): string | null {
     return this.options.tenantId ?? null;
+  }
+
+  private shouldCreateIfMissing(kind: "database" | "schema"): boolean {
+    const option = this.options.createIfMissing;
+    if (!option) return false;
+    if (option === true) return true;
+    return Boolean(option[kind]);
+  }
+
+  private getTargetSchema(): string | undefined {
+    return TenantContext.current()?.schema || this.connection.getSchema();
+  }
+
+  private getTargetDatabase(): string | undefined {
+    const config = this.connection.getConfig();
+    if ("url" in config) {
+      const url = new URL(config.url);
+      const database = url.pathname.replace(/^\/+/, "");
+      return database || undefined;
+    }
+    return config.database || config.filename;
+  }
+
+  private getAdminConnectionConfig(): ConnectionConfig | undefined {
+    const driver = this.connection.getDriverName();
+    if (driver === "sqlite") return undefined;
+
+    const config = this.connection.getConfig();
+    const adminDatabase = driver === "mysql" ? "mysql" : "postgres";
+
+    if ("url" in config) {
+      const url = new URL(config.url);
+      url.pathname = `/${adminDatabase}`;
+      return { url: url.toString() };
+    }
+
+    return { ...config, database: adminDatabase };
+  }
+
+  private async ensureDatabaseIfMissing(): Promise<void> {
+    if (!this.shouldCreateIfMissing("database")) return;
+    const driver = this.connection.getDriverName();
+    if (driver === "sqlite") return;
+
+    const database = this.getTargetDatabase();
+    if (!database) {
+      throw new Error("createIfMissing.database requires a database name in the connection config.");
+    }
+
+    const adminConfig = this.getAdminConnectionConfig();
+    if (!adminConfig) return;
+
+    const admin = new Connection(adminConfig);
+    try {
+      if (driver === "postgres") {
+        const exists = await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [database]);
+        if (exists.length === 0) {
+          await admin.run(`CREATE DATABASE ${admin.quoteIdentifier(database)}`);
+        }
+      } else if (driver === "mysql") {
+        await admin.run(`CREATE DATABASE IF NOT EXISTS ${admin.quoteIdentifier(database)}`);
+      }
+    } finally {
+      await admin.close();
+    }
+  }
+
+  private async ensureSchemaIfMissing(): Promise<void> {
+    if (!this.shouldCreateIfMissing("schema")) return;
+    const schema = this.getTargetSchema();
+    if (!schema) return;
+    const driver = this.connection.getDriverName();
+    if (driver === "sqlite") return;
+    await Schema.createSchema(schema);
+  }
+
+  private async ensureCreateIfMissing(): Promise<void> {
+    await this.ensureDatabaseIfMissing();
+    await this.ensureSchemaIfMissing();
   }
 
   private migrationsTable(connection: Connection = this.connection): string {
@@ -239,6 +323,7 @@ export class Migrator {
   }
 
   async run(): Promise<void> {
+    await this.ensureCreateIfMissing();
     await this.ensureMigrationsTable();
     const locked = await this.acquireLock();
     try {
@@ -278,6 +363,7 @@ export class Migrator {
   }
 
   async rollback(steps: number = 1): Promise<void> {
+    await this.ensureCreateIfMissing();
     await this.ensureMigrationsTable();
     const locked = await this.acquireLock();
     try {
@@ -335,17 +421,20 @@ export class Migrator {
   }
 
   async reset(): Promise<void> {
+    await this.ensureCreateIfMissing();
     while ((await this.getLastBatchNumber()) > 0) {
       await this.rollback();
     }
   }
 
   async refresh(): Promise<void> {
+    await this.ensureCreateIfMissing();
     await this.reset();
     await this.run();
   }
 
   async fresh(): Promise<void> {
+    await this.ensureCreateIfMissing();
     await this.dropAllTables();
     await this.run();
   }
@@ -366,6 +455,7 @@ export class Migrator {
   }
 
   async status(): Promise<MigrationStatusRow[]> {
+    await this.ensureCreateIfMissing();
     await this.ensureMigrationsTable();
     const ran = await this.getRanRecords();
     const files = await this.getMigrationFiles();
@@ -384,6 +474,7 @@ export class Migrator {
   }
 
   async dumpSchema(path: string): Promise<string> {
+    await this.ensureCreateIfMissing();
     const sql = await this.getSchemaDumpSql();
     await mkdir(resolve(path, ".."), { recursive: true });
     await writeFile(path, sql, "utf-8");
@@ -392,6 +483,7 @@ export class Migrator {
   }
 
   async squash(path: string): Promise<string> {
+    await this.ensureCreateIfMissing();
     const sql = await this.dumpSchema(path);
     const files = await this.getMigrationFiles();
     await this.ensureMigrationsTable();

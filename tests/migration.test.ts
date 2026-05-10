@@ -182,6 +182,36 @@ export default class CreateEventTestTable extends Migration {
 
     await rm(dumpPath, { force: true });
   });
+
+  test("createIfMissing resolves database and schema targets", async () => {
+    const fakeConnection = {
+      getDriverName: () => "postgres" as const,
+      getConfig: () => ({ url: "postgres://user:pass@localhost:5432/app_db" }),
+      getSchema: () => "tenant_demo",
+      qualifyTable: (table: string) => table,
+    } as unknown as Connection;
+
+    const migrator = new Migrator(fakeConnection, TEST_MIGRATIONS_DIR, undefined, {}, {
+      createIfMissing: {
+        database: true,
+        schema: true,
+      },
+    });
+
+    expect((migrator as any).getTargetDatabase()).toBe("app_db");
+    expect((migrator as any).getTargetSchema()).toBe("tenant_demo");
+
+    const calls: string[] = [];
+    (migrator as any).ensureDatabaseIfMissing = async () => {
+      calls.push("database");
+    };
+    (migrator as any).ensureSchemaIfMissing = async () => {
+      calls.push("schema");
+    };
+
+    await (migrator as any).ensureCreateIfMissing();
+    expect(calls).toEqual(["database", "schema"]);
+  });
 });
 
 describe("Migrator multi-path support", () => {

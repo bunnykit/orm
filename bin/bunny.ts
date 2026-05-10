@@ -90,6 +90,12 @@ function createTypeGeneratorOptions(config: BunnyConfig) {
   };
 }
 
+function createMigrationOptions(config: BunnyConfig) {
+  return {
+    createIfMissing: config.migrations?.createIfMissing,
+  };
+}
+
 async function runMigratorCommand(
   command: MigrationCommand,
   migrator: Migrator,
@@ -144,7 +150,10 @@ async function runTenantMigrationCommand(
         throw new Error(`Tenant "${tenantId}" did not resolve to an active context.`);
       }
       console.log(`Tenant: ${tenantId}`);
-      const migrator = new Migrator(context.connection, tenantPath, typesOutDir, createTypeGeneratorOptions(config), { tenantId });
+      const migrator = new Migrator(context.connection, tenantPath, typesOutDir, createTypeGeneratorOptions(config), {
+        tenantId,
+        ...createMigrationOptions(config),
+      });
       await runMigratorCommand(command, migrator);
     });
   } finally {
@@ -169,7 +178,7 @@ async function runConfiguredMigrationCommand(
   const runLandlord = async () => {
     if (!landlordPath) return;
     console.log("Landlord migrations");
-    const migrator = new Migrator(connection, landlordPath, config.typesOutDir, createTypeGeneratorOptions(config));
+    const migrator = new Migrator(connection, landlordPath, config.typesOutDir, createTypeGeneratorOptions(config), createMigrationOptions(config));
     await runMigratorCommand(command, migrator);
   };
   const runAllTenants = async () => {
@@ -202,11 +211,11 @@ async function runConfiguredMigrationCommand(
     return;
   }
 
-  if (command === "migrate:rollback") {
-    await runAllTenants();
-    await runLandlord();
-    return;
-  }
+    if (command === "migrate:rollback") {
+      await runAllTenants();
+      await runLandlord();
+      return;
+    }
   await runLandlord();
   await runAllTenants();
 }
@@ -557,7 +566,7 @@ async function main() {
   try {
     if (command === "schema:dump" || command === "schema:squash") {
       const outputPath = args[1] || "./database/schema.sql";
-      const migrator = new Migrator(connection, getDefaultMigrationsPath(config), config.typesOutDir, createTypeGeneratorOptions(config));
+      const migrator = new Migrator(connection, getDefaultMigrationsPath(config), config.typesOutDir, createTypeGeneratorOptions(config), createMigrationOptions(config));
       if (command === "schema:dump") {
         await migrator.dumpSchema(outputPath);
         console.log(`Schema dumped to ${outputPath}`);

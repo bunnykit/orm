@@ -67,6 +67,10 @@ export class Connection {
     return this.schema;
   }
 
+  getConfig(): ConnectionConfig {
+    return this.config;
+  }
+
   static isSafeIdentifier(value: string): boolean {
     return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
   }

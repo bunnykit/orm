@@ -13,6 +13,10 @@ export interface BunnyConfig {
   migrations?: {
     landlord?: string | string[];
     tenant?: string | string[];
+    createIfMissing?: boolean | {
+      database?: boolean;
+      schema?: boolean;
+    };
   };
   tenancy?: {
     resolveTenant?: TenantResolver;

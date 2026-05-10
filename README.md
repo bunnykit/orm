@@ -62,6 +62,10 @@ export default {
   // migrations: {
   //   landlord: "./database/landlord-migrations",
   //   tenant: "./database/tenant-migrations",
+  //   createIfMissing: {
+  //     database: true,
+  //     schema: true,
+  //   },
   // },
   // Optional tenant resolver for dynamic multi-tenant apps.
   // Apps call configureBunny(config) at startup to register this resolver.
@@ -254,6 +258,8 @@ export default {
 ```
 
 With grouped migrations, `bun run bunny migrate` runs landlord migrations first, then tenant migrations for every tenant returned by `listTenants()`. Rollback runs in reverse order: tenants first, then landlord.
+
+If you set `migrations.createIfMissing`, Bunny will create missing databases and/or schemas before running migration commands. This is disabled by default.
 
 ```bash
 bun run bunny migrate
@@ -1490,6 +1496,7 @@ export default class CreateUsersTable extends Migration {
 ```
 
 Migrations are tracked in a `migrations` table (auto-created on first run).
+If `migrations.createIfMissing` is enabled, Bunny will also create the target database and/or schema before the migration run starts when they do not exist yet.
 
 ### Migration Events
 
