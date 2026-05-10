@@ -836,6 +836,10 @@ export class Builder<T = Record<string, any>> {
     return (await this.get()).all();
   }
 
+  async json(): Promise<any[]> {
+    return (await this.get()).toJSON();
+  }
+
   async first(): Promise<T | null> {
     return (await this.limit(1).get())[0] || null;
   }

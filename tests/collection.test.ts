@@ -79,6 +79,15 @@ describe("Collection", () => {
     expect(users.json()).toEqual(users.toJSON());
   });
 
+  test("query json returns serialized rows", async () => {
+    const users = await CollectionUser.query().orderBy("score", "desc").json();
+    expect(users).toEqual([
+      { id: 2, name: "Linus", role: "user", score: 20 },
+      { id: 3, name: "Grace", role: "user", score: 15 },
+      { id: 1, name: "Ada", role: "admin", score: 10 },
+    ]);
+  });
+
   test("getArray returns a plain array compatibility escape hatch", async () => {
     const users = await CollectionUser.orderBy("id").getArray();
     expect(users).toBeArray();
