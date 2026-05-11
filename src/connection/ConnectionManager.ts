@@ -18,32 +18,11 @@ export type TenantResolution =
 
 export type TenantResolver = (tenantId: string) => TenantResolution | Promise<TenantResolution>;
 
-export interface PoolConfig {
-  maxConnections?: number;
-  minConnections?: number;
-  idleTimeout?: number;
-}
-
-interface PooledConnection {
-  connection: Connection;
-  lastUsed: number;
-  inUse: boolean;
-}
-
-interface PoolWaiter {
-  resolve: (connection: Connection) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
 export class ConnectionManager {
   private static defaultConnection?: Connection;
   private static connections = new Map<string, Connection>();
-  private static pools = new Map<string, PooledConnection[]>();
-  private static poolConfigs = new Map<string, PoolConfig>();
   private static tenantResolver?: TenantResolver;
   private static tenantCache = new Map<string, ActiveTenantContext>();
-  private static waiters = new Map<string, PoolWaiter[]>();
 
   static setDefault(connection: Connection): void {
     this.defaultConnection = connection;
@@ -51,110 +30,6 @@ export class ConnectionManager {
 
   static getDefault(): Connection | undefined {
     return this.defaultConnection;
-  }
-
-  static setPoolConfig(name: string, config: PoolConfig): void {
-    this.poolConfigs.set(name, { maxConnections: 10, minConnections: 1, idleTimeout: 30000, ...config });
-  }
-
-  static getPoolConfig(name: string): PoolConfig | undefined {
-    return this.poolConfigs.get(name);
-  }
-
-  private static async getPooledConnection(name: string, config: ConnectionConfig): Promise<Connection> {
-    const poolConfig = this.poolConfigs.get(name) || { maxConnections: 10, minConnections: 1, idleTimeout: 30000 };
-    let pool = this.pools.get(name);
-
-    if (!pool) {
-      pool = [];
-      this.pools.set(name, pool);
-    }
-
-    const now = Date.now();
-    const idleTimeout = poolConfig.idleTimeout || 30000;
-
-    // Reuse a healthy idle connection
-    while (pool.length > 0) {
-      const idx = pool.findIndex((c) => !c.inUse && (now - c.lastUsed) < idleTimeout);
-      if (idx === -1) break;
-
-      const pooled = pool[idx];
-
-      try {
-        await pooled.connection.query("SELECT 1");
-        pooled.inUse = true;
-        return pooled.connection;
-      } catch {
-        await pooled.connection.close().catch(() => null);
-        pool.splice(idx, 1);
-      }
-    }
-
-    // Clean up expired idle connections
-    for (let i = pool.length - 1; i >= 0; i--) {
-      if (!pool[i].inUse && (now - pool[i].lastUsed) >= idleTimeout) {
-        await pool[i].connection.close().catch(() => null);
-        pool.splice(i, 1);
-      }
-    }
-
-    if (pool.length < (poolConfig.maxConnections || 10)) {
-      const connection = new Connection(config);
-      pool.push({ connection, lastUsed: Date.now(), inUse: true });
-      return connection;
-    }
-
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.removeWaiter(name, waiter);
-        reject(new Error(`Connection pool exhausted for "${name}"`));
-      }, 30000);
-
-      const waiter: PoolWaiter = { resolve, reject, timer };
-      let poolWaiters = this.waiters.get(name);
-      if (!poolWaiters) {
-        poolWaiters = [];
-        this.waiters.set(name, poolWaiters);
-      }
-      poolWaiters.push(waiter);
-    });
-  }
-
-  private static removeWaiter(name: string, waiter: PoolWaiter): void {
-    const poolWaiters = this.waiters.get(name);
-    if (!poolWaiters) return;
-    const idx = poolWaiters.indexOf(waiter);
-    if (idx !== -1) poolWaiters.splice(idx, 1);
-  }
-
-  private static async releasePooledConnection(name: string, connection: Connection): Promise<void> {
-    const pool = this.pools.get(name);
-    if (!pool) return;
-
-    const pooled = pool.find((p) => p.connection === connection);
-    if (!pooled) return;
-
-    // Safety: roll back any leaked transaction before returning to pool
-    if (pooled.connection.isInTransaction()) {
-      try {
-        await pooled.connection.rollback();
-      } catch {
-        // Connection may already be dead; ignore rollback errors
-      }
-    }
-
-    // Hand off directly to a waiter if one exists
-    const poolWaiters = this.waiters.get(name);
-    if (poolWaiters && poolWaiters.length > 0) {
-      const waiter = poolWaiters.shift()!;
-      clearTimeout(waiter.timer);
-      pooled.lastUsed = Date.now();
-      waiter.resolve(connection);
-      return;
-    }
-
-    pooled.inUse = false;
-    pooled.lastUsed = Date.now();
   }
 
   static add(name: string, connection: Connection | ConnectionConfig): Connection {
@@ -165,19 +40,6 @@ export class ConnectionManager {
 
   static get(name: string): Connection | undefined {
     return this.connections.get(name);
-  }
-
-  static async getPooled(name: string, config?: ConnectionConfig): Promise<Connection> {
-    if (config) {
-      return this.getPooledConnection(name, config);
-    }
-    const existing = this.connections.get(name);
-    if (existing) return existing;
-    throw new Error(`No connection registered for "${name}". Use add() first or provide config.`);
-  }
-
-  static async release(name: string, connection: Connection): Promise<void> {
-    await this.releasePooledConnection(name, connection);
   }
 
   static require(name: string): Connection {
@@ -293,40 +155,16 @@ export class ConnectionManager {
     if (context.ownsConnection && context.connection !== storedConnection) {
       await context.connection.close();
     }
-
-    const pool = this.pools.get(context.connectionName);
-    if (pool) {
-      this.pools.delete(context.connectionName);
-      for (const { connection } of pool) {
-        await connection.close().catch(() => null);
-      }
-    }
   }
 
   static async closeAll(): Promise<void> {
     const connections = new Set<Connection>(this.connections.values());
-
-    for (const pool of this.pools.values()) {
-      for (const { connection } of pool) {
-        connections.add(connection);
-      }
-    }
-
     if (this.defaultConnection) connections.add(this.defaultConnection);
+
     this.connections.clear();
-    this.pools.clear();
     this.tenantCache.clear();
     this.defaultConnection = undefined;
     this.tenantResolver = undefined;
-
-    // Reject all pending waiters
-    for (const [name, poolWaiters] of this.waiters) {
-      for (const waiter of poolWaiters) {
-        clearTimeout(waiter.timer);
-        waiter.reject(new Error(`Connection pool "${name}" is closing`));
-      }
-    }
-    this.waiters.clear();
 
     for (const connection of connections) {
       await connection.close();

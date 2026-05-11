@@ -16,6 +16,7 @@ export class Connection {
   private savepointId = 0;
   private reservedDriver?: SQL & { release?: () => void };
   static logQueries = false;
+  logQueries?: boolean;
 
   constructor(config: ConnectionConfig, options: { driver?: SQL; schema?: string; ownsDriver?: boolean } = {}) {
     this.config = config;
@@ -92,12 +93,16 @@ export class Connection {
   withSchema(schema: string): Connection {
     Connection.assertSafeIdentifier(schema, "schema name");
     if (this.schema === schema) return this;
-    return new Connection(this.config, { driver: this.driver, schema, ownsDriver: false });
+    const conn = new Connection(this.config, { driver: this.driver, schema, ownsDriver: false });
+    conn.logQueries = this.logQueries;
+    return conn;
   }
 
   withoutSchema(): Connection {
     if (!this.schema) return this;
-    return new Connection(this.config, { driver: this.driver, ownsDriver: false });
+    const conn = new Connection(this.config, { driver: this.driver, ownsDriver: false });
+    conn.logQueries = this.logQueries;
+    return conn;
   }
 
   qualifyTable(table: string): string {
@@ -118,17 +123,19 @@ export class Connection {
     return this.reservedDriver || this.driver;
   }
 
-  async query(sqlString: string, bindings?: any[]): Promise<any[]> {
-    if (Connection.logQueries) {
+  private log(sqlString: string, bindings?: any[]): void {
+    if (this.logQueries ?? Connection.logQueries) {
       console.log("[QUERY]", sqlString, bindings?.length ? bindings : "");
     }
+  }
+
+  async query(sqlString: string, bindings?: any[]): Promise<any[]> {
+    this.log(sqlString, bindings);
     return (await this.getDriver().unsafe(sqlString, bindings)) as any[];
   }
 
   async run(sqlString: string, bindings?: any[]): Promise<any> {
-    if (Connection.logQueries) {
-      console.log("[QUERY]", sqlString, bindings?.length ? bindings : "");
-    }
+    this.log(sqlString, bindings);
     return await this.getDriver().unsafe(sqlString, bindings);
   }
 
@@ -159,6 +166,9 @@ export class Connection {
     if (this.transactionDepth === 1) {
       try {
         await this.getDriver().unsafe("COMMIT");
+      } catch (error) {
+        await this.getDriver().unsafe("ROLLBACK").catch(() => null);
+        throw error;
       } finally {
         this.transactionDepth = 0;
         this.releaseReservedDriver();
@@ -196,6 +206,7 @@ export class Connection {
         schema: this.schema,
         ownsDriver: false,
       });
+      connection.logQueries = this.logQueries;
       return await callback(connection);
     });
   }

@@ -368,11 +368,15 @@ export class MorphToMany<T extends Model = Model> {
     };
   }
 
+  protected qualifiedPivotTable(): string {
+    return this.parent.getConnection().qualifyTable(this.table);
+  }
+
   protected addConstraints(): void {
     const relatedTable = this.related.getTable();
     this.builder.select(`${relatedTable}.*`);
     this.builder.join(
-      this.table,
+      this.qualifiedPivotTable(),
       `${this.table}.${this.relatedPivotKey}`,
       "=",
       `${relatedTable}.${this.relatedKey}`
@@ -391,7 +395,7 @@ export class MorphToMany<T extends Model = Model> {
     this.builder = (this.related as any).on(this.parent.getConnection());
     this.builder.select(`${relatedTable}.*`, `${this.table}.${this.foreignPivotKey}`);
     this.builder.join(
-      this.table,
+      this.qualifiedPivotTable(),
       `${this.table}.${this.relatedPivotKey}`,
       "=",
       `${relatedTable}.${this.relatedKey}`
@@ -430,7 +434,7 @@ export class MorphToMany<T extends Model = Model> {
     const relatedTable = this.related.getTable();
     const query = (this.related as any).on(this.parent.getConnection()).select(aggregate);
     query.join(
-      this.table,
+      this.qualifiedPivotTable(),
       `${this.table}.${this.relatedPivotKey}`,
       "=",
       `${relatedTable}.${this.relatedKey}`

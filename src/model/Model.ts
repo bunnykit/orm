@@ -396,12 +396,16 @@ export class HasManyThrough<T extends Model = Model> extends Relation<T> {
     this.addConstraints();
   }
 
+  protected qualifiedThroughTable(): string {
+    return this.parent.getConnection().qualifyTable(this.through.getTable());
+  }
+
   addConstraints(): void {
     const throughTable = this.through.getTable();
     const relatedTable = this.related.getTable();
     this.builder.select(`${relatedTable}.*`);
     this.builder.join(
-      throughTable,
+      this.qualifiedThroughTable(),
       `${throughTable}.${this.secondLocalKey}`,
       "=",
       `${relatedTable}.${this.secondKey}`
@@ -416,7 +420,7 @@ export class HasManyThrough<T extends Model = Model> extends Relation<T> {
     this.builder = (this.related as any).on(this.parent.getConnection());
     this.builder.select(`${relatedTable}.*`, `${throughTable}.${this.firstKey}`);
     this.builder.join(
-      throughTable,
+      this.qualifiedThroughTable(),
       `${throughTable}.${this.secondLocalKey}`,
       "=",
       `${relatedTable}.${this.secondKey}`
@@ -451,7 +455,7 @@ export class HasManyThrough<T extends Model = Model> extends Relation<T> {
     const relatedTable = this.related.getTable();
     const query = (this.related as any).on(parentQuery.connection).select(aggregate);
     query.join(
-      throughTable,
+      parentQuery.connection.qualifyTable(throughTable),
       `${throughTable}.${this.secondLocalKey}`,
       "=",
       `${relatedTable}.${this.secondKey}`
