@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import { Connection } from "../connection/Connection.js";
 import { TypeMapper } from "./TypeMapper.js";
+import { discoverModelDeclarations, type ModelDeclarationInfo } from "./discoverModelTables.js";
 import { normalizePathList, snakeCase } from "../utils.js";
 
 interface ColumnInfo {
@@ -23,9 +24,12 @@ export interface TypeGeneratorOptions {
   modelDeclarations?: Record<string, string | ModelDeclaration>;
   modelDirectory?: string;
   modelDirectories?: string[];
+  excludeModelDirectories?: string[];
   modelImportPrefix?: string;
   singularModels?: boolean;
   declarationDirName?: string;
+  allowedTables?: string[];
+  skipIndex?: boolean;
 }
 
 export class TypeGenerator {
@@ -34,15 +38,23 @@ export class TypeGenerator {
     private options: TypeGeneratorOptions
   ) {}
 
-  async generate(): Promise<void> {
-    const tables = await this.getTables();
+  async generate(): Promise<string[]> {
+    let tables = await this.getTables();
+    if (this.options.allowedTables) {
+      const allowed = new Set(this.options.allowedTables.map((t) => t.toLowerCase()));
+      tables = tables.filter((t) => allowed.has(t.toLowerCase()));
+    }
     const declarationOnly = this.options.declarations ?? !this.options.stubs;
-    const targets: { outDir: string; modelImportPrefix?: string }[] = declarationOnly
+    const targets: { outDir: string; modelImportPrefix?: string; modelDirectory?: string }[] = declarationOnly
       ? this.getDeclarationTargets()
       : [{ outDir: this.options.outDir }];
 
     for (const target of targets) {
       await mkdir(target.outDir, { recursive: true });
+
+      const discovered = target.modelDirectory
+        ? await discoverModelDeclarations(target.modelDirectory, target.outDir, this.options.excludeModelDirectories)
+        : new Map<string, ModelDeclarationInfo>();
 
       for (const table of tables) {
         const columns = await this.getColumns(table);
@@ -63,15 +75,14 @@ export class TypeGenerator {
         lines.push("}");
         lines.push("");
 
-        const modelDeclaration = this.getModelDeclaration(table, className, target.modelImportPrefix);
+        const modelDeclaration = this.getModelDeclaration(table, className, discovered, target.modelImportPrefix);
         if (declarationOnly && modelDeclaration) {
-          lines.push(`declare module "${modelDeclaration.path}" {`);
-          lines.push(`  interface ${modelDeclaration.className} {`);
-          for (const col of columns) {
-            const tsType = TypeMapper.sqlToTsType(col.type, col.nullable);
-            lines.push(`    ${col.name}${col.nullable ? "?" : ""}: ${tsType};`);
+          if (discovered.has(table)) {
+            lines.push(`import { ${modelDeclaration.className} } from "${modelDeclaration.path}";`);
+            lines.push("");
           }
-          lines.push("  }");
+          lines.push(`declare module "${modelDeclaration.path}" {`);
+          lines.push(`  interface ${modelDeclaration.className} extends ${interfaceName} {}`);
           lines.push("}");
           lines.push("");
         }
@@ -95,27 +106,41 @@ export class TypeGenerator {
           lines.push("}");
         }
 
-        const fileName = `${snakeCase(className)}.${declarationOnly ? "d.ts" : "ts"}`;
+        const fileName = `${snakeCase(className)}.${declarationOnly ? "ts" : "ts"}`;
         const filePath = join(target.outDir, fileName);
         await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
       }
 
-      const indexLines = tables.map((table) => {
-        const className = this.toClassName(table);
-        const fileName = snakeCase(className);
-        return `export * from "./${fileName}";`;
-      });
-      await writeFile(join(target.outDir, `index.${declarationOnly ? "d.ts" : "ts"}`), indexLines.join("\n") + "\n", "utf-8");
+      if (!this.options.skipIndex) {
+        const indexLines = tables.map((table) => {
+          const className = this.toClassName(table);
+          const fileName = snakeCase(className);
+          return `export * from "./${fileName}";`;
+        });
+        await writeFile(join(target.outDir, `index.${declarationOnly ? "ts" : "ts"}`), indexLines.join("\n") + "\n", "utf-8");
+      }
     }
+    return tables;
   }
 
   private getModelDeclaration(
     table: string,
     fallbackClassName: string,
+    discovered: Map<string, ModelDeclarationInfo>,
     modelImportPrefix?: string
   ): { path: string; className: string } | null {
     const declaration = this.options.modelDeclarations?.[table];
-    if (!declaration) return this.getConventionModelDeclaration(table, modelImportPrefix);
+    if (!declaration) {
+      const info = discovered.get(table);
+      if (info) {
+        const prefix = modelImportPrefix || this.options.modelImportPrefix;
+        if (prefix) {
+          return { path: `${prefix.replace(/\/$/, "")}/${info.relativeToRoot}`, className: info.className };
+        }
+        return { path: info.relativePath, className: info.className };
+      }
+      return this.getConventionModelDeclaration(table, modelImportPrefix);
+    }
     if (typeof declaration === "string") {
       return { path: declaration, className: this.toModelClassName(table, fallbackClassName) };
     }
@@ -180,7 +205,7 @@ export class TypeGenerator {
     }
   }
 
-  private getDeclarationTargets(): { outDir: string; modelImportPrefix: string }[] {
+  private getDeclarationTargets(): { outDir: string; modelImportPrefix: string; modelDirectory?: string }[] {
     const modelDirectories = normalizePathList(this.options.modelDirectories || this.options.modelDirectory);
     if (modelDirectories.length === 0) {
       return [
@@ -195,6 +220,7 @@ export class TypeGenerator {
     return modelDirectories.map((dir) => ({
       outDir: join(dir, declarationDirName),
       modelImportPrefix: this.options.modelImportPrefix || "..",
+      modelDirectory: dir,
     }));
   }
 

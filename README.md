@@ -78,13 +78,19 @@ export default {
   //   listTenants: async () => await getAllTenantIds(),
   // },
   seedersPath: "./database/seeders",
+  // Unified path (string | string[]) — works for single-tenant apps
   modelsPath: ["./src/models", "./src/admin/models"],
+  // Or partition by scope for multi-tenant apps:
+  // modelsPath: {
+  //   landlord: "./src/models/landlord",
+  //   tenant: "./src/models/tenant",
+  // },
   // Optional legacy type output directory
   // typesOutDir: "./src/generated/model-types",
   // Optional typegen overrides
-  // typeDeclarationImportPrefix: "../models",
+  // typeDeclarationImportPrefix: "$models",
   // typeDeclarations: {
-  //   admin_users: { path: "../AdminAccount", className: "AdminAccount" },
+  //   admin_users: { path: "$models/admin/AdminAccount", className: "AdminAccount" },
   // },
 };
 ```
@@ -1665,6 +1671,12 @@ bun run bunny types:generate
 
 # Generate into a custom directory
 bun run bunny types:generate ./src/generated
+
+# Multi-tenant: landlord only
+bun run bunny types:generate --landlord
+
+# Multi-tenant: one specific tenant only
+bun run bunny types:generate --tenant acme
 ```
 
 Or configure in `bunny.config.ts`:
@@ -1673,25 +1685,63 @@ Or configure in `bunny.config.ts`:
 export default {
   connection: { url: "sqlite://app.db" },
   migrationsPath: ["./database/migrations", "./database/tenant-migrations"],
+  // Unified path for single-tenant apps
   modelsPath: ["./src/models", "./src/admin/models"],
   // Optional legacy output directory, still supported when you do not want
   // the generated files beside each model root:
   typesOutDir: "./src/generated/model-types",
   // Optional override for custom module resolution when using typesOutDir:
-  typeDeclarationImportPrefix: "../models",
+  // When models are discovered, subdirectories are preserved automatically.
+  typeDeclarationImportPrefix: "$models",
+  // Explicit per-table overrides (takes precedence over convention):
   typeDeclarations: {
-    admin_users: { path: "../AdminAccount", className: "AdminAccount" },
+    admin_users: { path: "$models/admin/AdminAccount", className: "AdminAccount" },
   },
 };
 ```
 
-With `modelsPath`, Bunny conventionally maps tables to singular PascalCase model modules and writes the generated declarations into `types/` beside each model root:
+#### Multi-Tenancy
 
-| Table        | Generated augmentation     |
-| ------------ | -------------------------- |
-| `users`      | `../User` / `User`         |
-| `blog_posts` | `../BlogPost` / `BlogPost` |
-| `categories` | `../Category` / `Category` |
+For multi-tenant apps, partition `modelsPath` into `landlord` and `tenant` scopes. Bunny will use the correct connection for each:
+
+```ts
+export default {
+  connection: { url: "postgres://localhost/landlord" },
+  modelsPath: {
+    landlord: "./src/models/landlord",
+    tenant: "./src/models/tenant",
+  },
+  typesOutDir: "./src/generated/types",
+  typeDeclarationImportPrefix: "$models",
+  tenancy: {
+    resolveTenant: (tenantId) => ({ strategy: "schema", name: "tenant_db", schema: `tenant_${tenantId}` }),
+    listTenants: () => ["acme", "globex"],
+  },
+};
+```
+
+```bash
+# Generate both landlord and tenant types (uses first tenant for schema introspection)
+bun run bunny types:generate
+
+# Landlord only
+bun run bunny types:generate --landlord
+
+# One specific tenant only
+bun run bunny types:generate --tenant acme
+```
+
+Landlord types are introspected via the default connection. Tenant types are introspected via a resolved tenant connection (`TenantContext.run`). Because all tenants share an identical schema, only one representative tenant is needed.
+
+> **Note:** Keep landlord and tenant model directories non-overlapping. If one scope's path is a subdirectory of another (e.g., `tenant: "./src/models"` containing `landlord/` inside it), Bunny automatically excludes the nested scope during discovery so types don't leak across scopes.
+
+With `modelsPath`, Bunny discovers your actual model files and writes the generated declarations into `types/` beside each model root. Discovered models use their real file path, so subfolders are preserved automatically:
+
+| Table        | Model file                     | No prefix (relative)    | With `typeDeclarationImportPrefix: "$models"` |
+| ------------ | ------------------------------ | ----------------------- | --------------------------------------------- |
+| `users`      | `src/models/User.ts`           | `../User` / `User`      | `$models/User` / `User`                       |
+| `blog_posts` | `src/models/BlogPost.ts`       | `../BlogPost` / `BlogPost` | `$models/BlogPost` / `BlogPost`            |
+| `tenants`    | `src/models/landlord/tenant.ts`| `../landlord/tenant` / `Tenant` | `$models/landlord/tenant` / `Tenant`    |
 
 Set `typeDeclarationSingularModels: false` if your model classes use plural names.
 
@@ -1701,6 +1751,8 @@ For each table, Bunny generates an `Attributes` interface. If you configure `typ
 
 ```ts
 // src/models/types/users.d.ts
+import { User } from "../User";
+
 export interface UsersAttributes {
   id: number;
   name: string;
@@ -1709,12 +1761,7 @@ export interface UsersAttributes {
 }
 
 declare module "../User" {
-  interface User {
-    id: number;
-    name: string;
-    email: string | null;
-    created_at: string;
-  }
+  interface User extends UsersAttributes {}
 }
 ```
 

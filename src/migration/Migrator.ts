@@ -10,6 +10,7 @@ import { Blueprint } from "../schema/Blueprint.js";
 import { Builder } from "../query/Builder.js";
 import { TypeGenerator } from "../typegen/TypeGenerator.js";
 import type { TypeGeneratorOptions } from "../typegen/TypeGenerator.js";
+import { discoverModelTables } from "../typegen/discoverModelTables.js";
 import type { Migration } from "./Migration.js";
 import { normalizePathList, toPosixPath } from "../utils.js";
 import type { ConnectionConfig } from "../types/index.js";
@@ -444,10 +445,12 @@ export class Migrator {
     if (!this.typesOutDir && modelDirectories.length === 0) return;
 
     const outDir = this.typesOutDir || join(modelDirectories[0], this.typeGeneratorOptions.declarationDirName || "types");
+    const allowedTables = modelDirectories.length > 0 ? await discoverModelTables(modelDirectories) : undefined;
     const generator = new TypeGenerator(this.connection, {
       declarations: true,
       ...this.typeGeneratorOptions,
       outDir,
+      allowedTables,
     });
     await generator.generate();
     const label = this.typesOutDir || modelDirectories.map((dir) => join(dir, this.typeGeneratorOptions.declarationDirName || "types")).join(", ");

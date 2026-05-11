@@ -112,10 +112,10 @@ export default class CreateTypeTestTable extends Migration {
 
     // Verify types were generated
     const files = await readdir(typesDir);
-    expect(files).toContain("type_test_table.d.ts");
-    expect(files).toContain("index.d.ts");
+    expect(files).toContain("type_test_table.ts");
+    expect(files).toContain("index.ts");
 
-    const content_gen = await Bun.file(join(typesDir, "type_test_table.d.ts")).text();
+    const content_gen = await Bun.file(join(typesDir, "type_test_table.ts")).text();
     expect(content_gen).toContain("export interface TypeTestTableAttributes {");
     expect(content_gen).toContain("label: string;");
 

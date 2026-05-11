@@ -6,6 +6,11 @@ import { Schema } from "../schema/Schema.js";
 import type { ModelDeclaration } from "../typegen/TypeGenerator.js";
 import type { ConnectionConfig } from "../types/index.js";
 
+export interface ModelsPath {
+  landlord?: string | string[];
+  tenant?: string | string[];
+}
+
 export interface BunnyConfig {
   connection: ConnectionConfig;
   migrationsPath?: string | string[];
@@ -22,7 +27,7 @@ export interface BunnyConfig {
     resolveTenant?: TenantResolver;
     listTenants?: () => string[] | Promise<string[]>;
   };
-  modelsPath?: string | string[];
+  modelsPath?: string | string[] | ModelsPath;
   typesOutDir?: string;
   typeDeclarations?: Record<string, string | ModelDeclaration>;
   typeDeclarationModelsDir?: string;

@@ -47,6 +47,8 @@ export type { MigrationEvent, MigrationEventListener, MigrationEventPayload, Mig
 export { MigrationCreator } from "./migration/MigrationCreator.js";
 export { TypeGenerator } from "./typegen/TypeGenerator.js";
 export { TypeMapper } from "./typegen/TypeMapper.js";
+export { discoverModelTables, discoverModelDeclarations } from "./typegen/discoverModelTables.js";
+export type { ModelDeclarationInfo } from "./typegen/discoverModelTables.js";
 
 export { Seeder, SeederRunner } from "./seeding/Seeder.js";
 export { Factory, factory } from "./seeding/Factory.js";

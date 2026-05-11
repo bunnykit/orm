@@ -10,8 +10,11 @@ import { SeederRunner } from "../src/seeding/Seeder.js";
 import { TypeGenerator } from "../src/typegen/TypeGenerator.js";
 import { existsSync } from "fs";
 import { mkdir, readdir, rm, writeFile } from "fs/promises";
-import { basename, extname, join, resolve } from "path";
-import { normalizePathList } from "../src/utils.js";
+import { basename, extname, join, resolve, sep } from "path";
+import { pathToFileURL } from "url";
+import { normalizePathList, snakeCase } from "../src/utils.js";
+import { discoverModelTables } from "../src/typegen/discoverModelTables.js";
+import type { ModelsPath } from "../src/config/BunnyConfig.js";
 import {
   BelongsTo,
   BelongsToMany,
@@ -101,8 +104,50 @@ function parseSeederInvocation(args: string[]): { target?: string; scope: Migrat
   };
 }
 
-function createTypeGeneratorOptions(config: BunnyConfig) {
-  const modelRoots = normalizePathList(config.modelsPath || config.typeDeclarationModelsDir);
+function getModelPaths(config: BunnyConfig): { landlord?: string | string[]; tenant?: string | string[] } {
+  const mp = config.modelsPath;
+  if (mp && typeof mp === "object" && !Array.isArray(mp)) {
+    return mp as ModelsPath;
+  }
+  return { landlord: mp as string | string[] | undefined, tenant: mp as string | string[] | undefined };
+}
+
+function getScopeExclusions(ourModels: string | string[] | undefined, otherModels: string | string[] | undefined): string[] | undefined {
+  if (!ourModels || !otherModels) return undefined;
+  const ourRoots = normalizePathList(ourModels).map((r) => resolve(process.cwd(), r));
+  const otherRoots = normalizePathList(otherModels).map((r) => resolve(process.cwd(), r));
+  return otherRoots.filter((other) =>
+    ourRoots.some((our) => other.startsWith(our + sep) || other === our)
+  );
+}
+
+function parseTypeGenerateArgs(args: string[]): { outDir?: string; target: MigrationTarget } {
+  const flags: string[] = [];
+  const rest: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--landlord" || arg === "--tenants") {
+      flags.push(arg);
+      continue;
+    }
+    if (arg === "--tenant") {
+      const tenantId = args[++i];
+      if (!tenantId) {
+        throw new Error("Usage: bun run bunny types:generate [--landlord | --tenant <id>] [dir]");
+      }
+      flags.push(arg, tenantId);
+      continue;
+    }
+    rest.push(arg);
+  }
+  return {
+    outDir: rest[0],
+    target: parseMigrationTarget(flags),
+  };
+}
+
+function createTypeGeneratorOptions(config: BunnyConfig, modelsPathOverride?: string | string[]) {
+  const modelRoots = normalizePathList(modelsPathOverride ?? (typeof config.modelsPath === "string" || Array.isArray(config.modelsPath) ? config.modelsPath : undefined) ?? config.typeDeclarationModelsDir);
   return {
     declarations: !config.typeStubs,
     stubs: config.typeStubs,
@@ -174,7 +219,7 @@ async function runTenantMigrator(
       throw new Error(`Tenant "${tenantId}" did not resolve to an active context.`);
     }
     console.log(`Tenant: ${tenantId}`);
-    const migrator = new Migrator(context.connection, connectionPath, typesOutDir, createTypeGeneratorOptions(config), {
+    const migrator = new Migrator(context.connection, connectionPath, typesOutDir, createTypeGeneratorOptions(config, getModelPaths(config).tenant), {
       tenantId,
       ...createMigrationOptions(config),
     });
@@ -261,7 +306,7 @@ async function runConfiguredMigrationCommand(
       }
       return;
     }
-    const migrator = new Migrator(connection, defaultPath, config.typesOutDir, createTypeGeneratorOptions(config));
+    const migrator = new Migrator(connection, defaultPath, config.typesOutDir, createTypeGeneratorOptions(config, getModelPaths(config).landlord));
     await runMigratorCommand(command, migrator);
     return;
   }
@@ -271,7 +316,7 @@ async function runConfiguredMigrationCommand(
   const runLandlord = async () => {
     if (!landlordPath) return;
     console.log("Landlord migrations");
-    const migrator = new Migrator(connection, landlordPath, config.typesOutDir, createTypeGeneratorOptions(config), createMigrationOptions(config));
+    const migrator = new Migrator(connection, landlordPath, config.typesOutDir, createTypeGeneratorOptions(config, getModelPaths(config).landlord), createMigrationOptions(config));
     await runMigratorCommand(command, migrator);
   };
   const runAllTenants = async () => {
@@ -318,7 +363,11 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
   const dir = join(tmpRoot, "bunny-repl");
   await mkdir(dir, { recursive: true });
   const bootstrapPath = join(dir, `bootstrap-${Date.now()}-${Math.random().toString(36).slice(2)}.ts`);
-  const modelRoots = normalizePathList(config.modelsPath || config.typeDeclarationModelsDir);
+  const modelRoots = normalizePathList(
+    typeof config.modelsPath === "object" && !Array.isArray(config.modelsPath)
+      ? ([config.modelsPath.landlord, config.modelsPath.tenant].filter(Boolean) as string[]).flat()
+      : config.modelsPath || config.typeDeclarationModelsDir
+  );
   const tsConfigPath = join(process.cwd(), "bunny.config.ts");
   const jsConfigPath = join(process.cwd(), "bunny.config.js");
   const configPath = existsSync(tsConfigPath) ? tsConfigPath : existsSync(jsConfigPath) ? jsConfigPath : null;
@@ -624,25 +673,112 @@ async function main() {
 
   if (command === "types:generate") {
     const config = await loadConfig();
-    const connection = new Connection(config.connection);
-    const modelRoots = normalizePathList(config.modelsPath || config.typeDeclarationModelsDir);
-    const explicitOutDir = args[1];
-    const useModelTypesFolder = !explicitOutDir && !config.typesOutDir && modelRoots.length > 0;
-    const outDir = explicitOutDir || config.typesOutDir || (useModelTypesFolder ? join(modelRoots[0], "types") : "./generated/models");
-    const generator = new TypeGenerator(connection, {
-      outDir,
-      stubs: config.typeStubs,
-      declarations: !config.typeStubs,
-      modelDeclarations: config.typeDeclarations,
-      modelDirectory: !useModelTypesFolder ? modelRoots[0] : undefined,
-      modelDirectories: useModelTypesFolder ? modelRoots : undefined,
-      modelImportPrefix: config.typeDeclarationImportPrefix,
-      singularModels: config.typeDeclarationSingularModels,
-      declarationDirName: "types",
-    });
-    await generator.generate();
-    const outputLabel = useModelTypesFolder ? modelRoots.map((root) => join(root, "types")).join(", ") : outDir;
-    console.log(`Generated model type declarations in ${outputLabel}`);
+    const { outDir: explicitOutDir, target } = parseTypeGenerateArgs(args.slice(1));
+    const { landlord: landlordModels, tenant: tenantModels } = getModelPaths(config);
+
+    const allGeneratedTables = new Map<string, string[]>();
+    const skipIndex = target.scope === "default" && !!(landlordModels && tenantModels);
+
+    // --- Landlord ---
+    if ((target.scope === "default" || target.scope === "landlord") && landlordModels) {
+      const connection = new Connection(config.connection);
+      try {
+        const modelRoots = normalizePathList(landlordModels);
+        const useModelTypesFolder = !explicitOutDir && !config.typesOutDir && modelRoots.length > 0;
+        const outDir = explicitOutDir || config.typesOutDir || (useModelTypesFolder ? join(modelRoots[0], "types") : "./generated/models");
+        const landlordExcludes = getScopeExclusions(landlordModels, tenantModels);
+        const allowedTables = modelRoots.length > 0 ? await discoverModelTables(modelRoots, landlordExcludes) : undefined;
+        if (modelRoots.length > 0 && (!allowedTables || allowedTables.length === 0)) {
+          console.warn(`Warning: No models discovered in landlord model path(s): ${modelRoots.join(", ")}`);
+        }
+        const generator = new TypeGenerator(connection, {
+          outDir,
+          stubs: config.typeStubs,
+          declarations: !config.typeStubs,
+          modelDeclarations: config.typeDeclarations,
+          modelDirectory: !useModelTypesFolder ? modelRoots[0] : undefined,
+          modelDirectories: useModelTypesFolder ? modelRoots : undefined,
+          excludeModelDirectories: landlordExcludes,
+          modelImportPrefix: config.typeDeclarationImportPrefix,
+          singularModels: config.typeDeclarationSingularModels,
+          declarationDirName: "types",
+          allowedTables,
+          skipIndex,
+        });
+        const tables = await generator.generate();
+        allGeneratedTables.set(outDir, [...(allGeneratedTables.get(outDir) || []), ...tables]);
+        const outputLabel = useModelTypesFolder ? modelRoots.map((root) => join(root, "types")).join(", ") : outDir;
+        console.log(`Generated landlord model type declarations in ${outputLabel}`);
+      } finally {
+        await connection.close();
+      }
+    }
+
+    // --- Tenant ---
+    if ((target.scope === "default" || target.scope === "tenant") && tenantModels) {
+      if (!config.tenancy?.resolveTenant) {
+        throw new Error("Tenant type generation requires tenancy.resolveTenant() in bunny.config.ts.");
+      }
+      ConnectionManager.setTenantResolver(config.tenancy.resolveTenant);
+
+      const tenantId = target.scope === "tenant"
+        ? target.tenantId
+        : config.tenancy.listTenants
+          ? (await config.tenancy.listTenants())[0]
+          : undefined;
+
+      if (!tenantId) {
+        throw new Error("Tenant type generation requires either --tenant <id> or tenancy.listTenants() in bunny.config.ts.");
+      }
+
+      await TenantContext.run(tenantId, async () => {
+        const context = TenantContext.current()!;
+        const modelRoots = normalizePathList(tenantModels);
+        const useModelTypesFolder = !explicitOutDir && !config.typesOutDir && modelRoots.length > 0;
+        const outDir = explicitOutDir || config.typesOutDir || (useModelTypesFolder ? join(modelRoots[0], "types") : "./generated/models");
+        const tenantExcludes = getScopeExclusions(tenantModels, landlordModels);
+        const allowedTables = modelRoots.length > 0 ? await discoverModelTables(modelRoots, tenantExcludes) : undefined;
+        if (modelRoots.length > 0 && (!allowedTables || allowedTables.length === 0)) {
+          console.warn(`Warning: No models discovered in tenant model path(s): ${modelRoots.join(", ")}`);
+        }
+        const generator = new TypeGenerator(context.connection, {
+          outDir,
+          stubs: config.typeStubs,
+          declarations: !config.typeStubs,
+          modelDeclarations: config.typeDeclarations,
+          modelDirectory: !useModelTypesFolder ? modelRoots[0] : undefined,
+          modelDirectories: useModelTypesFolder ? modelRoots : undefined,
+          excludeModelDirectories: tenantExcludes,
+          modelImportPrefix: config.typeDeclarationImportPrefix,
+          singularModels: config.typeDeclarationSingularModels,
+          declarationDirName: "types",
+          allowedTables,
+          skipIndex,
+        });
+        const tables = await generator.generate();
+        allGeneratedTables.set(outDir, [...(allGeneratedTables.get(outDir) || []), ...tables]);
+        const outputLabel = useModelTypesFolder ? modelRoots.map((root) => join(root, "types")).join(", ") : outDir;
+        console.log(`Generated tenant model type declarations in ${outputLabel}`);
+      });
+
+      await ConnectionManager.closeTenant(tenantId);
+    }
+
+    // Write combined index files for shared outDirs
+    if (skipIndex) {
+      for (const [outDir, tables] of allGeneratedTables) {
+        const uniqueTables = [...new Set(tables)];
+        const indexLines = uniqueTables.map((table) => {
+          const className = table
+            .split("_")
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join("");
+          return `export * from "./${snakeCase(className)}";`;
+        });
+        await writeFile(join(outDir, "index.ts"), indexLines.join("\n") + "\n", "utf-8");
+      }
+    }
+
     return;
   }
 
@@ -659,7 +795,7 @@ async function main() {
   try {
     if (command === "schema:dump" || command === "schema:squash") {
       const outputPath = args[1] || "./database/schema.sql";
-      const migrator = new Migrator(connection, getDefaultMigrationsPath(config), config.typesOutDir, createTypeGeneratorOptions(config), createMigrationOptions(config));
+      const migrator = new Migrator(connection, getDefaultMigrationsPath(config), config.typesOutDir, createTypeGeneratorOptions(config, getModelPaths(config).landlord), createMigrationOptions(config));
       if (command === "schema:dump") {
         await migrator.dumpSchema(outputPath);
         console.log(`Schema dumped to ${outputPath}`);
@@ -700,7 +836,8 @@ async function main() {
       console.log("  bun run bunny db:seed --tenants    Run seeders for every tenant");
       console.log("  bun run bunny schema:dump [path]   Dump the current database schema");
       console.log("  bun run bunny schema:squash [path] Dump schema and mark configured migrations as ran");
-      console.log("  bun run bunny types:generate [dir] Generate model type declarations from DB schema");
+      console.log("  bun run bunny types:generate [dir] [--landlord | --tenant <id>]");
+      console.log("                                     Generate model type declarations from DB schema");
       console.log("  bun run bunny repl                 Start a Bunny REPL with Model, Schema, and db loaded");
       console.log("                                     Falls back to in-memory SQLite when no config is present");
     }
