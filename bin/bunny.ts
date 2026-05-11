@@ -676,42 +676,40 @@ async function main() {
     const { outDir: explicitOutDir, target } = parseTypeGenerateArgs(args.slice(1));
     const { landlord: landlordModels, tenant: tenantModels } = getModelPaths(config);
 
+    // Register the default connection once so both landlord and tenant scopes can reuse it
+    const { connection: defaultConnection } = configureBunny(config);
+
     const allGeneratedTables = new Map<string, string[]>();
     const skipIndex = target.scope === "default" && !!(landlordModels && tenantModels);
 
     // --- Landlord ---
     if ((target.scope === "default" || target.scope === "landlord") && landlordModels) {
-      const connection = new Connection(config.connection);
-      try {
-        const modelRoots = normalizePathList(landlordModels);
-        const useModelTypesFolder = !explicitOutDir && !config.typesOutDir && modelRoots.length > 0;
-        const outDir = explicitOutDir || config.typesOutDir || (useModelTypesFolder ? join(modelRoots[0], "types") : "./generated/models");
-        const landlordExcludes = getScopeExclusions(landlordModels, tenantModels);
-        const allowedTables = modelRoots.length > 0 ? await discoverModelTables(modelRoots, landlordExcludes) : undefined;
-        if (modelRoots.length > 0 && (!allowedTables || allowedTables.length === 0)) {
-          console.warn(`Warning: No models discovered in landlord model path(s): ${modelRoots.join(", ")}`);
-        }
-        const generator = new TypeGenerator(connection, {
-          outDir,
-          stubs: config.typeStubs,
-          declarations: !config.typeStubs,
-          modelDeclarations: config.typeDeclarations,
-          modelDirectory: !useModelTypesFolder ? modelRoots[0] : undefined,
-          modelDirectories: useModelTypesFolder ? modelRoots : undefined,
-          excludeModelDirectories: landlordExcludes,
-          modelImportPrefix: config.typeDeclarationImportPrefix,
-          singularModels: config.typeDeclarationSingularModels,
-          declarationDirName: "types",
-          allowedTables,
-          skipIndex,
-        });
-        const tables = await generator.generate();
-        allGeneratedTables.set(outDir, [...(allGeneratedTables.get(outDir) || []), ...tables]);
-        const outputLabel = useModelTypesFolder ? modelRoots.map((root) => join(root, "types")).join(", ") : outDir;
-        console.log(`Generated landlord model type declarations in ${outputLabel}`);
-      } finally {
-        await connection.close();
+      const modelRoots = normalizePathList(landlordModels);
+      const useModelTypesFolder = !explicitOutDir && !config.typesOutDir && modelRoots.length > 0;
+      const outDir = explicitOutDir || config.typesOutDir || (useModelTypesFolder ? join(modelRoots[0], "types") : "./generated/models");
+      const landlordExcludes = getScopeExclusions(landlordModels, tenantModels);
+      const allowedTables = modelRoots.length > 0 ? await discoverModelTables(modelRoots, landlordExcludes) : undefined;
+      if (modelRoots.length > 0 && (!allowedTables || allowedTables.length === 0)) {
+        console.warn(`Warning: No models discovered in landlord model path(s): ${modelRoots.join(", ")}`);
       }
+      const generator = new TypeGenerator(defaultConnection, {
+        outDir,
+        stubs: config.typeStubs,
+        declarations: !config.typeStubs,
+        modelDeclarations: config.typeDeclarations,
+        modelDirectory: !useModelTypesFolder ? modelRoots[0] : undefined,
+        modelDirectories: useModelTypesFolder ? modelRoots : undefined,
+        excludeModelDirectories: landlordExcludes,
+        modelImportPrefix: config.typeDeclarationImportPrefix,
+        singularModels: config.typeDeclarationSingularModels,
+        declarationDirName: "types",
+        allowedTables,
+        skipIndex,
+      });
+      const tables = await generator.generate();
+      allGeneratedTables.set(outDir, [...(allGeneratedTables.get(outDir) || []), ...tables]);
+      const outputLabel = useModelTypesFolder ? modelRoots.map((root) => join(root, "types")).join(", ") : outDir;
+      console.log(`Generated landlord model type declarations in ${outputLabel}`);
     }
 
     // --- Tenant ---
@@ -779,6 +777,7 @@ async function main() {
       }
     }
 
+    await defaultConnection.close();
     return;
   }
 

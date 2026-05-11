@@ -285,11 +285,12 @@ export class ConnectionManager {
     this.tenantCache.delete(tenantId);
     if (!context.closeOnPurge) return;
 
-    const connection = this.connections.get(context.connectionName);
-    if (connection === context.connection) {
+    const storedConnection = this.connections.get(context.connectionName);
+    if (storedConnection) {
       this.connections.delete(context.connectionName);
-      await connection.close();
-    } else if (context.ownsConnection) {
+      await storedConnection.close();
+    }
+    if (context.ownsConnection && context.connection !== storedConnection) {
       await context.connection.close();
     }
 

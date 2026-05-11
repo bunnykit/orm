@@ -225,7 +225,7 @@ export class Connection {
     Connection.assertSafeIdentifier(schema, "schema name");
     return await this.transaction(async (connection) => {
       await connection.run(`SET LOCAL search_path TO ${connection.quoteIdentifier(schema)}`);
-      return await callback(connection.withoutSchema());
+      return await callback(connection);
     });
   }
 
