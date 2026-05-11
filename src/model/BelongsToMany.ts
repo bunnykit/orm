@@ -35,6 +35,10 @@ export class BelongsToMany<T extends Model = Model> {
     return this;
   }
 
+  protected qualifiedPivotTable(): string {
+    return this.parent.getConnection().qualifyTable(this.table);
+  }
+
   protected getPivotSelectColumns(): string[] {
     const pivot = [...this.pivotColumns];
     if (this.pivotTimestamps) {
@@ -96,7 +100,7 @@ export class BelongsToMany<T extends Model = Model> {
     const columns = [`${relatedTable}.*`, ...pivotSelect];
     this.builder.select(...columns);
     this.builder.join(
-      this.table,
+      this.qualifiedPivotTable(),
       `${this.table}.${this.relatedPivotKey}`,
       "=",
       `${relatedTable}.${this.relatedKey}`
@@ -115,7 +119,7 @@ export class BelongsToMany<T extends Model = Model> {
     const pivotSelect = this.getPivotSelectColumns();
     this.builder.select(`${relatedTable}.*`, `${this.table}.${this.foreignPivotKey}`, ...pivotSelect);
     this.builder.join(
-      this.table,
+      this.qualifiedPivotTable(),
       `${this.table}.${this.relatedPivotKey}`,
       "=",
       `${relatedTable}.${this.relatedKey}`

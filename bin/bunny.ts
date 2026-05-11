@@ -466,6 +466,7 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
 
     const loadedModels = await loadModels(modelRoots);
     const originalTenantContextCurrent = TenantContext.current.bind(TenantContext);
+    const originalDefaultConnection = connection;
     let activeTenantContext;
 
     function tenant() {
@@ -474,18 +475,26 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
 
     async function clearTenant() {
       activeTenantContext = undefined;
+      ConnectionManager.setDefault(originalDefaultConnection);
+      Model.setConnection(originalDefaultConnection);
       return undefined;
     }
 
     async function useTenant(tenantId) {
       const context = await ConnectionManager.resolveTenant(tenantId);
-      if (context.strategy === "schema" && context.schemaMode === "search_path") {
-        throw new Error("Persistent REPL tenant context does not support search_path tenants. Use await TenantContext.run(tenantId, () => ...) instead.");
-      }
-      if (context.strategy === "rls") {
-        throw new Error("Persistent REPL tenant context does not support RLS tenants. Use await TenantContext.run(tenantId, () => ...) instead.");
+      let tenantConnection = context.connection;
+      if (context.strategy === "schema" && context.schemaMode === "search_path" && context.schema) {
+        // REPL doesn't wrap each query in a transaction, so search_path won't apply.
+        // Create a connection with schema set directly (qualify mode) for REPL usage.
+        tenantConnection = tenantConnection.withSchema(context.schema);
+        context.connection = tenantConnection;
+        context.schemaMode = "qualify";
       }
       activeTenantContext = context;
+      // Set as default so Model.getConnection() picks up the tenant connection
+      // even if TenantContext.current override doesn't propagate (e.g. module scope mismatch).
+      ConnectionManager.setDefault(tenantConnection);
+      Model.setConnection(tenantConnection);
       return context;
     }
 

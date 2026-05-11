@@ -34,6 +34,7 @@ export interface BunnyConfig {
   typeDeclarationImportPrefix?: string;
   typeDeclarationSingularModels?: boolean;
   typeStubs?: boolean;
+  logQueries?: boolean;
 }
 
 export interface ConfiguredBunny {
@@ -49,6 +50,10 @@ export function configureBunny(config: BunnyConfig): ConfiguredBunny {
 
   if (config.tenancy?.resolveTenant) {
     ConnectionManager.setTenantResolver(config.tenancy.resolveTenant);
+  }
+
+  if (config.logQueries) {
+    Connection.logQueries = true;
   }
 
   return { config, connection };

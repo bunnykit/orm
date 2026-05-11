@@ -1,6 +1,7 @@
 import { Connection } from "../connection/Connection.js";
 import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../types/index.js";
-import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor } from "../model/Model.js";
+import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, Relation } from "../model/Model.js";
+import { findRelationMethod } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
 import { IdentityMap } from "../model/IdentityMap.js";
 import { Collection } from "../support/Collection.js";
@@ -786,6 +787,27 @@ export class Builder<T = Record<string, any>> {
     return compiled;
   }
 
+  toSqlWithEagerLoads(models: Model[]): string {
+    if (!this.model || this.eagerLoads.length === 0) return this.toSql();
+    if (models.length === 0) throw new Error("toSqlWithEagerLoads requires at least one model");
+
+    const queries: string[] = [this.toSql()];
+
+    for (const eagerLoad of this.eagerLoads) {
+      const relationName = eagerLoad.name;
+      const relationMethod = findRelationMethod(this.model!, relationName);
+      if (!relationMethod) continue;
+
+      const firstModel = models[0];
+      const relation = relationMethod.call(firstModel) as Relation<any>;
+
+      relation.addEagerConstraints(models);
+      queries.push(relation.getQuery().toSql());
+    }
+
+    return queries.join(";\n");
+  }
+
   async get(): Promise<Collection<T>> {
     this.bindings = [];
     this.parameterize = true;
@@ -1141,7 +1163,27 @@ export class Builder<T = Record<string, any>> {
   }
 
   async insertGetId(data: ModelAttributeInput<T>, idColumn: ModelColumn<T> = "id"): Promise<any> {
-    const result = await this.insert(data);
+    const records = Array.isArray(data) ? data : [data];
+    if (records.length === 0) return null;
+
+    const columns = this.getUniformColumns(records);
+    const bindings: any[] = [];
+    const values = records.map((record) => {
+      return `(${columns.map((col) => {
+        bindings.push((record as any)[col]);
+        return this.grammar.placeholder(bindings.length);
+      }).join(", ")})`;
+    });
+
+    let sql = `INSERT INTO ${this.grammar.wrap(this.tableName)} (${columns.map((c) => this.grammar.wrap(c)).join(", ")}) VALUES ${values.join(", ")}`;
+
+    if (this.connection.getDriverName() === "postgres") {
+      sql += ` RETURNING ${this.grammar.wrap(idColumn)}`;
+      const result = await this.connection.query(sql, bindings);
+      return result[0]?.[idColumn] ?? null;
+    }
+
+    const result = await this.connection.run(sql, bindings);
     return (result as any)?.lastInsertRowid ?? (result as any)?.insertId ?? null;
   }
 

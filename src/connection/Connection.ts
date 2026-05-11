@@ -15,6 +15,7 @@ export class Connection {
   private transactionDepth = 0;
   private savepointId = 0;
   private reservedDriver?: SQL & { release?: () => void };
+  static logQueries = false;
 
   constructor(config: ConnectionConfig, options: { driver?: SQL; schema?: string; ownsDriver?: boolean } = {}) {
     this.config = config;
@@ -104,9 +105,8 @@ export class Connection {
       Connection.assertSafeQualifiedIdentifier(table, "qualified table name");
       return table;
     }
-    if (!this.schema || this.driverName === "sqlite") return table;
-    Connection.assertSafeIdentifier(this.schema, "schema name");
     Connection.assertSafeIdentifier(table, "table name");
+    if (!this.schema || this.driverName === "sqlite") return table;
     return `${this.schema}.${table}`;
   }
 
@@ -119,10 +119,16 @@ export class Connection {
   }
 
   async query(sqlString: string, bindings?: any[]): Promise<any[]> {
+    if (Connection.logQueries) {
+      console.log("[QUERY]", sqlString, bindings?.length ? bindings : "");
+    }
     return (await this.getDriver().unsafe(sqlString, bindings)) as any[];
   }
 
   async run(sqlString: string, bindings?: any[]): Promise<any> {
+    if (Connection.logQueries) {
+      console.log("[QUERY]", sqlString, bindings?.length ? bindings : "");
+    }
     return await this.getDriver().unsafe(sqlString, bindings);
   }
 

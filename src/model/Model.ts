@@ -175,8 +175,8 @@ function getGlobalScopes(model: ModelConstructor): Map<string, GlobalScope> {
   return scopes;
 }
 
-function findRelationMethod(model: Model, relationName: string): Function | null {
-  let current = Object.getPrototypeOf(model);
+export function findRelationMethod(model: Model | ModelConstructor, relationName: string): Function | null {
+  let current = model instanceof Model ? Object.getPrototypeOf(model) : model.prototype;
   while (current && current !== Model.prototype) {
     const descriptor = Object.getOwnPropertyDescriptor(current, relationName);
     if (typeof descriptor?.value === "function") {
@@ -565,7 +565,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   static getConnection(): Connection {
     const tenantConnection = TenantContext.current()?.connection;
     const ownConnection = Object.prototype.hasOwnProperty.call(this, "connection") ? this.connection : undefined;
-    const connection = ownConnection || tenantConnection || this.connection || ConnectionManager.getDefault();
+    const connection = tenantConnection || ownConnection || this.connection || ConnectionManager.getDefault();
     if (!connection) {
       throw new Error(`No connection set on model ${this.name}`);
     }
