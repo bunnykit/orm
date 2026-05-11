@@ -20,7 +20,40 @@ export class BelongsToMany<T extends Model = Model> {
   protected relatedPivotKey: string;
   protected parentKey: string;
   protected relatedKey: string;
+  protected pivotColumns: string[] = [];
+  protected pivotTimestamps = false;
   protected builder: Builder<T>;
+
+  withPivot(...columns: string[]): this {
+    this.pivotColumns.push(...columns);
+    return this;
+  }
+
+  withTimestamps(): this {
+    this.pivotTimestamps = true;
+    return this;
+  }
+
+  protected getPivotSelectColumns(): string[] {
+    const pivot = [...this.pivotColumns];
+    if (this.pivotTimestamps) {
+      pivot.push("created_at", "updated_at");
+    }
+    return pivot.map((col) => `${this.table}.${col}`);
+  }
+
+  protected attachPivotToResults(results: Collection<any>): void {
+    if (this.pivotColumns.length === 0 && !this.pivotTimestamps) return;
+    const pivotCols = this.getPivotSelectColumns().map((col) => col.replace(`${this.table}.`, ""));
+    for (const result of results) {
+      const pivot: Record<string, any> = {};
+      for (const col of pivotCols) {
+        pivot[col] = (result.$attributes as any)[col];
+        delete (result.$attributes as any)[col];
+      }
+      (result as any).pivot = pivot;
+    }
+  }
 
   constructor(
     parent: Model,
@@ -58,7 +91,9 @@ export class BelongsToMany<T extends Model = Model> {
 
   protected addConstraints(): void {
     const relatedTable = this.related.getTable();
-    this.builder.select(`${relatedTable}.*`);
+    const pivotSelect = this.getPivotSelectColumns();
+    const columns = [`${relatedTable}.*`, ...pivotSelect];
+    this.builder.select(...columns);
     this.builder.join(
       this.table,
       `${this.table}.${this.relatedPivotKey}`,
@@ -76,7 +111,8 @@ export class BelongsToMany<T extends Model = Model> {
     const keys = models.map((m) => m.getAttribute(this.parentKey));
     this.builder = (this.related as any).on(this.parent.getConnection());
     const relatedTable = this.related.getTable();
-    this.builder.select(`${relatedTable}.*`, `${this.table}.${this.foreignPivotKey}`);
+    const pivotSelect = this.getPivotSelectColumns();
+    this.builder.select(`${relatedTable}.*`, `${this.table}.${this.foreignPivotKey}`, ...pivotSelect);
     this.builder.join(
       this.table,
       `${this.table}.${this.relatedPivotKey}`,
@@ -92,10 +128,19 @@ export class BelongsToMany<T extends Model = Model> {
 
   match(models: Model[], results: Collection<any>, relationName: string): void {
     const dictionary: Record<string, any[]> = {};
+    const pivotCols = this.getPivotSelectColumns().map((col) => col.replace(`${this.table}.`, ""));
     for (const result of results) {
       const key = (result.$attributes as any)[this.foreignPivotKey];
       if (!dictionary[key]) dictionary[key] = [];
       delete (result.$attributes as any)[this.foreignPivotKey];
+      const pivot: Record<string, any> = {};
+      for (const col of pivotCols) {
+        pivot[col] = (result.$attributes as any)[col];
+        delete (result.$attributes as any)[col];
+      }
+      if (Object.keys(pivot).length > 0) {
+        (result as any).pivot = pivot;
+      }
       dictionary[key].push(result);
     }
     for (const model of models) {
@@ -105,7 +150,9 @@ export class BelongsToMany<T extends Model = Model> {
   }
 
   async getResults(): Promise<Collection<T>> {
-    return this.builder.get();
+    const results = await this.builder.get();
+    this.attachPivotToResults(results);
+    return results;
   }
 
   qualifyRelatedColumn(column: string): string {

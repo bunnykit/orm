@@ -1183,6 +1183,83 @@ this.hasManyThrough(Post, User, "country_uuid", "author_id", "uuid", "id");
 this.hasOneThrough(Profile, User, "country_id", "user_id");
 ```
 
+### Many-to-Many Relations
+
+Use `belongsToMany` for many-to-many relationships via an intermediate pivot table:
+
+```ts
+class User extends Model {
+  roles() {
+    return this.belongsToMany(Role);
+  }
+}
+
+class Role extends Model {
+  users() {
+    return this.belongsToMany(User);
+  }
+}
+```
+
+By default, Bunny infers the pivot table name from the two model names sorted alphabetically: `role_user` for `Role` and `User`.
+
+#### Pivot Columns
+
+Use `.withPivot()` to select specific columns from the pivot table:
+
+```ts
+this.belongsToMany(Role).withPivot("created_at", "is_active");
+```
+
+#### Pivot Timestamps
+
+Use `.withTimestamps()` to auto-select `created_at` and `updated_at` from the pivot table:
+
+```ts
+this.belongsToMany(Role).withTimestamps();
+```
+
+Combine them:
+
+```ts
+this.belongsToMany(Subject, "curriculum_subjects")
+  .withPivot(["id", "year_level", "term"])
+  .withTimestamps();
+```
+
+Each related model in the result includes a `.pivot` property with the pivot data:
+
+```ts
+const subjects = await curriculum.subjects().withPivot(["year_level", "term"]).withTimestamps().get();
+
+for (const subject of subjects) {
+  console.log(subject.name, subject.pivot.year_level, subject.pivot.term);
+}
+```
+
+#### Attaching and Detaching
+
+Attach related records to the pivot table:
+
+```ts
+await user.roles().attach([1, 2, 3]);
+await user.roles().attach(1, { is_active: true }); // with pivot attributes
+```
+
+Detach related records:
+
+```ts
+await user.roles().detach([2, 3]);
+await user.roles().detach(); // detach all
+```
+
+Sync the pivot table to match a given list:
+
+```ts
+await user.roles().sync([1, 2]);        // keep only 1 and 2
+await user.roles().sync([1, 2], false); // don't detach missing records
+```
+
 ### One-of-Many Relations
 
 Convert a `hasMany` relation into a single latest, oldest, or aggregate-selected relation:
