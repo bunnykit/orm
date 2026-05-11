@@ -24,8 +24,9 @@ export class BelongsToMany<T extends Model = Model> {
   protected pivotTimestamps = false;
   protected builder: Builder<T>;
 
-  withPivot(...columns: string[]): this {
-    this.pivotColumns.push(...columns);
+  withPivot(...columns: (string | string[])[]): this {
+    const cols = columns.flat();
+    this.pivotColumns.push(...cols);
     return this;
   }
 
