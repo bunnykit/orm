@@ -14,7 +14,7 @@ export { SQLiteGrammar } from "./schema/grammars/SQLiteGrammar.js";
 export { MySqlGrammar } from "./schema/grammars/MySqlGrammar.js";
 export { PostgresGrammar } from "./schema/grammars/PostgresGrammar.js";
 
-export { Builder } from "./query/Builder.js";
+export { Builder, Paginator } from "./query/Builder.js";
 export { Collection, collect } from "./support/Collection.js";
 
 export { Model, HasMany, BelongsTo, HasOne, HasManyThrough, HasOneThrough } from "./model/Model.js";
@@ -30,6 +30,7 @@ export type {
   EagerLoadConstraint,
   EagerLoadDefinition,
   EagerLoadInput,
+  TypedEagerLoad,
   GlobalScope,
   CastDefinition,
   CastsAttributes,

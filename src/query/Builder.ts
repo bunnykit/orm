@@ -1,6 +1,6 @@
 import { Connection } from "../connection/Connection.js";
 import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../types/index.js";
-import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, Relation } from "../model/Model.js";
+import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName, TypedEagerLoad, TypedConstraintMap, ExtractStringPaths, WithLoadedRelations, Relation } from "../model/Model.js";
 import { findRelationMethod } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
 import { IdentityMap } from "../model/IdentityMap.js";
@@ -8,7 +8,7 @@ import { Collection } from "../support/Collection.js";
 
 type RelationConstraint = (query: Builder<any>) => void | Builder<any>;
 
-export interface Paginator<T> {
+export class Paginator<T> {
   data: Collection<T>;
   current_page: number;
   per_page: number;
@@ -16,9 +16,43 @@ export interface Paginator<T> {
   last_page: number;
   from: number;
   to: number;
+
+  constructor(init: {
+    data: Collection<T>;
+    current_page: number;
+    per_page: number;
+    total: number;
+    last_page: number;
+    from: number;
+    to: number;
+  }) {
+    this.data = init.data;
+    this.current_page = init.current_page;
+    this.per_page = init.per_page;
+    this.total = init.total;
+    this.last_page = init.last_page;
+    this.from = init.from;
+    this.to = init.to;
+  }
+
+  json(): object {
+    return {
+      data: this.data.toJSON(),
+      current_page: this.current_page,
+      per_page: this.per_page,
+      total: this.total,
+      last_page: this.last_page,
+      from: this.from,
+      to: this.to,
+    };
+  }
+
+  toJSON(): object {
+    return this.json();
+  }
 }
 
-export class Builder<T = Record<string, any>> {
+export class Builder<T = Record<string, any>, TResult = T> {
   connection: Connection;
   tableName: string;
   columns: string[] = ["*"];
@@ -444,9 +478,11 @@ export class Builder<T = Record<string, any>> {
     return this.union(query, true);
   }
 
-  with(...relations: (EagerLoadInput | EagerLoadInput[])[]): this {
-    this.eagerLoads.push(...this.normalizeEagerLoads(relations));
-    return this;
+  with<R extends TypedEagerLoad<T>>(
+    ...relations: (R | R[])[]
+  ): Builder<T, WithLoadedRelations<TResult, ExtractStringPaths<R>>> {
+    this.eagerLoads.push(...this.normalizeEagerLoads(relations as any));
+    return this as any;
   }
 
   withoutGlobalScope(scope: string): this {
@@ -808,7 +844,7 @@ export class Builder<T = Record<string, any>> {
     return queries.join(";\n");
   }
 
-  async get(): Promise<Collection<T>> {
+  async get(): Promise<Collection<TResult>> {
     this.bindings = [];
     this.parameterize = true;
     const sql = this.toSql();
@@ -848,13 +884,13 @@ export class Builder<T = Record<string, any>> {
         await (this.model as any).eagerLoadRelations(models, this.eagerLoads);
       }
 
-      return new Collection(models);
+      return new Collection(models) as unknown as Collection<TResult>;
     }
 
-    return new Collection(rows as T[]);
+    return new Collection(rows as T[]) as unknown as Collection<TResult>;
   }
 
-  async getArray(): Promise<T[]> {
+  async getArray(): Promise<TResult[]> {
     return (await this.get()).all();
   }
 
@@ -862,15 +898,15 @@ export class Builder<T = Record<string, any>> {
     return (await this.get()).toJSON();
   }
 
-  async first(): Promise<T | null> {
+  async first(): Promise<TResult | null> {
     return (await this.limit(1).get())[0] || null;
   }
 
-  async find(id: any, column: ModelColumn<T> = "id"): Promise<T | null> {
+  async find(id: any, column: ModelColumn<T> = "id"): Promise<TResult | null> {
     return this.where(column, id).first();
   }
 
-  async findOrFail(id: any, column: ModelColumn<T> = "id"): Promise<T> {
+  async findOrFail(id: any, column: ModelColumn<T> = "id"): Promise<TResult> {
     const result = await this.find(id, column);
     if (!result) {
       throw new ModelNotFoundError(this.model?.name || "Model", id);
@@ -878,7 +914,7 @@ export class Builder<T = Record<string, any>> {
     return result;
   }
 
-  async firstOrFail(): Promise<T> {
+  async firstOrFail(): Promise<TResult> {
     const result = await this.first();
     if (!result) {
       throw new ModelNotFoundError(this.model?.name || "Model");
@@ -1003,15 +1039,15 @@ export class Builder<T = Record<string, any>> {
     return rows.length > 0 ? (rows[0] as any).max_val : null;
   }
 
-  async paginate(perPage: number = 15, page: number = 1): Promise<Paginator<T>> {
+  async paginate(perPage: number = 15, page: number = 1): Promise<Paginator<TResult>> {
     const countQuery = this.clone();
     countQuery.limitValue = undefined;
     countQuery.offsetValue = undefined;
     countQuery.orders = [];
     countQuery.invalidateSqlCache();
     const total = await countQuery.count();
-    const data = await this.clone().forPage(page, perPage).get();
-    return {
+    const data = await this.clone().forPage(page, perPage).get() as unknown as Collection<TResult>;
+    return new Paginator({
       data,
       current_page: page,
       per_page: perPage,
@@ -1019,13 +1055,13 @@ export class Builder<T = Record<string, any>> {
       last_page: Math.max(1, Math.ceil(total / perPage)),
       from: total === 0 ? 0 : (page - 1) * perPage + 1,
       to: total === 0 ? 0 : Math.min(page * perPage, total),
-    };
+    });
   }
 
-  async chunk(count: number, callback: (items: Collection<T>) => void | Promise<void>): Promise<void> {
+  async chunk(count: number, callback: (items: Collection<TResult>) => void | Promise<void>): Promise<void> {
     let page = 1;
     while (true) {
-      const items = await this.clone().forPage(page, count).get();
+      const items = await this.clone().forPage(page, count).get() as unknown as Collection<TResult>;
       if (items.length === 0) break;
       await callback(items);
       if (items.length < count) break;
@@ -1033,7 +1069,7 @@ export class Builder<T = Record<string, any>> {
     }
   }
 
-  async each(count: number, callback: (item: T) => void | Promise<void>): Promise<void> {
+  async each(count: number, callback: (item: TResult) => void | Promise<void>): Promise<void> {
     await this.chunk(count, async (items) => {
       for (const item of items) {
         await callback(item);
@@ -1319,7 +1355,7 @@ export class Builder<T = Record<string, any>> {
     return !(await this.exists());
   }
 
-  async sole(): Promise<T> {
+  async sole(): Promise<TResult> {
     const results = await this.limit(2).get();
     if (results.length === 0) {
       throw new ModelNotFoundError(this.model?.name || "Model");

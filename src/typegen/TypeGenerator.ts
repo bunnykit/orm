@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from "fs/promises";
-import { join } from "path";
+import { mkdir, readFile, writeFile } from "fs/promises";
+import { dirname, join, relative, resolve } from "path";
 import { Connection } from "../connection/Connection.js";
 import { TypeMapper } from "./TypeMapper.js";
 import { discoverModelDeclarations, type ModelDeclarationInfo } from "./discoverModelTables.js";
@@ -30,6 +30,7 @@ export interface TypeGeneratorOptions {
   declarationDirName?: string;
   allowedTables?: string[];
   skipIndex?: boolean;
+  tsconfigPath?: string;
 }
 
 export class TypeGenerator {
@@ -49,6 +50,8 @@ export class TypeGenerator {
       ? this.getDeclarationTargets()
       : [{ outDir: this.options.outDir }];
 
+    const tsconfigAliases = declarationOnly ? await this.readTsconfigPaths() : new Map<string, string>();
+
     for (const target of targets) {
       await mkdir(target.outDir, { recursive: true });
 
@@ -62,6 +65,9 @@ export class TypeGenerator {
         const interfaceName = `${className}Attributes`;
 
         const lines: string[] = [];
+
+        const modelDeclarations = this.getModelDeclarations(table, className, discovered, target.modelImportPrefix, tsconfigAliases);
+
         if (!declarationOnly) {
           lines.push(`import { Model } from "@bunnykit/orm";`);
           lines.push("");
@@ -75,16 +81,18 @@ export class TypeGenerator {
         lines.push("}");
         lines.push("");
 
-        const modelDeclaration = this.getModelDeclaration(table, className, discovered, target.modelImportPrefix);
-        if (declarationOnly && modelDeclaration) {
-          if (discovered.has(table)) {
-            lines.push(`import { ${modelDeclaration.className} } from "${modelDeclaration.path}";`);
+        if (declarationOnly && modelDeclarations.length > 0) {
+          for (const decl of modelDeclarations) {
+            lines.push(`declare module "${decl.path}" {`);
+            lines.push(`  interface ${decl.className} extends ${interfaceName} {`);
+            lines.push(`    getAttribute<K extends keyof ${interfaceName}>(key: K): ${interfaceName}[K];`);
+            lines.push(`    getAttribute(key: string): any;`);
+            lines.push(`    setAttribute<K extends keyof ${interfaceName}>(key: K, value: ${interfaceName}[K]): void;`);
+            lines.push(`    fill(attributes: Partial<${interfaceName}> & Record<string, any>): this;`);
+            lines.push(`  }`);
+            lines.push("}");
             lines.push("");
           }
-          lines.push(`declare module "${modelDeclaration.path}" {`);
-          lines.push(`  interface ${modelDeclaration.className} extends ${interfaceName} {}`);
-          lines.push("}");
-          lines.push("");
         }
 
         if (!declarationOnly && this.options.stubs) {
@@ -106,45 +114,94 @@ export class TypeGenerator {
           lines.push("}");
         }
 
-        const fileName = `${snakeCase(className)}.${declarationOnly ? "ts" : "ts"}`;
+        const ext = declarationOnly ? "d.ts" : "ts";
+        const fileName = `${snakeCase(className)}.${ext}`;
         const filePath = join(target.outDir, fileName);
         await writeFile(filePath, lines.join("\n") + "\n", "utf-8");
       }
 
       if (!this.options.skipIndex) {
+        const ext = declarationOnly ? "d.ts" : "ts";
         const indexLines = tables.map((table) => {
           const className = this.toClassName(table);
           const fileName = snakeCase(className);
           return `export * from "./${fileName}";`;
         });
-        await writeFile(join(target.outDir, `index.${declarationOnly ? "ts" : "ts"}`), indexLines.join("\n") + "\n", "utf-8");
+        await writeFile(join(target.outDir, `index.${ext}`), indexLines.join("\n") + "\n", "utf-8");
       }
     }
     return tables;
   }
 
-  private getModelDeclaration(
+  private async readTsconfigPaths(): Promise<Map<string, string>> {
+    const tsconfigPath = this.options.tsconfigPath || join(process.cwd(), "tsconfig.json");
+    const result = new Map<string, string>();
+    try {
+      const content = await readFile(tsconfigPath, "utf-8");
+      const parsed = JSON.parse(content);
+      const paths: Record<string, string[]> = parsed.compilerOptions?.paths || {};
+      const baseUrl: string = parsed.compilerOptions?.baseUrl || ".";
+      const baseDir = join(dirname(tsconfigPath), baseUrl);
+
+      for (const [pattern, values] of Object.entries(paths)) {
+        if (!pattern.endsWith("/*")) continue;
+        const aliasPrefix = pattern.slice(0, -2);
+        for (const value of values) {
+          if (!value.endsWith("/*")) continue;
+          const resolvedDir = resolve(baseDir, value.slice(0, -2));
+          result.set(aliasPrefix, resolvedDir);
+        }
+      }
+    } catch {
+      // tsconfig not found or unparseable — no aliases
+    }
+    return result;
+  }
+
+  private getModelDeclarations(
     table: string,
     fallbackClassName: string,
     discovered: Map<string, ModelDeclarationInfo>,
-    modelImportPrefix?: string
-  ): { path: string; className: string } | null {
+    modelImportPrefix: string | undefined,
+    tsconfigAliases: Map<string, string>
+  ): { path: string; className: string }[] {
     const declaration = this.options.modelDeclarations?.[table];
-    if (!declaration) {
-      const info = discovered.get(table);
-      if (info) {
-        const prefix = modelImportPrefix || this.options.modelImportPrefix;
-        if (prefix) {
-          return { path: `${prefix.replace(/\/$/, "")}/${info.relativeToRoot}`, className: info.className };
-        }
-        return { path: info.relativePath, className: info.className };
+    if (declaration) {
+      const path = typeof declaration === "string" ? declaration : declaration.path;
+      const cls = typeof declaration === "string"
+        ? this.toModelClassName(table, fallbackClassName)
+        : (declaration.className || this.toModelClassName(table, fallbackClassName));
+      return [{ path, className: cls }];
+    }
+
+    const info = discovered.get(table);
+    if (info) {
+      const prefix = modelImportPrefix || this.options.modelImportPrefix;
+      const paths: { path: string; className: string }[] = [];
+
+      // Primary path: relative or alias-prefix based
+      if (prefix) {
+        paths.push({ path: `${prefix.replace(/\/$/, "")}/${info.relativeToRoot}`, className: info.className });
+      } else {
+        paths.push({ path: info.relativePath, className: info.className });
       }
-      return this.getConventionModelDeclaration(table, modelImportPrefix);
+
+      // Additional alias paths from tsconfig
+      for (const [aliasPrefix, aliasDir] of tsconfigAliases) {
+        const rel = relative(aliasDir, info.absolutePath).replace(/\.[^/.]+$/, "");
+        if (!rel.startsWith("..")) {
+          const aliasPath = `${aliasPrefix}/${rel}`;
+          if (!paths.some((p) => p.path === aliasPath)) {
+            paths.push({ path: aliasPath, className: info.className });
+          }
+        }
+      }
+
+      return paths;
     }
-    if (typeof declaration === "string") {
-      return { path: declaration, className: this.toModelClassName(table, fallbackClassName) };
-    }
-    return { path: declaration.path, className: declaration.className || this.toModelClassName(table, fallbackClassName) };
+
+    const convention = this.getConventionModelDeclaration(table, modelImportPrefix);
+    return convention ? [convention] : [];
   }
 
   private getConventionModelDeclaration(table: string, modelImportPrefix?: string): { path: string; className: string } | null {

@@ -80,14 +80,15 @@ describe("TypeGenerator", () => {
     await generator.generate();
 
     const files = await readdir(DECL_OUT_DIR);
-    expect(files).toContain("users.ts");
-    expect(files).toContain("index.ts");
+    expect(files).toContain("users.d.ts");
+    expect(files).toContain("index.d.ts");
 
-    const content = await Bun.file(join(DECL_OUT_DIR, "users.ts")).text();
+    const content = await Bun.file(join(DECL_OUT_DIR, "users.d.ts")).text();
     expect(content).toContain("export interface UsersAttributes {");
     expect(content).not.toContain("extends Model");
     expect(content).toContain('declare module "../models/User" {');
-    expect(content).toContain("interface User extends UsersAttributes {}");
+    expect(content).toContain("interface User extends UsersAttributes {");
+    expect(content).toContain("getAttribute<K extends keyof UsersAttributes>");
     expect(content).toContain("name: string;");
   });
 
@@ -100,14 +101,14 @@ describe("TypeGenerator", () => {
     });
     await generator.generate();
 
-    const userContent = await Bun.file(join(conventionDir, "users.ts")).text();
+    const userContent = await Bun.file(join(conventionDir, "users.d.ts")).text();
     expect(userContent).toContain('declare module "../models/User" {');
-    expect(userContent).toContain("interface User extends UsersAttributes {}");
+    expect(userContent).toContain("interface User extends UsersAttributes {");
     expect(userContent).toContain("name: string;");
 
-    const postContent = await Bun.file(join(conventionDir, "blog_posts.ts")).text();
+    const postContent = await Bun.file(join(conventionDir, "blog_posts.d.ts")).text();
     expect(postContent).toContain('declare module "../models/BlogPost" {');
-    expect(postContent).toContain("interface BlogPost extends BlogPostsAttributes {}");
+    expect(postContent).toContain("interface BlogPost extends BlogPostsAttributes {");
     expect(postContent).toContain("title: string;");
 
     await rm(conventionDir, { recursive: true, force: true });
@@ -128,10 +129,10 @@ describe("TypeGenerator", () => {
 
     const filesA = await readdir(join(MODEL_ROOT_A, "types"));
     const filesB = await readdir(join(MODEL_ROOT_B, "types"));
-    expect(filesA).toContain("team_members.ts");
-    expect(filesB).toContain("team_members.ts");
+    expect(filesA).toContain("team_members.d.ts");
+    expect(filesB).toContain("team_members.d.ts");
 
-    const content = await Bun.file(join(MODEL_ROOT_A, "types", "team_members.ts")).text();
+    const content = await Bun.file(join(MODEL_ROOT_A, "types", "team_members.d.ts")).text();
     expect(content).toContain('declare module "../TeamMember" {');
   });
 
@@ -205,10 +206,9 @@ describe("TypeGenerator", () => {
     });
     await generator.generate();
 
-    const content = await Bun.file(join(MODEL_LOWERCASE_DIR, "types", "tenants.ts")).text();
-    expect(content).toContain('import { Tenant } from "../tenant"');
+    const content = await Bun.file(join(MODEL_LOWERCASE_DIR, "types", "tenants.d.ts")).text();
     expect(content).toContain('declare module "../tenant" {');
-    expect(content).toContain("interface Tenant extends TenantsAttributes {}");
+    expect(content).toContain("interface Tenant extends TenantsAttributes {");
     expect(content).toContain("name: string;");
     expect(content).not.toContain('declare module "../Tenant" {');
   });
@@ -231,10 +231,9 @@ describe("TypeGenerator", () => {
     });
     await generator.generate();
 
-    const content = await Bun.file(join(modelRoot, "types", "tenants.ts")).text();
-    expect(content).toContain('import { Tenant } from "$models/landlord/tenant"');
+    const content = await Bun.file(join(modelRoot, "types", "tenants.d.ts")).text();
     expect(content).toContain('declare module "$models/landlord/tenant" {');
-    expect(content).toContain("interface Tenant extends TenantsAttributes {}");
+    expect(content).toContain("interface Tenant extends TenantsAttributes {");
 
     await rm(aliasDir, { recursive: true, force: true });
     await rm(modelRoot, { recursive: true, force: true });
@@ -263,8 +262,8 @@ describe("TypeGenerator", () => {
     });
     await generator.generate();
     const files = await readdir(skipDir);
-    expect(files).toContain("users.ts");
-    expect(files).not.toContain("index.ts");
+    expect(files).toContain("users.d.ts");
+    expect(files).not.toContain("index.d.ts");
     await rm(skipDir, { recursive: true, force: true });
   });
 
@@ -292,9 +291,9 @@ describe("TypeGenerator", () => {
 
     // Verify both files exist
     const files = await readdir(combinedDir);
-    expect(files).toContain("users.ts");
-    expect(files).toContain("team_members.ts");
-    expect(files).not.toContain("index.ts");
+    expect(files).toContain("users.d.ts");
+    expect(files).toContain("team_members.d.ts");
+    expect(files).not.toContain("index.d.ts");
 
     // Write combined index
     const allTables = [...new Set([...landlordTables, ...tenantTables])];

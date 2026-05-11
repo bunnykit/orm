@@ -27,11 +27,14 @@ export type EagerLoadInput =
 type BaseModelInstanceKey =
   | "$attributes"
   | "$original"
+  | "$changes"
   | "$exists"
   | "$relations"
   | "$casts"
   | "$castCache"
   | "$connection"
+  | "$hidden"
+  | "$visible"
   | "fill"
   | "setConnection"
   | "getConnection"
@@ -43,6 +46,12 @@ type BaseModelInstanceKey =
   | "mergeCasts"
   | "getDirty"
   | "isDirty"
+  | "wasChanged"
+  | "getChanges"
+  | "getOriginal"
+  | "replicate"
+  | "makeHidden"
+  | "makeVisible"
   | "save"
   | "updateTimestamps"
   | "touch"
@@ -92,9 +101,59 @@ export type ModelRelationValue =
   | MorphMany<any>
   | MorphToMany<any>
   | BelongsToMany<any>;
-export type ModelRelationName<T> = LiteralUnion<Extract<{
-  [K in keyof T]-?: T[K] extends (...args: any[]) => ModelRelationValue ? K : never;
-}[keyof T], string>>;
+export type ModelRelationName<T> = Extract<{
+  [K in Exclude<keyof T, BaseModelInstanceKey>]-?: T[K] extends (...args: any[]) => ModelRelationValue ? K : never;
+}[Exclude<keyof T, BaseModelInstanceKey>], string>;
+type RelationReturnModel<F> =
+  F extends (...args: any[]) => BelongsToMany<infer R> ? R
+  : F extends (...args: any[]) => MorphToMany<infer R> ? R
+  : F extends (...args: any[]) => Relation<infer R> ? R
+  : Model;
+type PrevDepth = [never, 0, 1, 2, 3];
+type NestedRelationPath<T, D extends number = 3> = [D] extends [0] ? never : {
+  [K in Exclude<keyof T, BaseModelInstanceKey>]: T[K] extends (...args: any[]) => ModelRelationValue
+    ? K extends string
+      ? K | `${K}.${string & NestedRelationPath<RelationReturnModel<T[K]>, PrevDepth[D]>}`
+      : never
+    : never;
+}[Exclude<keyof T, BaseModelInstanceKey>];
+type PathToModel<T, Path extends string> =
+  Path extends `${infer Head}.${infer Tail}`
+    ? Head extends keyof T
+      ? T[Head] extends (...args: any[]) => ModelRelationValue
+        ? PathToModel<RelationReturnModel<T[Head]>, Tail>
+        : never
+      : never
+    : Path extends keyof T
+      ? T[Path] extends (...args: any[]) => ModelRelationValue
+        ? RelationReturnModel<T[Path]>
+        : never
+      : never;
+export type TypedConstraintMap<T> = {
+  [P in string & NestedRelationPath<T>]?: (query: Builder<PathToModel<T, P>>) => void | Builder<any>;
+};
+export type TypedEagerLoad<T> =
+  | LiteralUnion<string & NestedRelationPath<T>>
+  | { name: LiteralUnion<string & NestedRelationPath<T>>; constraint?: EagerLoadConstraint }
+  | TypedConstraintMap<T>;
+type LoadedRelationType<F> =
+  F extends (...args: any[]) => HasMany<infer R> ? Collection<R>
+  : F extends (...args: any[]) => HasOne<infer R> ? R | null
+  : F extends (...args: any[]) => BelongsTo<infer R> ? R | null
+  : F extends (...args: any[]) => BelongsToMany<infer R> ? Collection<R>
+  : F extends (...args: any[]) => MorphMany<infer R> ? Collection<R>
+  : F extends (...args: any[]) => MorphOne<infer R> ? R | null
+  : F extends (...args: any[]) => MorphToMany<infer R> ? Collection<R>
+  : F extends (...args: any[]) => Relation<infer R> ? Collection<R> | R
+  : unknown;
+type TopLevelKey<S extends string> = S extends `${infer Head}.${string}` ? Head : S;
+export type ExtractStringPaths<R> = R extends string ? R : never;
+export type WithLoadedRelations<T, Paths extends string> =
+  Omit<T, TopLevelKey<Paths> & keyof T> & {
+    [K in TopLevelKey<Paths> & keyof T]: T[K] extends (...args: any[]) => ModelRelationValue
+      ? LoadedRelationType<T[K]>
+      : T[K];
+  };
 export type CastDefinition =
   | string
   | CastsAttributes
@@ -542,14 +601,19 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   static softDeletes = false;
   static deletedAtColumn = "deleted_at";
   static preventLazyLoading = false;
+  static hidden: string[] = [];
+  static visible: string[] = [];
 
   $attributes = {} as T;
   $original = {} as Partial<T>;
+  $changes = {} as Partial<T>;
   $exists = false;
   $relations: Record<string, any> = {};
   $casts: Record<string, CastDefinition> = {};
   $castCache: Record<string, any> = {};
   $connection?: Connection;
+  $hidden: string[] = [];
+  $visible: string[] = [];
 
   constructor(attributes?: Partial<T>) {
     const defaults = (Object.getPrototypeOf(this).constructor as typeof Model).attributes || {};
@@ -560,6 +624,19 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       this.fill(attributes);
     }
     return new Proxy(this, modelProxyHandler);
+  }
+
+  static define<A extends Record<string, any>>(tableName: string, modelName?: string): (new (attributes?: Partial<A>) => Model<A> & A) & Omit<typeof Model, "new"> {
+    const name = modelName || tableName
+      .split("_")
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join("")
+      .replace(/s$/, "");
+    const Base = class extends (this as unknown as typeof Model)<A> {
+      static override table = tableName;
+    };
+    Object.defineProperty(Base, "name", { value: name, writable: false, configurable: true });
+    return Base as unknown as ModelConstructor<Model<A> & A>;
   }
 
   static getTable(): string {
@@ -1020,8 +1097,11 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().sharedLock();
   }
 
-  static with<M extends ModelConstructor>(this: M, ...relations: (ModelRelationName<InstanceType<M>> | EagerLoadInput | EagerLoadInput[])[]): Builder<InstanceType<M>> {
-    return this.query().with(...relations);
+  static with<M extends ModelConstructor, R extends TypedEagerLoad<InstanceType<M>>>(
+    this: M,
+    ...relations: (R | R[])[]
+  ): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, ExtractStringPaths<R>>> {
+    return this.query().with(...(relations as any)) as any;
   }
 
   static withTrashed<M extends ModelConstructor>(this: M): Builder<InstanceType<M>> {
@@ -1331,6 +1411,48 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return Object.keys(this.getDirty()).length > 0;
   }
 
+  wasChanged(key?: string): boolean {
+    if (key !== undefined) return key in this.$changes;
+    return Object.keys(this.$changes).length > 0;
+  }
+
+  getChanges(): Partial<T> {
+    return { ...this.$changes };
+  }
+
+  getOriginal(): Partial<T>;
+  getOriginal<K extends keyof T>(key: K): T[K] | undefined;
+  getOriginal(key?: string): any {
+    if (key !== undefined) return (this.$original as any)[key];
+    return { ...this.$original };
+  }
+
+  replicate(except?: string[]): this {
+    const constructor = this.getModelConstructor();
+    const pk = constructor.primaryKey;
+    const exclude = new Set([pk, "created_at", "updated_at", ...(except || [])]);
+    const attrs: Record<string, any> = {};
+    for (const [key, value] of Object.entries(this.$attributes)) {
+      if (!exclude.has(key)) attrs[key] = value;
+    }
+    const instance = new (constructor as any)() as this;
+    instance.fill(attrs as any);
+    return instance;
+  }
+
+  makeHidden(...keys: (string | string[])[]): this {
+    const flat = keys.flat();
+    this.$hidden = [...new Set([...this.$hidden, ...flat])];
+    return this;
+  }
+
+  makeVisible(...keys: (string | string[])[]): this {
+    const flat = keys.flat();
+    this.$visible = [...new Set([...this.$visible, ...flat])];
+    this.$hidden = this.$hidden.filter((k) => !flat.includes(k));
+    return this;
+  }
+
   async save(options: SaveOptions = {}): Promise<this> {
     const constructor = this.getModelConstructor();
     const events = options.events !== false;
@@ -1351,7 +1473,10 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
         await new Builder(connection, connection.qualifyTable(constructor.getTable()))
           .where(constructor.primaryKey, pk)
           .update(dirty);
+        this.$changes = { ...dirty };
         if (events) await ObserverRegistry.dispatch("updated", this);
+      } else {
+        this.$changes = {};
       }
 
       this.$original = { ...this.$attributes };
@@ -1391,6 +1516,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
       this.$exists = true;
       this.$original = { ...this.$attributes };
+      this.$changes = {};
 
       if (events) await ObserverRegistry.dispatch("created", this);
       if (events) await ObserverRegistry.dispatch("saved", this);
@@ -1463,7 +1589,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.increment(column, -amount, extra);
   }
 
-  async load(...relations: (string | EagerLoadInput | EagerLoadInput[])[]): Promise<this> {
+  async load(...relations: (EagerLoadInput | EagerLoadInput[])[]): Promise<this> {
     const constructor = this.getModelConstructor();
     await constructor.eagerLoadRelations([this], relations as any);
     return this;
@@ -1560,13 +1686,22 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this;
   }
 
+  private isVisible(key: string): boolean {
+    const constructor = this.getModelConstructor();
+    const visible = [...constructor.visible, ...this.$visible];
+    if (visible.length > 0) return visible.includes(key);
+    const hidden = new Set([...constructor.hidden, ...this.$hidden]);
+    return !hidden.has(key);
+  }
+
   private serialize(includeRelations: boolean = true): Record<string, any> {
     const result: Record<string, any> = {};
     for (const key of Object.keys(this.$attributes)) {
-      result[key] = this.getAttribute(key);
+      if (this.isVisible(key)) result[key] = this.getAttribute(key);
     }
     if (includeRelations) {
       for (const key of Object.keys(this.$relations)) {
+        if (!this.isVisible(key)) continue;
         const value = this.$relations[key];
         if (value === null || value === undefined) {
           result[key] = value;

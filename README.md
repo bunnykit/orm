@@ -17,7 +17,7 @@ An **Eloquent-inspired ORM** built specifically for [Bun](https://bun.sh)'s nati
 - 🔥 **Bun-native** — Built on top of `bun:sql` for maximum performance
 - 🪶 **Zero runtime dependencies** — No package lock-in beyond Bun itself
 - 📦 **Multi-database** — SQLite, MySQL, and PostgreSQL support
-- 🔷 **Fully Typed** — Written in TypeScript with generics everywhere
+- 🔷 **Fully Typed** — `Model.define<T>()` gives attribute access, typed `with()` autocomplete, and typed eager-load results with zero codegen
 - 🏗️ **Schema Builder** — Programmatic table creation, indexes, foreign keys
 - 🔍 **Query Builder** — Chainable `where`, `join`, `orderBy`, `groupBy`, date filters, conditional building, etc.
 - 🧬 **Eloquent-style Models** — Property attributes, defaults, casts, dirty tracking, soft deletes, scopes, find-or-fail, first-or-create
@@ -111,24 +111,46 @@ export TYPES_OUT_DIR="./src/generated/model-types"
 
 ### Define a Model
 
+Use `Model.define<Attributes>(table)` to get full IntelliSense — attribute autocomplete, typed query builder columns, and typed eager-load results — with no code generation required:
+
 ```ts
 import { Model } from "@bunnykit/orm";
 
-class User extends Model {
-  // Optional — inferred as "users" if omitted
-  static table = "users";
+interface UserAttributes {
+  id: number;
+  name: string;
+  email: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
+interface PostAttributes {
+  id: number;
+  user_id: number;
+  title: string;
+  body: string | null;
+}
+
+class User extends Model.define<UserAttributes>("users") {
   posts() {
     return this.hasMany(Post);
   }
 }
 
-class Post extends Model {
-  static table = "posts";
-
+class Post extends Model.define<PostAttributes>("posts") {
   author() {
     return this.belongsTo(User);
   }
+}
+```
+
+All instance attribute access, `where()` column arguments, and `with()` relation names are fully typed from the interface.
+
+Plain `extends Model` still works and is fine when types are provided by the code generator or are not needed:
+
+```ts
+class User extends Model {
+  static table = "users";
 }
 ```
 
@@ -779,12 +801,56 @@ numbers.sum(); // 6
 
 ### Defining Models
 
+#### With `Model.define<T>()` (recommended for typed models)
+
+Pass the attribute interface and table name to `Model.define<T>()` to get a typed base class. The returned class has all static query methods (`query()`, `find()`, `create()`, etc.) and instance attributes fully typed:
+
+```ts
+interface ProductAttributes {
+  id: number;
+  sku: string;
+  name: string;
+  price: string;
+  active: boolean;
+  metadata: Record<string, any> | null;
+}
+
+class Product extends Model.define<ProductAttributes>("products") {
+  static primaryKey = "sku";
+  static timestamps = false;
+  static softDeletes = true;
+
+  static attributes = {
+    active: true,
+    status: "draft",
+  };
+
+  static casts = {
+    active: "boolean",
+    price: "decimal:2",
+    metadata: "json",
+  };
+}
+```
+
+For tables with irregular plural names (e.g. `curricula`), pass the class name as the second argument so foreign key inference works correctly when the class is assigned to a variable instead of subclassed:
+
+```ts
+// Subclassed — class name is always correct:
+class Curriculum extends Model.define<CurriculumAttributes>("curricula") {}
+
+// Direct assignment — provide name explicitly:
+const Curriculum = Model.define<CurriculumAttributes>("curricula", "Curriculum");
+```
+
+#### Without `Model.define<T>()` (plain class)
+
 ```ts
 class Product extends Model {
-  static table = "products"; // override table name
-  static primaryKey = "sku"; // override primary key
-  static timestamps = false; // disable timestamps
-  static softDeletes = true; // use deleted_at instead of hard deletes
+  static table = "products";
+  static primaryKey = "sku";
+  static timestamps = false;
+  static softDeletes = true;
 
   static attributes = {
     active: true,
@@ -1301,22 +1367,73 @@ Nested relations use dot notation:
 const users = await User.with("posts.comments").get();
 ```
 
-You can constrain an eager-loaded relation by passing an object whose key is the relation name and whose value is a query callback:
+#### IntelliSense for `with()`
+
+When models use `Model.define<T>()`, relation names autocomplete in `with()` — including dot-notation nested paths up to three levels deep:
+
+```ts
+// All of these autocomplete:
+Semester.with("sections");
+Semester.with("sections.offerings");
+Semester.with("sections.offerings.subjects");
+```
+
+Invalid relation names are a TypeScript error. Raw strings are still accepted as an escape hatch.
+
+#### Typed Eager Load Results
+
+Results from `get()`, `first()`, `find()`, etc. reflect what was loaded. The relation key on each model switches from the method signature to its loaded value type:
+
+```ts
+const years = await AcademicCalendar
+  .with("semesters", "semesters.gradingPeriods")
+  .orderBy("created_at", "desc")
+  .get();
+
+years.map((y) => {
+  y.semesters;                     // Collection<Semester>  ✓
+  y.semesters[0].gradingPeriods;   // Collection<GradingPeriod>  ✓
+});
+```
+
+Without `with()`, `y.semesters` remains `() => HasMany<Semester>` (the relation method).
+
+| Relation type      | Loaded type            |
+|--------------------|------------------------|
+| `hasMany`          | `Collection<R>`        |
+| `belongsToMany`    | `Collection<R>`        |
+| `morphMany`        | `Collection<R>`        |
+| `morphToMany`      | `Collection<R>`        |
+| `hasOne`           | `R \| null`            |
+| `belongsTo`        | `R \| null`            |
+| `morphOne`         | `R \| null`            |
+
+#### Constrained Eager Loading
+
+Pass an object to constrain an eager-loaded relation. The callback `q` is typed to the related model, so its `where()` columns and `with()` relation names also autocomplete:
 
 ```ts
 const users = await User.with({
-  posts: (query) => {
-    query.where("status", "published").orderBy("created_at", "desc");
-  },
+  posts: (q) => q.where("status", "published").orderBy("created_at", "desc"),
 }).get();
 ```
 
-Nested eager loads can be constrained too:
+Dot-notation keys in the constraint object work too, and the callback is typed to the model at the end of the path:
+
+```ts
+const semesters = await Semester.with({
+  "sections.offerings.registrationSubjects": (q) =>
+    q.where("enrolled", true).with("subject"),
+  //                                         ^ autocompletes RegistrationSubject's relations
+}).get();
+```
+
+Multiple constraints can be combined:
 
 ```ts
 const users = await User.with(
-  { posts: (query) => query.where("status", "published") },
-  { "posts.comments": (query) => query.where("approved", true) },
+  { posts: (q) => q.where("status", "published") },
+  { "posts.comments": (q) => q.where("approved", true) },
 ).get();
 ```
 
@@ -1695,23 +1812,64 @@ await migrator.rollback();
 
 ## TypeScript Tips
 
-### Typing Model Attributes
+### Model.define\<T\>() — Full IntelliSense Without Codegen
+
+The recommended way to type a model is to extend `Model.define<T>(table)`. This unlocks:
+
+- **Attribute access** — `user.name` instead of `user.getAttribute("name")`
+- **Column autocomplete** — `User.where("email", ...)`, `User.orderBy("created_at")`
+- **`with()` relation autocomplete** — string names and dot-notation paths
+- **Typed eager load results** — `y.posts` is `Collection<Post>` after `.with("posts")`
 
 ```ts
 interface UserAttributes {
   id: number;
   name: string;
-  email: string;
+  email: string | null;
+  active: boolean;
   created_at: string;
+  updated_at: string;
 }
 
-class User extends Model {
+class User extends Model.define<UserAttributes>("users") {
+  posts() { return this.hasMany(Post); }
+  profile() { return this.hasOne(Profile); }
+}
+
+// Attribute access
+const user = await User.find(1);
+user.name;         // string
+user.email;        // string | null
+user.active;       // boolean
+
+// Column autocomplete in query builder
+User.where("email", "alice@example.com");   // ✓
+User.orderBy("created_at", "desc");          // ✓
+User.where("nonexistent", "x");              // ✗ TS error
+
+// with() autocomplete
+User.with("posts");                          // ✓
+User.with("posts.comments");                 // ✓ nested
+User.with("nonexistent");                    // ✗ TS error
+
+// Typed eager-load results
+const users = await User.with("posts").get();
+users[0].posts;    // Collection<Post>
+```
+
+### Model\<T\> Generic — Alternative
+
+Pass the type directly to `Model<T>` without using `define()`. This types `$attributes` and `getAttribute()` but does not add transparent property access or typed `with()` results:
+
+```ts
+class User extends Model<UserAttributes> {
   static table = "users";
 }
 
-// Type inference works automatically on static methods
-const user = await User.create({ name: "Alice", email: "a@example.com" });
-// user is typed as User
+const user = await User.first();
+user.getAttribute("name"); // string
+user.$attributes.email;    // string | null
+user.name;                 // ✗ not typed — use getAttribute()
 ```
 
 ### Query Builder Typing
@@ -1812,7 +1970,7 @@ Landlord types are introspected via the default connection. Tenant types are int
 
 > **Note:** Keep landlord and tenant model directories non-overlapping. If one scope's path is a subdirectory of another (e.g., `tenant: "./src/models"` containing `landlord/` inside it), Bunny automatically excludes the nested scope during discovery so types don't leak across scopes.
 
-With `modelsPath`, Bunny discovers your actual model files and writes the generated declarations into `types/` beside each model root. Discovered models use their real file path, so subfolders are preserved automatically:
+With `modelsPath`, Bunny discovers your actual model files and writes the generated declarations into `types/` beside each model root. Discovered models use their real file path, so subfolders are preserved automatically. The generator also reads `tsconfig.json` `compilerOptions.paths` and emits an additional `declare module` block for every alias that resolves to the model file — so intellisense works regardless of how you import the model (`../User`, `$models/User`, `@app/models/User`, etc.):
 
 | Table        | Model file                     | No prefix (relative)    | With `typeDeclarationImportPrefix: "$models"` |
 | ------------ | ------------------------------ | ----------------------- | --------------------------------------------- |
@@ -1870,25 +2028,35 @@ Column arguments still accept raw strings for joins, aliases, expressions, and a
 
 If you still want generated base classes, use the programmatic generator with `{ stubs: true }`.
 
-### Manual Typing (Without Codegen)
+### Typing Without Codegen
 
-If you prefer not to use codegen, you can pass a type parameter directly:
+If you prefer not to use the code generator, use `Model.define<T>()` for the best experience:
 
 ```ts
 interface UserAttributes {
   id: number;
   name: string;
-  email: string;
+  email: string | null;
 }
 
+class User extends Model.define<UserAttributes>("users") {
+  posts() { return this.hasMany(Post); }
+}
+
+const user = await User.first();
+user.name;  // string — direct property access, no getAttribute() needed
+```
+
+Or use `Model<T>` to type `$attributes` and `getAttribute()` without property proxying:
+
+```ts
 class User extends Model<UserAttributes> {
   static table = "users";
 }
 
-// $attributes and getAttribute are now typed
 const user = await User.first();
 user.getAttribute("name"); // string
-user.$attributes.email; // string
+user.$attributes.email;    // string | null
 ```
 
 ---

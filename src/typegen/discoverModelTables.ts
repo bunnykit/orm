@@ -51,6 +51,7 @@ export interface ModelDeclarationInfo {
   className: string;
   relativePath: string;
   relativeToRoot: string;
+  absolutePath: string;
 }
 
 export async function discoverModelDeclarations(root: string, outDir: string, exclude?: string[]): Promise<Map<string, ModelDeclarationInfo>> {
@@ -70,7 +71,7 @@ export async function discoverModelDeclarations(root: string, outDir: string, ex
         if (isModelSubclass(exported)) {
           const table = (exported as any).table || snakeCase((exported as any).name) + "s";
           const className = (exported as any).name || exportName;
-          declarations.set(table, { table, className, relativePath, relativeToRoot });
+          declarations.set(table, { table, className, relativePath, relativeToRoot, absolutePath: file });
         }
       }
 
@@ -78,7 +79,7 @@ export async function discoverModelDeclarations(root: string, outDir: string, ex
         const table =
           (mod.default as any).table || snakeCase(mod.default.name || basename(file, extname(file))) + "s";
         const className = mod.default.name || basename(file, extname(file));
-        declarations.set(table, { table, className, relativePath, relativeToRoot });
+        declarations.set(table, { table, className, relativePath, relativeToRoot, absolutePath: file });
       }
     } catch {
       // Skip files that fail to import
