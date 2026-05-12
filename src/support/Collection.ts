@@ -197,6 +197,21 @@ export class Collection<T = any> extends Array<T> {
       return compareValues(value, maxValue) > 0 ? value : maxValue;
     }, key === undefined ? this[0] : typeof key === "function" ? key(this[0]) : valueFor(this[0], key));
   }
+
+  async loadMissing(...relations: string[]): Promise<this> {
+    const models = this.filter((item): item is any => item !== null && item !== undefined && typeof (item as any).$relations !== "undefined");
+    if (models.length === 0) return this;
+
+    for (const relation of relations) {
+      const missing = models.filter((m: any) => m.getRelation(relation) === undefined);
+      if (missing.length === 0) continue;
+      const constructor = Object.getPrototypeOf(missing[0]).constructor;
+      if (typeof constructor.eagerLoadRelations === "function") {
+        await constructor.eagerLoadRelations(missing, [relation]);
+      }
+    }
+    return this;
+  }
 }
 
 export function collect<T>(items?: Iterable<T> | ArrayLike<T> | null): Collection<T> {

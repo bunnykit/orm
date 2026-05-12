@@ -44,6 +44,8 @@ export class MorphTo<T extends Model = Model> {
     return this.resolveAndFind(type, id);
   }
 
+  get(): Promise<T | null> { return this.getResults(); }
+
   private resolveRelated(type: string): ModelConstructor | undefined {
     let Related: ModelConstructor | undefined;
     if (this.typeMap) {
@@ -190,6 +192,8 @@ export class MorphOne<T extends Model = Model> {
     return this.builder.first();
   }
 
+  get(): Promise<T | null> { return this.getResults(); }
+
   qualifyRelatedColumn(column: string): string {
     return column.includes(".") ? column : `${this.related.getTable()}.${column}`;
   }
@@ -292,6 +296,8 @@ export class MorphMany<T extends Model = Model> {
   async getResults(): Promise<Collection<T>> {
     return this.builder.get();
   }
+
+  get(): Promise<Collection<T>> { return this.getResults(); }
 
   qualifyRelatedColumn(column: string): string {
     return column.includes(".") ? column : `${this.related.getTable()}.${column}`;
@@ -425,6 +431,8 @@ export class MorphToMany<T extends Model = Model> {
   async getResults(): Promise<Collection<T>> {
     return this.builder.get();
   }
+
+  get(): Promise<Collection<T>> { return this.getResults(); }
 
   qualifyRelatedColumn(column: string): string {
     return column.includes(".") ? column : `${this.related.getTable()}.${column}`;

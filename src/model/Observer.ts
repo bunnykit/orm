@@ -27,6 +27,10 @@ export class ObserverRegistry {
     return this.observers.get(modelClass) || [];
   }
 
+  static unregister(modelClass: typeof Model): void {
+    this.observers.delete(modelClass);
+  }
+
   static async dispatch<T extends Model<any>>(event: keyof ObserverContract, model: T): Promise<void> {
     const observers = this.get(Object.getPrototypeOf(model).constructor as typeof Model);
     for (const observer of observers) {

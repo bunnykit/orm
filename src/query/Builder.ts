@@ -583,6 +583,26 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return this.orHas(relationName, operator, count, callback);
   }
 
+  whereRelation(relationName: string, column: ModelColumn<T>, operator: string | any, value?: any): this {
+    return this.whereHas(relationName, (q) => {
+      value === undefined ? q.where(column as any, operator) : q.where(column as any, operator, value);
+    });
+  }
+
+  orWhereRelation(relationName: string, column: ModelColumn<T>, operator: string | any, value?: any): this {
+    return this.orWhereHas(relationName, (q) => {
+      value === undefined ? q.where(column as any, operator) : q.where(column as any, operator, value);
+    });
+  }
+
+  withWhereHas<R extends TypedEagerLoad<T>>(
+    relation: R,
+    callback?: RelationConstraint
+  ): Builder<T, WithLoadedRelations<TResult, ExtractStringPaths<R>>> {
+    this.whereHas(relation as string, callback);
+    return this.with(relation) as any;
+  }
+
   doesntHave(relationName: string, callback?: RelationConstraint): this {
     return this.has(relationName, "<", 1, callback);
   }
@@ -1075,6 +1095,35 @@ export class Builder<T = Record<string, any>, TResult = T> {
         await callback(item);
       }
     });
+  }
+
+  async chunkById(count: number, callback: (items: Collection<TResult>) => void | Promise<void>, column?: ModelColumn<T>): Promise<void> {
+    const model = this.model;
+    const idColumn = column ?? ((model ? (model as any).primaryKey : null) || "id") as ModelColumn<T>;
+    const qualifiedColumn = String(idColumn).includes(".") ? String(idColumn) : `${this.tableName}.${String(idColumn)}`;
+    const accessColumn = String(idColumn).includes(".") ? String(idColumn).split(".").at(-1)! : String(idColumn);
+    let lastId: any = null;
+
+    while (true) {
+      const builder = this.clone().orderBy(qualifiedColumn as ModelColumn<T>, "asc").limit(count);
+      if (lastId !== null) {
+        builder.where(qualifiedColumn as ModelColumn<T>, ">", lastId);
+      }
+      const items = await builder.get() as unknown as Collection<TResult>;
+      if (items.length === 0) break;
+      await callback(items);
+      const last = items[items.length - 1];
+      lastId = last && typeof last === "object" ? (last as any)[accessColumn] ?? (last as any).getAttribute?.(accessColumn) ?? null : null;
+      if (items.length < count || lastId === null) break;
+    }
+  }
+
+  async eachById(count: number, callback: (item: TResult) => void | Promise<void>, column?: ModelColumn<T>): Promise<void> {
+    await this.chunkById(count, async (items) => {
+      for (const item of items) {
+        await callback(item);
+      }
+    }, column);
   }
 
   async *cursor(chunkSize: number = 1000): AsyncGenerator<T> {

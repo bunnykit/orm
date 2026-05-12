@@ -164,18 +164,35 @@ export interface CastsAttributes {
   set(model: Model, key: string, value: any, attributes: Record<string, any>): any;
 }
 
+export interface AttributeDefinition {
+  get?: (value: any, attributes: Record<string, any>) => any;
+  set?: (value: any, attributes: Record<string, any>) => any;
+}
+
+function getAccessors(target: Model<any>): Record<string, AttributeDefinition> {
+  return (Object.getPrototypeOf(target).constructor as any).accessors || {};
+}
+
 const modelProxyHandler: ProxyHandler<Model<any>> = {
   get(target, prop, receiver) {
-    if (typeof prop === "string" && prop in target.$relations) {
-      return target.$relations[prop];
-    }
-    if (typeof prop === "string" && !(prop in target) && prop in target.$attributes) {
-      return target.getAttribute(prop);
+    if (typeof prop === "string") {
+      const accessors = getAccessors(target);
+      if (prop in accessors && accessors[prop].get) {
+        return accessors[prop].get!((target.$attributes as any)[prop], target.$attributes as any);
+      }
+      if (prop in target.$relations) return target.$relations[prop];
+      if (!(prop in target) && prop in target.$attributes) return target.getAttribute(prop);
     }
     return Reflect.get(target, prop, receiver);
   },
   set(target, prop, value, receiver) {
     if (typeof prop === "string" && !prop.startsWith("$") && !(prop in target)) {
+      const accessors = getAccessors(target);
+      if (prop in accessors && accessors[prop].set) {
+        (target.$attributes as any)[prop] = accessors[prop].set!(value, target.$attributes as any);
+        delete target.$castCache[prop];
+        return true;
+      }
       target.setAttribute(prop, value);
       return true;
     }
@@ -184,22 +201,19 @@ const modelProxyHandler: ProxyHandler<Model<any>> = {
   has(target, prop) {
     if (typeof prop === "string" && prop in target.$relations) return true;
     if (typeof prop === "string" && prop in target.$attributes) return true;
+    if (typeof prop === "string" && prop in getAccessors(target)) return true;
     return Reflect.has(target, prop);
   },
   getOwnPropertyDescriptor(target, prop) {
     if (typeof prop === "string" && prop in target.$relations) {
-      return {
-        enumerable: true,
-        configurable: true,
-        value: target.$relations[prop],
-      };
+      return { enumerable: true, configurable: true, value: target.$relations[prop] };
+    }
+    if (typeof prop === "string" && prop in getAccessors(target) && getAccessors(target)[prop].get) {
+      const acc = getAccessors(target)[prop];
+      return { enumerable: true, configurable: true, value: acc.get!((target.$attributes as any)[prop], target.$attributes as any) };
     }
     if (typeof prop === "string" && prop in target.$attributes) {
-      return {
-        enumerable: true,
-        configurable: true,
-        value: target.getAttribute(prop),
-      };
+      return { enumerable: true, configurable: true, value: target.getAttribute(prop) };
     }
     return Reflect.getOwnPropertyDescriptor(target, prop);
   },
@@ -207,6 +221,9 @@ const modelProxyHandler: ProxyHandler<Model<any>> = {
     const keys = new Set(Reflect.ownKeys(target) as string[]);
     for (const key of Object.keys(target.$relations)) {
       if (!key.startsWith("$")) keys.add(key);
+    }
+    for (const key of Object.keys(getAccessors(target))) {
+      keys.add(key);
     }
     for (const key of Object.keys(target.$attributes)) {
       if (!key.startsWith("$")) keys.add(key);
@@ -281,6 +298,7 @@ export abstract class Relation<T extends Model = Model> {
 
   abstract addConstraints(): void;
   abstract getResults(): Promise<T | Collection<T> | null>;
+  get(): Promise<T | Collection<T> | null> { return this.getResults(); }
   abstract addEagerConstraints(models: Model[]): void;
   abstract getEager(): Promise<Collection<any>>;
   abstract match(models: Model[], results: Collection<any>, relationName: string): void;
@@ -323,6 +341,27 @@ export class HasMany<T extends Model = Model> extends Relation<T> {
     this.localKey = localKey || getModelConstructor(parent).primaryKey;
     this.foreignKey = foreignKey || this.defaultForeignKey();
     this.addConstraints();
+  }
+
+  async saveMany(models: T[]): Promise<T[]> {
+    for (const model of models) {
+      model.setAttribute(this.foreignKey as any, this.parent.getAttribute(this.localKey));
+      await model.save();
+    }
+    return models;
+  }
+
+  async createMany(records: Record<string, any>[]): Promise<T[]> {
+    const models: T[] = [];
+    for (const record of records) {
+      const instance = new (this.related as any)({
+        ...record,
+        [this.foreignKey]: this.parent.getAttribute(this.localKey),
+      }) as T;
+      await instance.save();
+      models.push(instance);
+    }
+    return models;
   }
 
   addConstraints(): void {
@@ -373,11 +412,18 @@ export class HasMany<T extends Model = Model> extends Relation<T> {
 }
 
 export class BelongsTo<T extends Model = Model> extends Relation<T> {
+  private defaultAttributes?: Record<string, any>;
+
   constructor(parent: Model, related: ModelConstructor, foreignKey?: string, ownerKey?: string) {
     super(parent, related, foreignKey, ownerKey);
     this.foreignKey = foreignKey || `${snakeCase(related.name)}_id`;
     this.localKey = ownerKey || related.primaryKey;
     this.addConstraints();
+  }
+
+  withDefault(attributes: Record<string, any> = {}): this {
+    this.defaultAttributes = attributes;
+    return this;
   }
 
   addConstraints(): void {
@@ -403,12 +449,21 @@ export class BelongsTo<T extends Model = Model> extends Relation<T> {
     }
     for (const model of models) {
       const key = model.getAttribute(this.foreignKey);
-      model.setRelation(relationName, dictionary[String(key)] || null);
+      const found = dictionary[String(key)] ?? null;
+      model.setRelation(relationName, found ?? this.makeDefault());
     }
   }
 
   async getResults(): Promise<T | null> {
-    return this.builder.first();
+    const result = await this.builder.first();
+    return result ?? (this.makeDefault() as T | null);
+  }
+
+  private makeDefault(): T | null {
+    if (this.defaultAttributes === undefined) return null;
+    const instance = new (this.related as any)() as T;
+    if (Object.keys(this.defaultAttributes).length > 0) instance.fill(this.defaultAttributes as any);
+    return instance;
   }
 
   associate(model: Model | any): Model {
@@ -545,11 +600,25 @@ export class HasOneThrough<T extends Model = Model> extends HasManyThrough<T> {
 }
 
 export class HasOne<T extends Model = Model> extends Relation<T> {
+  private defaultAttributes?: Record<string, any>;
+
   constructor(parent: Model, related: ModelConstructor, foreignKey?: string, localKey?: string) {
     super(parent, related, foreignKey, localKey);
     this.localKey = localKey || getModelConstructor(parent).primaryKey;
     this.foreignKey = foreignKey || this.defaultForeignKey();
     this.addConstraints();
+  }
+
+  withDefault(attributes: Record<string, any> = {}): this {
+    this.defaultAttributes = attributes;
+    return this;
+  }
+
+  private makeDefault(): T | null {
+    if (this.defaultAttributes === undefined) return null;
+    const instance = new (this.related as any)() as T;
+    if (Object.keys(this.defaultAttributes).length > 0) instance.fill(this.defaultAttributes as any);
+    return instance;
   }
 
   addConstraints(): void {
@@ -575,12 +644,14 @@ export class HasOne<T extends Model = Model> extends Relation<T> {
     }
     for (const model of models) {
       const key = model.getAttribute(this.localKey);
-      model.setRelation(relationName, dictionary[String(key)] || null);
+      const found = dictionary[String(key)] ?? null;
+      model.setRelation(relationName, found ?? this.makeDefault());
     }
   }
 
   async getResults(): Promise<T | null> {
-    return this.builder.first();
+    const result = await this.builder.first();
+    return result ?? (this.makeDefault() as T | null);
   }
 }
 
@@ -603,6 +674,8 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   static preventLazyLoading = false;
   static hidden: string[] = [];
   static visible: string[] = [];
+  static accessors: Record<string, AttributeDefinition> = {};
+  static touches: string[] = [];
 
   $attributes = {} as T;
   $original = {} as Partial<T>;
@@ -614,6 +687,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   $connection?: Connection;
   $hidden: string[] = [];
   $visible: string[] = [];
+  $wasRecentlyCreated = false;
 
   constructor(attributes?: Partial<T>) {
     const defaults = (Object.getPrototypeOf(this).constructor as typeof Model).attributes || {};
@@ -807,6 +881,34 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return instance;
   }
 
+  static async forceCreate<M extends ModelConstructor>(
+    this: M,
+    attributes: ModelAttributeInput<InstanceType<M>>,
+    options: SaveOptions = {}
+  ): Promise<InstanceType<M>> {
+    const instance = new this() as InstanceType<M>;
+    for (const [key, value] of Object.entries(attributes)) {
+      instance.setAttribute(key as any, value as any);
+    }
+    await instance.save(options);
+    return instance;
+  }
+
+  static async truncate<M extends ModelConstructor>(this: M): Promise<void> {
+    const connection = this.getConnection();
+    await connection.run(`DELETE FROM ${connection.qualifyTable(this.getTable())}`);
+  }
+
+  static async withoutTimestamps<M extends ModelConstructor, R>(this: M, callback: () => Promise<R>): Promise<R> {
+    const original = this.timestamps;
+    (this as any).timestamps = false;
+    try {
+      return await callback();
+    } finally {
+      (this as any).timestamps = original;
+    }
+  }
+
   static async insert<M extends ModelConstructor>(
     this: M,
     records: ModelAttributeInput<InstanceType<M>> | ModelAttributeInput<InstanceType<M>>[],
@@ -951,6 +1053,16 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       throw new ModelNotFoundError(this.name);
     }
     return result;
+  }
+
+  static async firstOrNew<M extends ModelConstructor>(
+    this: M,
+    attributes: ModelAttributeInput<InstanceType<M>> = {},
+    values: ModelAttributeInput<InstanceType<M>> = {}
+  ): Promise<InstanceType<M>> {
+    const found = await this.where(attributes).first();
+    if (found) return found;
+    return new this({ ...attributes, ...values } as any) as InstanceType<M>;
   }
 
   static async firstOrCreate<M extends ModelConstructor>(
@@ -1136,6 +1248,18 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().doesntHave(relationName);
   }
 
+  static whereRelation<M extends ModelConstructor>(this: M, relationName: string, column: any, operator: any, value?: any): Builder<InstanceType<M>> {
+    return this.query().whereRelation(relationName, column, operator, value);
+  }
+
+  static orWhereRelation<M extends ModelConstructor>(this: M, relationName: string, column: any, operator: any, value?: any): Builder<InstanceType<M>> {
+    return this.query().orWhereRelation(relationName, column, operator, value);
+  }
+
+  static withWhereHas<M extends ModelConstructor>(this: M, relation: string, callback?: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>> {
+    return this.query().withWhereHas(relation, callback) as any;
+  }
+
   static withCount<M extends ModelConstructor>(this: M, relationName: string, alias?: string): Builder<InstanceType<M>> {
     return this.query().withCount(relationName, alias);
   }
@@ -1160,6 +1284,10 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().get();
   }
 
+  static async count<M extends ModelConstructor>(this: M): Promise<number> {
+    return this.query().count();
+  }
+
   static async paginate<M extends ModelConstructor>(this: M, perPage?: number, page?: number): Promise<import("../query/Builder.js").Paginator<InstanceType<M>>> {
     return this.query().paginate(perPage, page);
   }
@@ -1170,6 +1298,14 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
   static async each<M extends ModelConstructor>(this: M, count: number, callback: (item: InstanceType<M>) => void | Promise<void>): Promise<void> {
     return this.query().each(count, callback);
+  }
+
+  static async chunkById<M extends ModelConstructor>(this: M, count: number, callback: (items: import("../support/Collection.js").Collection<InstanceType<M>>) => void | Promise<void>, column?: string): Promise<void> {
+    return this.query().chunkById(count, callback as any, column as any);
+  }
+
+  static async eachById<M extends ModelConstructor>(this: M, count: number, callback: (item: InstanceType<M>) => void | Promise<void>, column?: string): Promise<void> {
+    return this.query().eachById(count, callback as any, column as any);
   }
 
   static cursor<M extends ModelConstructor>(this: M): AsyncGenerator<InstanceType<M>> {
@@ -1286,6 +1422,10 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   getAttribute<K extends keyof T>(key: K): T[K];
   getAttribute(key: string): any;
   getAttribute(key: string | keyof T): any {
+    const accessors = getAccessors(this);
+    if (key in accessors && accessors[key as string].get) {
+      return accessors[key as string].get!((this.$attributes as any)[key], this.$attributes as any);
+    }
     if (Object.prototype.hasOwnProperty.call(this.$castCache, key as string)) {
       return this.$castCache[key as string];
     }
@@ -1300,6 +1440,12 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   setAttribute<K extends keyof T>(key: K, value: T[K]): void;
   setAttribute(key: string, value: any): void;
   setAttribute(key: string | keyof T, value: any): void {
+    const accessors = getAccessors(this);
+    if (key in accessors && accessors[key as string].set) {
+      (this.$attributes as any)[key] = accessors[key as string].set!(value, this.$attributes as any);
+      delete this.$castCache[key as string];
+      return;
+    }
     (this.$attributes as any)[key] = this.serializeCastAttribute(key as string, value);
     delete this.$castCache[key as string];
   }
@@ -1453,11 +1599,24 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this;
   }
 
+  is(other: Model | null | undefined): boolean {
+    if (!other) return false;
+    const ctor = this.getModelConstructor();
+    const otherCtor = getModelConstructor(other);
+    return ctor.getTable() === otherCtor.getTable() &&
+      String(this.getAttribute(ctor.primaryKey)) === String(other.getAttribute(otherCtor.primaryKey));
+  }
+
+  isNot(other: Model | null | undefined): boolean {
+    return !this.is(other);
+  }
+
   async save(options: SaveOptions = {}): Promise<this> {
     const constructor = this.getModelConstructor();
     const events = options.events !== false;
 
     if (this.$exists) {
+      this.$wasRecentlyCreated = false;
       if (events) await ObserverRegistry.dispatch("saving", this);
 
       let dirty = this.getDirty();
@@ -1515,6 +1674,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       }
 
       this.$exists = true;
+      this.$wasRecentlyCreated = true;
       this.$original = { ...this.$attributes };
       this.$changes = {};
 
@@ -1530,7 +1690,29 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
       }
     }
 
+    await this.touchOwners();
+
     return this;
+  }
+
+  private async touchOwners(): Promise<void> {
+    const constructor = this.getModelConstructor();
+    const touches = constructor.touches || [];
+    for (const relationName of touches) {
+      const method = findRelationMethod(this, relationName);
+      if (!method) continue;
+      const relation = method.call(this);
+      if (relation && typeof relation.getResults === "function") {
+        const related = await relation.getResults();
+        if (related && typeof (related as any).touch === "function") {
+          await (related as any).touch();
+        }
+      }
+    }
+  }
+
+  saveQuietly(): Promise<this> {
+    return this.save({ events: false });
   }
 
   updateTimestamps(): void {
@@ -1624,6 +1806,34 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     }
 
     await ObserverRegistry.dispatch("deleted", this);
+    return true;
+  }
+
+  async deleteQuietly(): Promise<boolean> {
+    const constructor = this.getModelConstructor();
+    const pk = this.getAttribute(constructor.primaryKey);
+    if (!pk) return false;
+
+    if (constructor.softDeletes) {
+      const deletedAt = this.freshTimestamp();
+      const connection = this.getConnection();
+      await new Builder(connection, connection.qualifyTable(constructor.getTable()))
+        .where(constructor.primaryKey, pk)
+        .update({ [constructor.deletedAtColumn]: deletedAt } as any);
+      (this.$attributes as any)[constructor.deletedAtColumn] = deletedAt;
+      delete this.$castCache[constructor.deletedAtColumn];
+      this.$original = { ...this.$attributes };
+    } else {
+      const connection = this.getConnection();
+      await new Builder(connection, connection.qualifyTable(constructor.getTable()))
+        .where(constructor.primaryKey, pk)
+        .delete();
+      this.$exists = false;
+    }
+
+    const identityMap = IdentityMap.current();
+    if (identityMap) IdentityMap.delete(constructor.getTable(), pk);
+
     return true;
   }
 

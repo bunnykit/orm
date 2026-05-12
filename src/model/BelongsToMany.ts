@@ -23,15 +23,56 @@ export class BelongsToMany<T extends Model = Model> {
   protected pivotColumns: string[] = [];
   protected pivotTimestamps = false;
   protected builder: Builder<T>;
+  protected pivotWheres: Array<{ column: string; operator: string; value: any; boolean: "and" | "or" }> = [];
+  protected pivotAccessor = "pivot";
+
+  as(accessor: string): this {
+    this.pivotAccessor = accessor;
+    return this;
+  }
 
   withPivot(...columns: (string | string[])[]): this {
     const cols = columns.flat();
     this.pivotColumns.push(...cols);
+    this.builder.addSelect(...cols.map((c) => `${this.table}.${c}`) as any);
     return this;
   }
 
   withTimestamps(): this {
     this.pivotTimestamps = true;
+    this.builder.addSelect(`${this.table}.created_at` as any, `${this.table}.updated_at` as any);
+    return this;
+  }
+
+  wherePivot(column: string, operator: string | any, value?: any): this {
+    if (value === undefined) {
+      value = operator;
+      operator = "=";
+    }
+    this.pivotWheres.push({ column: `${this.table}.${column}`, operator, value, boolean: "and" });
+    this.builder.where(`${this.table}.${column}` as any, operator, value);
+    return this;
+  }
+
+  orWherePivot(column: string, operator: string | any, value?: any): this {
+    if (value === undefined) {
+      value = operator;
+      operator = "=";
+    }
+    this.pivotWheres.push({ column: `${this.table}.${column}`, operator, value, boolean: "or" });
+    this.builder.orWhere(`${this.table}.${column}` as any, operator, value);
+    return this;
+  }
+
+  wherePivotIn(column: string, values: any[]): this {
+    this.pivotWheres.push({ column: `${this.table}.${column}`, operator: "IN", value: values, boolean: "and" });
+    this.builder.whereIn(`${this.table}.${column}` as any, values);
+    return this;
+  }
+
+  wherePivotNull(column: string): this {
+    this.pivotWheres.push({ column: `${this.table}.${column}`, operator: "IS NULL", value: null, boolean: "and" });
+    this.builder.whereNull(`${this.table}.${column}` as any);
     return this;
   }
 
@@ -56,7 +97,7 @@ export class BelongsToMany<T extends Model = Model> {
         pivot[col] = (result.$attributes as any)[col];
         delete (result.$attributes as any)[col];
       }
-      (result as any).pivot = pivot;
+      (result as any)[this.pivotAccessor] = pivot;
     }
   }
 
@@ -125,6 +166,17 @@ export class BelongsToMany<T extends Model = Model> {
       `${relatedTable}.${this.relatedKey}`
     );
     this.builder.whereIn(`${this.table}.${this.foreignPivotKey}`, keys);
+    for (const w of this.pivotWheres) {
+      if (w.operator === "IN") {
+        this.builder.whereIn(w.column as any, w.value, w.boolean);
+      } else if (w.operator === "IS NULL") {
+        this.builder.whereNull(w.column as any, w.boolean);
+      } else if (w.boolean === "or") {
+        this.builder.orWhere(w.column as any, w.operator, w.value);
+      } else {
+        this.builder.where(w.column as any, w.operator, w.value);
+      }
+    }
   }
 
   async getEager(): Promise<Collection<any>> {
@@ -144,7 +196,7 @@ export class BelongsToMany<T extends Model = Model> {
         delete (result.$attributes as any)[col];
       }
       if (Object.keys(pivot).length > 0) {
-        (result as any).pivot = pivot;
+        (result as any)[this.pivotAccessor] = pivot;
       }
       dictionary[key].push(result);
     }
@@ -159,6 +211,8 @@ export class BelongsToMany<T extends Model = Model> {
     this.attachPivotToResults(results);
     return results;
   }
+
+  get(): Promise<Collection<T>> { return this.getResults(); }
 
   qualifyRelatedColumn(column: string): string {
     return column.includes(".") ? column : `${this.related.getTable()}.${column}`;
@@ -228,5 +282,34 @@ export class BelongsToMany<T extends Model = Model> {
 
     const toAttach = idList.filter((id) => !currentSet.has(id));
     if (toAttach.length > 0) await this.attach(toAttach);
+  }
+
+  async updateExistingPivot(id: any, attributes: Record<string, any>): Promise<void> {
+    const connection = this.parent.getConnection();
+    await new Builder(connection, connection.qualifyTable(this.table))
+      .where(this.foreignPivotKey, this.parent.getAttribute(this.parentKey))
+      .where(this.relatedPivotKey, id)
+      .update(attributes);
+  }
+
+  async syncWithoutDetaching(ids: any | any[]): Promise<void> {
+    return this.sync(ids, false);
+  }
+
+  async toggle(ids: any | any[], attributes?: Record<string, any>): Promise<{ attached: any[]; detached: any[] }> {
+    const idList = Array.isArray(ids) ? ids : [ids];
+    const connection = this.parent.getConnection();
+    const current = await new Builder(connection, connection.qualifyTable(this.table))
+      .where(this.foreignPivotKey, this.parent.getAttribute(this.parentKey))
+      .pluck(this.relatedPivotKey);
+
+    const currentSet = new Set(current);
+    const toDetach = idList.filter((id) => currentSet.has(id));
+    const toAttach = idList.filter((id) => !currentSet.has(id));
+
+    if (toDetach.length > 0) await this.detach(toDetach);
+    if (toAttach.length > 0) await this.attach(toAttach, attributes);
+
+    return { attached: toAttach, detached: toDetach };
   }
 }
