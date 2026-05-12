@@ -16,6 +16,38 @@ class BRole extends Model {
   }
 }
 
+class BPost extends Model {
+  static table = "b_posts";
+  tags() {
+    return this.belongsToMany(BTag, "b_post_tags").withPivot("created_at", "id", "category");
+  }
+
+  prerequisiteTags() {
+    return this.belongsToMany(BTag, "b_post_tags", "b_post_id", "b_tag_id")
+      .withPivot("type")
+      .wherePivot("type", "pre");
+  }
+
+  corequisiteTags() {
+    return this.belongsToMany(BTag, "b_post_tags", "b_post_id", "b_tag_id")
+      .withPivot("type")
+      .wherePivot("type", "co");
+  }
+}
+
+class BTag extends Model {
+  static table = "b_tags";
+  static keyType = "uuid";
+}
+
+class BItem extends Model {
+  static table = "b_items";
+  static keyType = "uuid";
+  tags() {
+    return this.belongsToMany(BTag, "b_item_tags").withPivot("notes", "id");
+  }
+}
+
 describe("BelongsToMany", () => {
   beforeAll(async () => {
     setupTestDb();
@@ -33,6 +65,36 @@ describe("BelongsToMany", () => {
       table.increments("id");
       table.integer("b_user_id");
       table.integer("b_role_id");
+      table.timestamps();
+    });
+    await Schema.create("b_posts", (table) => {
+      table.increments("id");
+      table.string("title");
+      table.timestamps();
+    });
+    await Schema.create("b_tags", (table) => {
+      table.uuid("id").primary();
+      table.string("name");
+      table.timestamps();
+    });
+    await Schema.create("b_post_tags", (table) => {
+      table.uuid("id").primary();
+      table.integer("b_post_id");
+      table.integer("b_tag_id");
+      table.string("category").nullable();
+      table.string("type").nullable();
+      table.timestamps();
+    });
+    await Schema.create("b_items", (table) => {
+      table.uuid("id").primary();
+      table.string("name");
+      table.timestamps();
+    });
+    await Schema.create("b_item_tags", (table) => {
+      table.uuid("id").primary();
+      table.uuid("b_item_id");
+      table.uuid("b_tag_id");
+      table.string("notes").nullable();
       table.timestamps();
     });
   });
@@ -78,6 +140,69 @@ describe("BelongsToMany", () => {
     expect(titles).toContain("C");
   });
 
+  test("sync sets pivot attributes", async () => {
+    const post = await BPost.create({ title: "Test Post" });
+    const tag1 = await BTag.create({ name: "JS" });
+    const tag2 = await BTag.create({ name: "TS" });
+
+    await post.tags().sync([tag1.getAttribute("id"), tag2.getAttribute("id")], { category: "programming" });
+
+    const tags = await post.tags().getResults();
+    expect(tags).toHaveLength(2);
+    expect(tags[0].pivot.category).toBe("programming");
+    expect(tags[1].pivot.category).toBe("programming");
+    expect(tags[0].pivot.id).toBeDefined();
+  });
+
+  test("syncWithoutDetaching sets pivot attributes", async () => {
+    const post = await BPost.create({ title: "Post 2" });
+    const tag1 = await BTag.create({ name: "Node" });
+    const tag2 = await BTag.create({ name: "React" });
+
+    await post.tags().syncWithoutDetaching([tag1.getAttribute("id")], { category: "frontend" });
+
+    const tags = await post.tags().getResults();
+    expect(tags).toHaveLength(1);
+    expect(tags[0].getAttribute("name")).toBe("Node");
+    expect(tags[0].pivot.category).toBe("frontend");
+
+    await post.tags().syncWithoutDetaching([tag2.getAttribute("id")], { category: "frontend" });
+
+    const tags2 = await post.tags().getResults();
+    expect(tags2).toHaveLength(2);
+  });
+
+  test("sync applies and scopes equality wherePivot attributes", async () => {
+    const post = await BPost.create({ title: "Requirements" });
+    const tag1 = await BTag.create({ name: "Prerequisite 1" });
+    const tag2 = await BTag.create({ name: "Corequisite" });
+    const tag3 = await BTag.create({ name: "Prerequisite 2" });
+
+    const firstPreSync = await post.prerequisiteTags().sync([tag1.getAttribute("id")]);
+    const firstCoSync = await post.corequisiteTags().sync([tag2.getAttribute("id")]);
+    expect(firstPreSync).toEqual({ attached: [tag1.getAttribute("id")], detached: [] });
+    expect(firstCoSync).toEqual({ attached: [tag2.getAttribute("id")], detached: [] });
+
+    let prerequisites = await post.prerequisiteTags().getResults();
+    let corequisites = await post.corequisiteTags().getResults();
+    expect(prerequisites).toHaveLength(1);
+    expect(corequisites).toHaveLength(1);
+    expect(prerequisites[0].pivot.type).toBe("pre");
+    expect(corequisites[0].pivot.type).toBe("co");
+
+    const secondPreSync = await post.prerequisiteTags().sync([tag3.getAttribute("id")]);
+    expect(secondPreSync).toEqual({ attached: [tag3.getAttribute("id")], detached: [tag1.getAttribute("id")] });
+
+    prerequisites = await post.prerequisiteTags().getResults();
+    corequisites = await post.corequisiteTags().getResults();
+    expect(prerequisites).toHaveLength(1);
+    expect(prerequisites[0].getAttribute("name")).toBe("Prerequisite 2");
+    expect(prerequisites[0].pivot.type).toBe("pre");
+    expect(corequisites).toHaveLength(1);
+    expect(corequisites[0].getAttribute("name")).toBe("Corequisite");
+    expect(corequisites[0].pivot.type).toBe("co");
+  });
+
   test("eager loading belongsToMany", async () => {
     const user = await BUser.create({ name: "Dana" });
     const role = await BRole.create({ title: "Manager" });
@@ -87,5 +212,23 @@ describe("BelongsToMany", () => {
     expect(users[0].getRelation("roles")).toBeInstanceOf(Collection);
     expect(users[0].getRelation("roles")).toHaveLength(1);
     expect(users[0].getRelation("roles")[0].getAttribute("title")).toBe("Manager");
+  });
+
+  test("attach generates UUID for pivot table with UUID primary key", async () => {
+    const item = await BItem.create({ name: "Item 1" });
+    const tag = await BTag.create({ name: "Tag 1" });
+
+    const pivotId = await item.tags().attach(tag.getAttribute("id"), { notes: "test note" });
+
+    expect(pivotId).toBeDefined();
+    expect(pivotId).not.toBeNull();
+    expect(typeof pivotId).toBe("string");
+    expect(pivotId.length).toBeGreaterThan(0);
+
+    const tags = await item.tags().getResults();
+    expect(tags).toHaveLength(1);
+    expect(tags[0].getAttribute("name")).toBe("Tag 1");
+    expect(tags[0].pivot.notes).toBe("test note");
+    expect(tags[0].pivot.id).toBe(pivotId);
   });
 });

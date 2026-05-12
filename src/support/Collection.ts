@@ -29,6 +29,8 @@ function compareValues(a: any, b: any): number {
 }
 
 export class Collection<T = any> extends Array<T> {
+  declare protected readonly __collection: void;
+
   constructor(items?: Iterable<T> | ArrayLike<T> | number) {
     if (typeof items === "number") {
       super(items);

@@ -37,12 +37,14 @@ export class Connection {
       throw new Error("Invalid connection configuration. Provide a url or driver config.");
     }
 
-    this.driver = options.driver || new SQL(url);
     this.driverName = url.startsWith("sqlite")
       ? "sqlite"
       : url.startsWith("mysql")
       ? "mysql"
       : "postgres";
+    this.driver = options.driver || (this.driverName !== "sqlite" && config.max !== undefined
+      ? new SQL({ url, max: config.max })
+      : new SQL(url));
 
     switch (this.driverName) {
       case "sqlite":

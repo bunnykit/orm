@@ -110,10 +110,13 @@ type RelationReturnModel<F> =
   : F extends (...args: any[]) => Relation<infer R> ? R
   : Model;
 type PrevDepth = [never, 0, 1, 2, 3];
+type IsSameType<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false;
 type NestedRelationPath<T, D extends number = 3> = [D] extends [0] ? never : {
   [K in Exclude<keyof T, BaseModelInstanceKey>]: T[K] extends (...args: any[]) => ModelRelationValue
     ? K extends string
-      ? K | `${K}.${string & NestedRelationPath<RelationReturnModel<T[K]>, PrevDepth[D]>}`
+      ? IsSameType<RelationReturnModel<T[K]>, T> extends true
+        ? K
+        : K | `${K}.${string & NestedRelationPath<RelationReturnModel<T[K]>, PrevDepth[D]>}`
       : never
     : never;
 }[Exclude<keyof T, BaseModelInstanceKey>];
@@ -146,12 +149,43 @@ type LoadedRelationType<F> =
   : F extends (...args: any[]) => MorphToMany<infer R> ? Collection<R>
   : F extends (...args: any[]) => Relation<infer R> ? Collection<R> | R
   : unknown;
+// Like LoadedRelationType but accepts a custom element type (for nested constraint maps)
+type LoadedTypeWithNested<F, ElemType> =
+  F extends (...args: any[]) => HasMany<any> ? Collection<ElemType>
+  : F extends (...args: any[]) => HasOne<any> ? ElemType | null
+  : F extends (...args: any[]) => BelongsTo<any> ? ElemType | null
+  : F extends (...args: any[]) => BelongsToMany<any> ? Collection<ElemType>
+  : F extends (...args: any[]) => MorphMany<any> ? Collection<ElemType>
+  : F extends (...args: any[]) => MorphOne<any> ? ElemType | null
+  : F extends (...args: any[]) => MorphToMany<any> ? Collection<ElemType>
+  : unknown;
+// Extract the raw related model from a relation method
+type RelModelOf<F> =
+  F extends (...args: any[]) => HasMany<infer R> ? R
+  : F extends (...args: any[]) => HasOne<infer R> ? R
+  : F extends (...args: any[]) => BelongsTo<infer R> ? R
+  : F extends (...args: any[]) => BelongsToMany<infer R> ? R
+  : F extends (...args: any[]) => MorphMany<infer R> ? R
+  : F extends (...args: any[]) => MorphOne<infer R> ? R
+  : F extends (...args: any[]) => MorphToMany<infer R> ? R
+  : unknown;
+// Extract TResult from a constraint callback's Builder return type, or fall back
+type CallbackResultModel<CB, Fallback> =
+  NonNullable<CB> extends (...args: any[]) => Builder<any, infer TResult> ? TResult : Fallback;
 type TopLevelKey<S extends string> = S extends `${infer Head}.${string}` ? Head : S;
-export type ExtractStringPaths<R> = R extends string ? R : never;
+export type ExtractStringPaths<R> = R extends string ? R : R extends object ? keyof R & string : never;
 export type WithLoadedRelations<T, Paths extends string> =
   Omit<T, TopLevelKey<Paths> & keyof T> & {
     [K in TopLevelKey<Paths> & keyof T]: T[K] extends (...args: any[]) => ModelRelationValue
       ? LoadedRelationType<T[K]>
+      : T[K];
+  };
+// Variant of WithLoadedRelations for constraint map form — preserves nested loaded types
+// from each callback's Builder return type instead of using the raw relation model.
+export type WithLoadedRelationsFromConstraintMap<T, R extends object> =
+  Omit<T, keyof R & keyof T> & {
+    [K in keyof R & keyof T & string]: T[K] extends (...args: any[]) => ModelRelationValue
+      ? LoadedTypeWithNested<T[K], CallbackResultModel<R[K], RelModelOf<T[K]>>>
       : T[K];
   };
 export type CastDefinition =
@@ -349,6 +383,15 @@ export class HasMany<T extends Model = Model> extends Relation<T> {
       await model.save();
     }
     return models;
+  }
+
+  async create(attributes: Record<string, any>): Promise<T> {
+    const instance = new (this.related as any)({
+      ...attributes,
+      [this.foreignKey]: this.parent.getAttribute(this.localKey),
+    }) as T;
+    await instance.save();
+    return instance;
   }
 
   async createMany(records: Record<string, any>[]): Promise<T[]> {
@@ -1209,11 +1252,10 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().sharedLock();
   }
 
-  static with<M extends ModelConstructor, R extends TypedEagerLoad<InstanceType<M>>>(
-    this: M,
-    ...relations: (R | R[])[]
-  ): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, ExtractStringPaths<R>>> {
-    return this.query().with(...(relations as any)) as any;
+  static with<M extends ModelConstructor, R extends TypedConstraintMap<InstanceType<M>> & object>(this: M, constraint: R): Builder<InstanceType<M>, WithLoadedRelationsFromConstraintMap<InstanceType<M>, R>>;
+  static with<M extends ModelConstructor, Rs extends ReadonlyArray<TypedEagerLoad<InstanceType<M>>>>(this: M, ...relations: Rs): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, ExtractStringPaths<Rs[number]>>>;
+  static with<M extends ModelConstructor>(this: M, ...relations: any[]): any {
+    return this.query().with(...relations) as any;
   }
 
   static withTrashed<M extends ModelConstructor>(this: M): Builder<InstanceType<M>> {

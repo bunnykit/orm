@@ -325,6 +325,19 @@ describe("HasMany.saveMany() / HasMany.createMany()", () => {
     expect(titles).toContain("SaveMany Post 2");
   });
 
+  test("create sets FK, creates, and returns single model", async () => {
+    const user = await Lf3User.create({ name: "Create Single User" });
+
+    const post = await user.posts().create({ title: "Create Single Post" });
+
+    expect(post.$exists).toBe(true);
+    expect(post.getAttribute("lf3_user_id")).toBe(user.getAttribute("id"));
+    expect(post.getAttribute("title")).toBe("Create Single Post");
+
+    const db = await user.posts().get();
+    expect(db.length).toBeGreaterThanOrEqual(1);
+  });
+
   test("createMany sets FK, creates, and returns models", async () => {
     const user = await Lf3User.create({ name: "CreateMany User" });
 

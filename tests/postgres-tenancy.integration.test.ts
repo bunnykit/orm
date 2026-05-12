@@ -14,9 +14,9 @@ class PgRlsItem extends Model {
 }
 
 const postgresUrl = process.env.POSTGRES_TEST_URL;
-const runIfPostgres = postgresUrl ? test : test.skip;
+const runIfPostgres = postgresUrl ? test.serial : test.skip;
 
-describe("PostgreSQL tenant integration", () => {
+describe.serial("PostgreSQL tenant integration", () => {
   afterEach(async () => {
     await ConnectionManager.closeAll();
   });

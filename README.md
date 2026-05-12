@@ -1611,12 +1611,17 @@ author.$exists;                // false
 author.getAttribute("name");   // "Anonymous"
 ```
 
-### hasMany — saveMany / createMany
+### hasMany — create / saveMany / createMany
 
-Persist multiple related models at once via a `hasMany` relation. The FK is set automatically on each record.
+Persist related models via a `hasMany` relation. The FK is set automatically.
 
 ```ts
 const user = await User.find(1);
+
+// create — create a single model and return it
+const post = await user.posts().create({ title: "My Post" });
+post.$exists;                       // true
+post.getAttribute("user_id");       // user.id
 
 // saveMany — set FK and save each model instance
 const p1 = new Post({ title: "First" });
@@ -1626,7 +1631,7 @@ await user.posts().saveMany([p1, p2]);
 p1.$exists;                      // true
 p1.getAttribute("user_id");      // user.id
 
-// createMany — create and return new models
+// createMany — create and return multiple models
 const posts = await user.posts().createMany([
   { title: "Alpha" },
   { title: "Beta" },

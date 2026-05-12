@@ -41,7 +41,6 @@
     "access": "public"
   },
   "scripts": {
-    "preinstall": "bun -e \"const ua = process.env.npm_config_user_agent || ''; if (!ua.startsWith('bun/')) { console.error('@bunnykit/orm is Bun-only. Install it with: bun add @bunnykit/orm'); process.exit(1); }\"",
     "build": "tsc",
     "prepack": "bun run build",
     "migrate": "bun run bin/bunny.ts migrate",

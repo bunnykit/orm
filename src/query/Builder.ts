@@ -1,6 +1,6 @@
 import { Connection } from "../connection/Connection.js";
 import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../types/index.js";
-import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName, TypedEagerLoad, TypedConstraintMap, ExtractStringPaths, WithLoadedRelations, Relation } from "../model/Model.js";
+import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName, TypedEagerLoad, TypedConstraintMap, ExtractStringPaths, WithLoadedRelations, WithLoadedRelationsFromConstraintMap, Relation } from "../model/Model.js";
 import { findRelationMethod } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
 import { IdentityMap } from "../model/IdentityMap.js";
@@ -478,9 +478,9 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return this.union(query, true);
   }
 
-  with<R extends TypedEagerLoad<T>>(
-    ...relations: (R | R[])[]
-  ): Builder<T, WithLoadedRelations<TResult, ExtractStringPaths<R>>> {
+  with<R extends TypedConstraintMap<T> & object>(constraint: R): Builder<T, WithLoadedRelationsFromConstraintMap<TResult, R>>;
+  with<Rs extends ReadonlyArray<TypedEagerLoad<T>>>(...relations: Rs): Builder<T, WithLoadedRelations<TResult, ExtractStringPaths<Rs[number]>>>;
+  with(...relations: any[]): any {
     this.eagerLoads.push(...this.normalizeEagerLoads(relations as any));
     return this as any;
   }

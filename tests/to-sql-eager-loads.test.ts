@@ -81,3 +81,80 @@ describe("toSqlWithEagerLoads", () => {
     expect(sql).toContain("created_at");
   });
 });
+
+// ─── Type-level test: nested constraint map preserves loaded relation types ───
+
+describe("nested constraint map typed loading", () => {
+  test("gradingPeriods type is Collection<GradingPeriod> not method", () => {
+    class GPeriod extends Model { static table = "g_periods"; }
+    class Sem extends Model {
+      static table = "sems";
+      gradingPeriods() { return this.hasMany(GPeriod); }
+    }
+    class AcalYear extends Model {
+      static table = "acal_years";
+      semesters() { return this.hasMany(Sem); }
+    }
+
+    const builder = AcalYear.with({
+      semesters: (q) => q.with({
+        gradingPeriods: (q2) => q2.where("active", true),
+      }),
+    });
+
+    // Runtime: builder is a Builder — type check is the goal
+    // TypeScript: builder result type should have semesters as Collection<...>
+    // and each semester's gradingPeriods as Collection<GPeriod>
+    type Result = Awaited<ReturnType<typeof builder.find>>;
+    type Semesters = NonNullable<Result>["semesters"];
+    type GradingPeriodsOnSem = Semesters extends Collection<infer Elem>
+      ? Elem extends { gradingPeriods: infer GP } ? GP : never
+      : never;
+
+    // If types are correct, GradingPeriodsOnSem should be Collection<GPeriod>
+    // This is a compile-time assertion — if it fails, tsc fails
+    const _assert: GradingPeriodsOnSem extends Collection<GPeriod> ? true : false = true;
+    expect(_assert).toBe(true);
+  });
+});
+
+describe("string relation type narrowing still works", () => {
+  test("with('subjects') still narrows to Collection<Subject>", () => {
+    class Subject2 extends Model { static table = "subjects2"; }
+    class Curriculum2 extends Model {
+      static table = "curricula2";
+      subjects() { return this.hasMany(Subject2); }
+    }
+
+    const builder = Curriculum2.with("subjects");
+
+    type Result = Awaited<ReturnType<typeof builder.find>>;
+    type SubjectsType = NonNullable<Result>["subjects"];
+
+    const _assert: SubjectsType extends Collection<Subject2> ? true : false = true;
+    expect(_assert).toBe(true);
+  });
+});
+
+describe("string with() produces exact loaded type (no deferred union)", () => {
+  test("with('program') gives Program | null, not method | Program | null", () => {
+    class Prog extends Model { static table = "progs"; }
+    class Cur extends Model {
+      static table = "curs";
+      program() { return this.belongsTo(Prog); }
+    }
+
+    const builder = Cur.with("program");
+
+    // The loaded type for program must be exactly Prog | null
+    type Result = Awaited<ReturnType<typeof builder.first>>;
+    type ProgramType = NonNullable<Result>["program"];
+
+    // If this compiles, ProgramType is assignable to Prog | null (not a union with the method)
+    const _assert: ProgramType extends Prog | null ? true : false = true;
+    // And the method type must NOT bleed in — function should not be assignable to Prog | null
+    const _assertNoMethod: (() => any) extends ProgramType ? false : true = true;
+    expect(_assert).toBe(true);
+    expect(_assertNoMethod).toBe(true);
+  });
+});
