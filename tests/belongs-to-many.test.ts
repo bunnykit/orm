@@ -214,6 +214,26 @@ describe("BelongsToMany", () => {
     expect(users[0].getRelation("roles")[0].getAttribute("title")).toBe("Manager");
   });
 
+  test("eager loading with wherePivot on belongsToMany constraint", async () => {
+    const post = await BPost.create({ title: "Filtered eager load" });
+    const tag1 = await BTag.create({ name: "Frontend" });
+    const tag2 = await BTag.create({ name: "Backend" });
+
+    await post.tags().attach(tag1.getAttribute("id"), { category: "programming" });
+    await post.tags().attach(tag2.getAttribute("id"), { category: "design" });
+
+    const posts = await BPost.with({
+      tags: (query) => query.wherePivot("category", "programming"),
+    }).where("id", post.getAttribute("id")).get();
+
+    expect(posts).toHaveLength(1);
+    const tags = posts[0].getRelation("tags");
+    expect(tags).toBeInstanceOf(Collection);
+    expect(tags).toHaveLength(1);
+    expect(tags[0].getAttribute("name")).toBe("Frontend");
+    expect(tags[0].pivot.category).toBe("programming");
+  });
+
   test("attach generates UUID for pivot table with UUID primary key", async () => {
     const item = await BItem.create({ name: "Item 1" });
     const tag = await BTag.create({ name: "Tag 1" });

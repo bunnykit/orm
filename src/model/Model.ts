@@ -109,9 +109,11 @@ type RelationReturnModel<F> =
   : F extends (...args: any[]) => MorphToMany<infer R> ? R
   : F extends (...args: any[]) => Relation<infer R> ? R
   : Model;
+type RelationReturnType<F> =
+  F extends (...args: any[]) => infer R ? R : never;
 type PrevDepth = [never, 0, 1, 2, 3];
 type IsSameType<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false;
-type NestedRelationPath<T, D extends number = 3> = [D] extends [0] ? never : {
+export type NestedRelationPath<T, D extends number = 3> = [D] extends [0] ? never : {
   [K in Exclude<keyof T, BaseModelInstanceKey>]: T[K] extends (...args: any[]) => ModelRelationValue
     ? K extends string
       ? IsSameType<RelationReturnModel<T[K]>, T> extends true
@@ -132,8 +134,34 @@ type PathToModel<T, Path extends string> =
         ? RelationReturnModel<T[Path]>
         : never
       : never;
-export type TypedConstraintMap<T> = {
-  [P in string & NestedRelationPath<T>]?: (query: Builder<PathToModel<T, P>>) => void | Builder<any>;
+export interface PivotQueryBuilder {
+  wherePivot(column: string, operator: string | any, value?: any): any;
+  orWherePivot(column: string, operator: string | any, value?: any): any;
+  wherePivotIn(column: string, values: any[]): any;
+  wherePivotNull(column: string): any;
+}
+type RelationInstanceAtPath<T, Path extends string> =
+  Path extends `${infer Head}.${infer Tail}`
+    ? Head extends keyof T
+      ? T[Head] extends (...args: any[]) => ModelRelationValue
+        ? RelationInstanceAtPath<RelationReturnModel<T[Head]>, Tail>
+        : never
+      : never
+    : Path extends keyof T
+      ? T[Path] extends (...args: any[]) => ModelRelationValue
+        ? RelationReturnType<T[Path]>
+        : never
+      : never;
+type PivotRelationValue = BelongsToMany<any> | MorphToMany<any>;
+export type RelationConstraintQuery<T, P extends string> =
+  Builder<PathToModel<T, P>> &
+  (RelationInstanceAtPath<T, P> extends PivotRelationValue ? PivotQueryBuilder : {});
+export type TypedConstraintCallback<T, P extends string> = (query: RelationConstraintQuery<T, P>) => void | Builder<any>;
+export type TypedConstraintMap<T> = Partial<{
+  [P in NestedRelationPath<T>]: TypedConstraintCallback<T, P>;
+}>;
+export type TypedConstraintSelection<T, K extends string & NestedRelationPath<T>> = {
+  [P in K]: TypedConstraintCallback<T, P>;
 };
 export type TypedEagerLoad<T> =
   | LiteralUnion<string & NestedRelationPath<T>>
@@ -198,12 +226,18 @@ export interface CastsAttributes {
   set(model: Model, key: string, value: any, attributes: Record<string, any>): any;
 }
 
-export interface AttributeDefinition {
-  get?: (value: any, attributes: Record<string, any>) => any;
-  set?: (value: any, attributes: Record<string, any>) => any;
+type BivariantCallback<TArgs extends any[], TResult> = {
+  bivarianceHack(...args: TArgs): TResult;
+}["bivarianceHack"];
+
+export interface AttributeDefinition<TAttributes extends Record<string, any> = Record<string, any>> {
+  get?: BivariantCallback<[value: any, attributes: TAttributes, model: Model<any>], any>;
+  set?: BivariantCallback<[value: any, attributes: TAttributes, model: Model<any>], any>;
 }
 
-function getAccessors(target: Model<any>): Record<string, AttributeDefinition> {
+export type AccessorMap<TAttributes extends Record<string, any> = Record<string, any>> = Record<string, AttributeDefinition<TAttributes>>;
+
+function getAccessors(target: Model<any>): AccessorMap {
   return (Object.getPrototypeOf(target).constructor as any).accessors || {};
 }
 
@@ -212,7 +246,7 @@ const modelProxyHandler: ProxyHandler<Model<any>> = {
     if (typeof prop === "string") {
       const accessors = getAccessors(target);
       if (prop in accessors && accessors[prop].get) {
-        return accessors[prop].get!((target.$attributes as any)[prop], target.$attributes as any);
+        return accessors[prop].get!((target.$attributes as any)[prop], target.$attributes as any, target);
       }
       if (prop in target.$relations) return target.$relations[prop];
       if (!(prop in target) && prop in target.$attributes) return target.getAttribute(prop);
@@ -223,7 +257,7 @@ const modelProxyHandler: ProxyHandler<Model<any>> = {
     if (typeof prop === "string" && !prop.startsWith("$") && !(prop in target)) {
       const accessors = getAccessors(target);
       if (prop in accessors && accessors[prop].set) {
-        (target.$attributes as any)[prop] = accessors[prop].set!(value, target.$attributes as any);
+        (target.$attributes as any)[prop] = accessors[prop].set!(value, target.$attributes as any, target);
         delete target.$castCache[prop];
         return true;
       }
@@ -244,7 +278,7 @@ const modelProxyHandler: ProxyHandler<Model<any>> = {
     }
     if (typeof prop === "string" && prop in getAccessors(target) && getAccessors(target)[prop].get) {
       const acc = getAccessors(target)[prop];
-      return { enumerable: true, configurable: true, value: acc.get!((target.$attributes as any)[prop], target.$attributes as any) };
+      return { enumerable: true, configurable: true, value: acc.get!((target.$attributes as any)[prop], target.$attributes as any, target) };
     }
     if (typeof prop === "string" && prop in target.$attributes) {
       return { enumerable: true, configurable: true, value: target.getAttribute(prop) };
@@ -717,7 +751,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   static preventLazyLoading = false;
   static hidden: string[] = [];
   static visible: string[] = [];
-  static accessors: Record<string, AttributeDefinition> = {};
+  static accessors: AccessorMap = {};
   static touches: string[] = [];
 
   $attributes = {} as T;
@@ -1252,6 +1286,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().sharedLock();
   }
 
+  static with<M extends ModelConstructor, K extends string & NestedRelationPath<InstanceType<M>>>(this: M, constraint: TypedConstraintSelection<InstanceType<M>, K>): Builder<InstanceType<M>, WithLoadedRelationsFromConstraintMap<InstanceType<M>, TypedConstraintSelection<InstanceType<M>, K>>>;
   static with<M extends ModelConstructor, R extends TypedConstraintMap<InstanceType<M>> & object>(this: M, constraint: R): Builder<InstanceType<M>, WithLoadedRelationsFromConstraintMap<InstanceType<M>, R>>;
   static with<M extends ModelConstructor, Rs extends ReadonlyArray<TypedEagerLoad<InstanceType<M>>>>(this: M, ...relations: Rs): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, ExtractStringPaths<Rs[number]>>>;
   static with<M extends ModelConstructor>(this: M, ...relations: any[]): any {
@@ -1279,15 +1314,19 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   }
 
   static has<M extends ModelConstructor>(this: M, relationName: string, operator?: string, count?: number): Builder<InstanceType<M>> {
-    return this.query().has(relationName, operator, count);
+    return this.query().has(relationName as any, operator as any, count as any);
   }
 
   static whereHas<M extends ModelConstructor>(this: M, relationName: string, callback?: (query: Builder<any>) => void | Builder<any>, operator?: string, count?: number): Builder<InstanceType<M>> {
-    return this.query().whereHas(relationName, callback, operator, count);
+    return this.query().whereHas(relationName as any, callback as any, operator as any, count as any);
   }
 
   static doesntHave<M extends ModelConstructor>(this: M, relationName: string): Builder<InstanceType<M>> {
-    return this.query().doesntHave(relationName);
+    return this.query().doesntHave(relationName as any);
+  }
+
+  static whereDoesntHave<M extends ModelConstructor>(this: M, relationName: string, callback?: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>> {
+    return this.query().whereDoesntHave(relationName as any, callback as any);
   }
 
   static whereRelation<M extends ModelConstructor>(this: M, relationName: string, column: any, operator: any, value?: any): Builder<InstanceType<M>> {
@@ -1466,7 +1505,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   getAttribute(key: string | keyof T): any {
     const accessors = getAccessors(this);
     if (key in accessors && accessors[key as string].get) {
-      return accessors[key as string].get!((this.$attributes as any)[key], this.$attributes as any);
+      return accessors[key as string].get!((this.$attributes as any)[key], this.$attributes as any, this);
     }
     if (Object.prototype.hasOwnProperty.call(this.$castCache, key as string)) {
       return this.$castCache[key as string];
@@ -1484,7 +1523,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
   setAttribute(key: string | keyof T, value: any): void {
     const accessors = getAccessors(this);
     if (key in accessors && accessors[key as string].set) {
-      (this.$attributes as any)[key] = accessors[key as string].set!(value, this.$attributes as any);
+      (this.$attributes as any)[key] = accessors[key as string].set!(value, this.$attributes as any, this);
       delete this.$castCache[key as string];
       return;
     }

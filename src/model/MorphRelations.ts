@@ -2,7 +2,7 @@ import { Builder } from "../query/Builder.js";
 import { Collection } from "../support/Collection.js";
 import { snakeCase } from "../utils.js";
 import { MorphMap } from "./MorphMap.js";
-import type { Model, ModelConstructor } from "./Model.js";
+import type { Model, ModelConstructor, PivotQueryBuilder } from "./Model.js";
 
 function getModelConstructor(model: Model): typeof Model {
   return Object.getPrototypeOf(model).constructor as typeof Model;
@@ -335,6 +335,42 @@ export class MorphToMany<T extends Model = Model> {
   protected parentKey: string;
   protected relatedKey: string;
   protected morphType: string;
+  protected pivotWheres: Array<{ column: string; operator: string; value: any; boolean: "and" | "or" }> = [];
+
+  protected decoratePivotQuery(builder: Builder<any>): Builder<any> & PivotQueryBuilder {
+    const query = builder as Builder<any> & PivotQueryBuilder;
+    const relation = this;
+
+    const define = (name: keyof PivotQueryBuilder, fn: (...args: any[]) => any) => {
+      if (!(name in query)) {
+        Object.defineProperty(query, name, {
+          configurable: true,
+          enumerable: false,
+          value: fn,
+          writable: true,
+        });
+      }
+    };
+
+    define("wherePivot", (column: string, operator: string | any, value?: any) => {
+      relation.applyPivotWhere(query, column, operator, value, "and");
+      return query;
+    });
+    define("orWherePivot", (column: string, operator: string | any, value?: any) => {
+      relation.applyPivotWhere(query, column, operator, value, "or");
+      return query;
+    });
+    define("wherePivotIn", (column: string, values: any[]) => {
+      relation.applyPivotWhere(query, column, "IN", values, "and");
+      return query;
+    });
+    define("wherePivotNull", (column: string) => {
+      relation.applyPivotWhere(query, column, "IS NULL", null, "and");
+      return query;
+    });
+
+    return query;
+  }
 
   constructor(
     parent: Model,
@@ -378,6 +414,49 @@ export class MorphToMany<T extends Model = Model> {
     return this.parent.getConnection().qualifyTable(this.table);
   }
 
+  protected applyStoredPivotWhere(builder: Builder<any>, where: { column: string; operator: string; value: any; boolean: "and" | "or" }): Builder<any> {
+    if (where.operator === "IN") {
+      builder.whereIn(where.column as any, where.value, where.boolean);
+    } else if (where.operator === "IS NULL") {
+      builder.whereNull(where.column as any, where.boolean);
+    } else if (where.boolean === "or") {
+      builder.orWhere(where.column as any, where.operator, where.value);
+    } else {
+      builder.where(where.column as any, where.operator, where.value);
+    }
+    return builder;
+  }
+
+  protected applyPivotWhere(builder: Builder<any>, column: string, operator: string | any, value?: any, boolean: "and" | "or" = "and"): Builder<any> {
+    if (value === undefined) {
+      value = operator;
+      operator = "=";
+    }
+    const entry = { column: `${this.table}.${column}`, operator, value, boolean };
+    this.pivotWheres.push(entry);
+    return this.applyStoredPivotWhere(builder, entry);
+  }
+
+  wherePivot(column: string, operator: string | any, value?: any): this {
+    this.applyPivotWhere(this.builder, column, operator, value, "and");
+    return this;
+  }
+
+  orWherePivot(column: string, operator: string | any, value?: any): this {
+    this.applyPivotWhere(this.builder, column, operator, value, "or");
+    return this;
+  }
+
+  wherePivotIn(column: string, values: any[]): this {
+    this.applyPivotWhere(this.builder, column, "IN", values, "and");
+    return this;
+  }
+
+  wherePivotNull(column: string): this {
+    this.applyPivotWhere(this.builder, column, "IS NULL", null, "and");
+    return this;
+  }
+
   protected addConstraints(): void {
     const relatedTable = this.related.getTable();
     this.builder.select(`${relatedTable}.*`);
@@ -398,7 +477,7 @@ export class MorphToMany<T extends Model = Model> {
   addEagerConstraints(models: Model[]): void {
     const keys = models.map((m) => m.getAttribute(this.parentKey));
     const relatedTable = this.related.getTable();
-    this.builder = (this.related as any).on(this.parent.getConnection());
+    this.builder = this.decoratePivotQuery((this.related as any).on(this.parent.getConnection()));
     this.builder.select(`${relatedTable}.*`, `${this.table}.${this.foreignPivotKey}`);
     this.builder.join(
       this.qualifiedPivotTable(),
@@ -408,6 +487,9 @@ export class MorphToMany<T extends Model = Model> {
     );
     this.builder.whereIn(`${this.table}.${this.foreignPivotKey}`, keys);
     this.builder.where(`${this.table}.${this.name}_type`, this.morphType);
+    for (const where of this.pivotWheres) {
+      this.applyStoredPivotWhere(this.builder, where);
+    }
   }
 
   async getEager(): Promise<Collection<any>> {
@@ -440,7 +522,7 @@ export class MorphToMany<T extends Model = Model> {
 
   protected newExistenceQuery(parentTable: string, aggregate: string, callback?: (query: Builder<any>) => void | Builder<any>): Builder<any> {
     const relatedTable = this.related.getTable();
-    const query = (this.related as any).on(this.parent.getConnection()).select(aggregate);
+    const query = this.decoratePivotQuery((this.related as any).on(this.parent.getConnection()).select(aggregate));
     query.join(
       this.qualifiedPivotTable(),
       `${this.table}.${this.relatedPivotKey}`,
@@ -449,6 +531,9 @@ export class MorphToMany<T extends Model = Model> {
     );
     query.whereColumn(`${this.table}.${this.foreignPivotKey}`, "=", `${parentTable}.${this.parentKey}`);
     query.where(`${this.table}.${this.name}_type`, this.morphType);
+    for (const where of this.pivotWheres) {
+      this.applyStoredPivotWhere(query, where);
+    }
     if (callback) callback(query);
     return query;
   }

@@ -1,12 +1,12 @@
 import { Connection } from "../connection/Connection.js";
 import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../types/index.js";
-import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName, TypedEagerLoad, TypedConstraintMap, ExtractStringPaths, WithLoadedRelations, WithLoadedRelationsFromConstraintMap, Relation } from "../model/Model.js";
+import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName, TypedEagerLoad, TypedConstraintMap, TypedConstraintSelection, ExtractStringPaths, WithLoadedRelations, WithLoadedRelationsFromConstraintMap, Relation, RelationConstraintQuery, NestedRelationPath } from "../model/Model.js";
 import { findRelationMethod } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
 import { IdentityMap } from "../model/IdentityMap.js";
 import { Collection } from "../support/Collection.js";
 
-type RelationConstraint = (query: Builder<any>) => void | Builder<any>;
+type RelationConstraint<TModel = any, TRelation extends string = string> = (query: RelationConstraintQuery<TModel, TRelation>) => void | Builder<any>;
 
 export class Paginator<T> {
   data: Collection<T>;
@@ -478,6 +478,7 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return this.union(query, true);
   }
 
+  with<K extends string & NestedRelationPath<T>>(constraint: TypedConstraintSelection<T, K>): Builder<T, WithLoadedRelationsFromConstraintMap<TResult, TypedConstraintSelection<T, K>>>;
   with<R extends TypedConstraintMap<T> & object>(constraint: R): Builder<T, WithLoadedRelationsFromConstraintMap<TResult, R>>;
   with<Rs extends ReadonlyArray<TypedEagerLoad<T>>>(...relations: Rs): Builder<T, WithLoadedRelations<TResult, ExtractStringPaths<Rs[number]>>>;
   with(...relations: any[]): any {
@@ -543,7 +544,7 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return (result || this) as this;
   }
 
-  has(relationName: string, operator: string | RelationConstraint = ">=", count: number = 1, callback?: RelationConstraint): this {
+  has<R extends ModelRelationName<TResult>>(relationName: R, operator: string | RelationConstraint<TResult, R> = ">=", count: number = 1, callback?: RelationConstraint<TResult, R>): this {
     if (typeof operator === "function") {
       callback = operator;
       operator = ">=";
@@ -559,7 +560,7 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return this.whereRaw(`(${relation.getRelationCountSql(this, callback)}) ${operator} ${this.grammar.escape(count)}`);
   }
 
-  orHas(relationName: string, operator: string | RelationConstraint = ">=", count: number = 1, callback?: RelationConstraint): this {
+  orHas<R extends ModelRelationName<TResult>>(relationName: R, operator: string | RelationConstraint<TResult, R> = ">=", count: number = 1, callback?: RelationConstraint<TResult, R>): this {
     if (typeof operator === "function") {
       callback = operator;
       operator = ">=";
@@ -575,39 +576,39 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return this.whereRaw(`(${relation.getRelationCountSql(this, callback)}) ${operator} ${this.grammar.escape(count)}`, "or");
   }
 
-  whereHas(relationName: string, callback?: RelationConstraint, operator: string = ">=", count: number = 1): this {
+  whereHas<R extends ModelRelationName<TResult>>(relationName: R, callback?: RelationConstraint<TResult, R>, operator: string = ">=", count: number = 1): this {
     return this.has(relationName, operator, count, callback);
   }
 
-  orWhereHas(relationName: string, callback?: RelationConstraint, operator: string = ">=", count: number = 1): this {
+  orWhereHas<R extends ModelRelationName<TResult>>(relationName: R, callback?: RelationConstraint<TResult, R>, operator: string = ">=", count: number = 1): this {
     return this.orHas(relationName, operator, count, callback);
   }
 
   whereRelation(relationName: string, column: ModelColumn<T>, operator: string | any, value?: any): this {
-    return this.whereHas(relationName, (q) => {
+    return this.whereHas(relationName as any, (q) => {
       value === undefined ? q.where(column as any, operator) : q.where(column as any, operator, value);
     });
   }
 
   orWhereRelation(relationName: string, column: ModelColumn<T>, operator: string | any, value?: any): this {
-    return this.orWhereHas(relationName, (q) => {
+    return this.orWhereHas(relationName as any, (q) => {
       value === undefined ? q.where(column as any, operator) : q.where(column as any, operator, value);
     });
   }
 
   withWhereHas<R extends TypedEagerLoad<T>>(
     relation: R,
-    callback?: RelationConstraint
+    callback?: RelationConstraint<any, any>
   ): Builder<T, WithLoadedRelations<TResult, ExtractStringPaths<R>>> {
     this.whereHas(relation as string, callback);
     return this.with(relation) as any;
   }
 
-  doesntHave(relationName: string, callback?: RelationConstraint): this {
+  doesntHave<R extends ModelRelationName<TResult>>(relationName: R, callback?: RelationConstraint<TResult, R>): this {
     return this.has(relationName, "<", 1, callback);
   }
 
-  whereDoesntHave(relationName: string, callback?: RelationConstraint): this {
+  whereDoesntHave<R extends ModelRelationName<TResult>>(relationName: R, callback?: RelationConstraint<TResult, R>): this {
     return this.doesntHave(relationName, callback);
   }
 

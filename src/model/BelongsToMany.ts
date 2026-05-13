@@ -2,7 +2,7 @@ import { Builder } from "../query/Builder.js";
 import { Schema } from "../schema/Schema.js";
 import { Collection } from "../support/Collection.js";
 import { snakeCase } from "../utils.js";
-import type { Model, ModelConstructor } from "./Model.js";
+import type { Model, ModelConstructor, PivotQueryBuilder } from "./Model.js";
 
 function getModelConstructor(model: Model): typeof Model {
   return Object.getPrototypeOf(model).constructor as typeof Model;
@@ -27,6 +27,41 @@ export class BelongsToMany<T extends Model = Model> {
   protected pivotWheres: Array<{ column: string; operator: string; value: any; boolean: "and" | "or" }> = [];
   protected pivotAccessor = "pivot";
 
+  protected decoratePivotQuery(builder: Builder<any>): Builder<any> & PivotQueryBuilder {
+    const query = builder as Builder<any> & PivotQueryBuilder;
+    const relation = this;
+
+    const define = (name: keyof PivotQueryBuilder, fn: (...args: any[]) => any) => {
+      if (!(name in query)) {
+        Object.defineProperty(query, name, {
+          configurable: true,
+          enumerable: false,
+          value: fn,
+          writable: true,
+        });
+      }
+    };
+
+    define("wherePivot", (column: string, operator: string | any, value?: any) => {
+      relation.applyPivotWhere(query, column, operator, value, "and");
+      return query;
+    });
+    define("orWherePivot", (column: string, operator: string | any, value?: any) => {
+      relation.applyPivotWhere(query, column, operator, value, "or");
+      return query;
+    });
+    define("wherePivotIn", (column: string, values: any[]) => {
+      relation.applyPivotWhere(query, column, "IN", values, "and");
+      return query;
+    });
+    define("wherePivotNull", (column: string) => {
+      relation.applyPivotWhere(query, column, "IS NULL", null, "and");
+      return query;
+    });
+
+    return query;
+  }
+
   as(accessor: string): this {
     this.pivotAccessor = accessor;
     return this;
@@ -45,35 +80,46 @@ export class BelongsToMany<T extends Model = Model> {
     return this;
   }
 
-  wherePivot(column: string, operator: string | any, value?: any): this {
+  protected applyPivotWhere(builder: Builder<any>, column: string, operator: string | any, value?: any, boolean: "and" | "or" = "and"): Builder<any> {
     if (value === undefined) {
       value = operator;
       operator = "=";
     }
-    this.pivotWheres.push({ column: `${this.table}.${column}`, operator, value, boolean: "and" });
-    this.builder.where(`${this.table}.${column}` as any, operator, value);
+    const entry = { column: `${this.table}.${column}`, operator, value, boolean };
+    this.pivotWheres.push(entry);
+    return this.applyStoredPivotWhere(builder, entry);
+  }
+
+  protected applyStoredPivotWhere(builder: Builder<any>, where: { column: string; operator: string; value: any; boolean: "and" | "or" }): Builder<any> {
+    if (where.operator === "IN") {
+      builder.whereIn(where.column as any, where.value, where.boolean);
+    } else if (where.operator === "IS NULL") {
+      builder.whereNull(where.column as any, where.boolean);
+    } else if (where.boolean === "or") {
+      builder.orWhere(where.column as any, where.operator, where.value);
+    } else {
+      builder.where(where.column as any, where.operator, where.value);
+    }
+    return builder;
+  }
+
+  wherePivot(column: string, operator: string | any, value?: any): this {
+    this.applyPivotWhere(this.builder, column, operator, value, "and");
     return this;
   }
 
   orWherePivot(column: string, operator: string | any, value?: any): this {
-    if (value === undefined) {
-      value = operator;
-      operator = "=";
-    }
-    this.pivotWheres.push({ column: `${this.table}.${column}`, operator, value, boolean: "or" });
-    this.builder.orWhere(`${this.table}.${column}` as any, operator, value);
+    this.applyPivotWhere(this.builder, column, operator, value, "or");
     return this;
   }
 
   wherePivotIn(column: string, values: any[]): this {
-    this.pivotWheres.push({ column: `${this.table}.${column}`, operator: "IN", value: values, boolean: "and" });
-    this.builder.whereIn(`${this.table}.${column}` as any, values);
+    this.applyPivotWhere(this.builder, column, "IN", values, "and");
     return this;
   }
 
   wherePivotNull(column: string): this {
-    this.pivotWheres.push({ column: `${this.table}.${column}`, operator: "IS NULL", value: null, boolean: "and" });
-    this.builder.whereNull(`${this.table}.${column}` as any);
+    this.applyPivotWhere(this.builder, column, "IS NULL", null, "and");
     return this;
   }
 
@@ -112,16 +158,7 @@ export class BelongsToMany<T extends Model = Model> {
 
   protected applyPivotWheres(builder: Builder<any>): Builder<any> {
     for (const w of this.pivotWheres) {
-      const column = this.getPivotColumnName(w.column);
-      if (w.operator === "IN") {
-        builder.whereIn(column as any, w.value, w.boolean);
-      } else if (w.operator === "IS NULL") {
-        builder.whereNull(column as any, w.boolean);
-      } else if (w.boolean === "or") {
-        builder.orWhere(column as any, w.operator, w.value);
-      } else {
-        builder.where(column as any, w.operator, w.value);
-      }
+      this.applyStoredPivotWhere(builder, w);
     }
 
     return builder;
@@ -168,7 +205,7 @@ export class BelongsToMany<T extends Model = Model> {
     this.relatedKey = relatedKey || related.primaryKey;
     this.foreignPivotKey = foreignPivotKey || `${snakeCase(parentConstructor.name)}_id`;
     this.relatedPivotKey = relatedPivotKey || `${snakeCase(related.name)}_id`;
-    this.builder = (related as any).on(parent.getConnection());
+    this.builder = this.decoratePivotQuery((related as any).on(parent.getConnection()));
     this.addConstraints();
 
     // Wrap getResults with lazy-loading guard
@@ -200,12 +237,12 @@ export class BelongsToMany<T extends Model = Model> {
   }
 
   getQuery(): Builder<T> {
-    return this.builder;
+    return this.decoratePivotQuery(this.builder);
   }
 
   addEagerConstraints(models: Model[]): void {
     const keys = models.map((m) => m.getAttribute(this.parentKey));
-    this.builder = (this.related as any).on(this.parent.getConnection());
+    this.builder = this.decoratePivotQuery((this.related as any).on(this.parent.getConnection()));
     const relatedTable = this.related.getTable();
     const pivotSelect = this.getPivotSelectColumns();
     this.builder.select(`${relatedTable}.*`, `${this.table}.${this.foreignPivotKey}`, ...pivotSelect);
@@ -216,17 +253,7 @@ export class BelongsToMany<T extends Model = Model> {
       `${relatedTable}.${this.relatedKey}`
     );
     this.builder.whereIn(`${this.table}.${this.foreignPivotKey}`, keys);
-    for (const w of this.pivotWheres) {
-      if (w.operator === "IN") {
-        this.builder.whereIn(w.column as any, w.value, w.boolean);
-      } else if (w.operator === "IS NULL") {
-        this.builder.whereNull(w.column as any, w.boolean);
-      } else if (w.boolean === "or") {
-        this.builder.orWhere(w.column as any, w.operator, w.value);
-      } else {
-        this.builder.where(w.column as any, w.operator, w.value);
-      }
-    }
+    this.applyPivotWheres(this.builder);
   }
 
   async getEager(): Promise<Collection<any>> {
@@ -270,7 +297,7 @@ export class BelongsToMany<T extends Model = Model> {
 
   protected newExistenceQuery(parentTable: string, aggregate: string, callback?: (query: Builder<any>) => void | Builder<any>): Builder<any> {
     const relatedTable = this.related.getTable();
-    const query = (this.related as any).on(this.parent.getConnection()).select(aggregate);
+    const query = this.decoratePivotQuery((this.related as any).on(this.parent.getConnection()).select(aggregate));
     query.join(
       this.table,
       `${this.table}.${this.relatedPivotKey}`,
@@ -278,6 +305,7 @@ export class BelongsToMany<T extends Model = Model> {
       `${relatedTable}.${this.relatedKey}`
     );
     query.whereColumn(`${this.table}.${this.foreignPivotKey}`, "=", `${parentTable}.${this.parentKey}`);
+    this.applyPivotWheres(query);
     if (callback) callback(query);
     return query;
   }

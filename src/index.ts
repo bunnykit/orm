@@ -34,6 +34,10 @@ export type {
   GlobalScope,
   CastDefinition,
   CastsAttributes,
+  AttributeDefinition,
+  AccessorMap,
+  RelationConstraintQuery,
+  PivotQueryBuilder,
 } from "./model/Model.js";
 export { ModelNotFoundError } from "./model/ModelNotFoundError.js";
 export { ObserverRegistry, type ObserverContract } from "./model/Observer.js";

@@ -1808,11 +1808,11 @@ const some    = await user.roles().wherePivotIn("priority", [1, 2]).get();
 const unset   = await user.tags().wherePivotNull("expires_at").get();
 ```
 
-Pivot filters are also preserved in constrained eager loading:
+Pivot filters are also preserved in constrained eager loading. For `belongsToMany` and `morphToMany` relations, the eager-load callback receives a pivot-aware builder, so `wherePivot()` works there too:
 
 ```ts
 const users = await User.with({
-  roles: (q) => q.where("role_user.is_active", true),
+  roles: (q) => q.wherePivot("is_active", true),
 }).get();
 ```
 
@@ -1847,6 +1847,11 @@ const users = await User.with("posts.comments").get();
 // Constrained eager loading — filter within the loaded relation
 const users = await User.with({
   posts: (q) => q.where("status", "published").orderBy("created_at", "desc"),
+}).get();
+
+// Pivot-aware eager loading — available on belongsToMany / morphToMany relations
+const sections = await Section.with({
+  subjects: (q) => q.wherePivot("semester_id", params.semester_id),
 }).get();
 
 // Nested constraint — the callback is typed to the model at the end of the path
@@ -1933,6 +1938,8 @@ const usersWithoutSpam = await User.whereDoesntHave("posts", (q) => {
   q.where("spam", true);
 }).get();
 ```
+
+The same pivot-aware callback behavior applies to `whereHas()` and `whereDoesntHave()` when the relation is a `belongsToMany` or `morphToMany`.
 
 #### whereRelation / orWhereRelation
 
