@@ -1,5 +1,5 @@
 import { expect, test, describe, beforeAll } from "bun:test";
-import { Model, Schema, MorphMap, Builder } from "../src/index.js";
+import { Model, Schema, MorphMap, Builder, Connection } from "../src/index.js";
 import { setupTestDb } from "./helpers.js";
 
 class MComment extends Model {
@@ -150,5 +150,24 @@ describe("Polymorphic Relations", () => {
     const posts = await tag.posts().getResults();
     expect(posts).toHaveLength(1);
     expect(posts[0].getAttribute("title")).toBe("Tagged Post");
+  });
+
+  test("morphToMany existence queries qualify pivot table with PostgreSQL schema", () => {
+    class SchemaPost extends Model {
+      static table = "schema_posts";
+      tags() {
+        return this.morphToMany(SchemaTag, "taggable");
+      }
+    }
+    class SchemaTag extends Model {
+      static table = "schema_tags";
+    }
+
+    const connection = new Connection({ url: "postgres://user:pass@localhost:5432/db", schema: "tenant_demo" });
+    (SchemaPost as any).connection = connection;
+
+    const sql = SchemaPost.withExists("tags", "has_tags").toSql();
+
+    expect(sql).toContain('INNER JOIN "tenant_demo"."taggables"');
   });
 });

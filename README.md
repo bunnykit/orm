@@ -845,7 +845,8 @@ await User.where("name", "Alice").explain() // return query plan
 | `whereRelation(rel, col, op?, val)` | Filter by related column (shorthand) |
 | `orWhereRelation(...)` | OR variant of `whereRelation` |
 | `withWhereHas(rel, fn?)` | Filter + eager load in one call |
-| `withCount(rel)` / `withSum / withAvg / withMin / withMax` | Relation aggregates |
+| `withCount(rel)` / `withSum(rel, col, alias?, fn?)` / `withAvg / withMin / withMax` | Relation aggregates |
+| `withExists(rel, alias?, fn?)` | Add a typed boolean relation-exists field |
 | `scope(name, ...args)` | Apply local scope |
 | `withoutGlobalScope(name)` / `withoutGlobalScopes()` | Remove scopes |
 | `withTrashed()` / `onlyTrashed()` | Soft delete visibility |
@@ -1192,6 +1193,9 @@ await user.save();
 // Fill multiple attributes at once
 user.fill({ name: "Bob", email: "bob@example.com" });
 await user.save();
+
+// Fill and save in one call
+await user.update({ name: "Bob", email: "bob@example.com" });
 
 // Direct attribute access
 user.getAttribute("name");
@@ -1963,6 +1967,51 @@ const usersWithoutSpam = await User.whereDoesntHave("posts", (q) => {
 
 The same pivot-aware callback behavior applies to `whereHas()` and `whereDoesntHave()` when the relation is a `belongsToMany` or `morphToMany`.
 
+#### withExists
+
+Add a relation-exists field. The alias is included as `boolean` in model JSON and paginated JSON types:
+
+```ts
+const pageResult = await Subject
+  .withExists("offerings", "in_used", (offering) => {
+    offering.has("admissions");
+  })
+  .whereNull("parent_id")
+  .orderBy("title")
+  .paginate(15, 1);
+
+const json = pageResult.json();
+json.data[0].in_used; // boolean
+
+// Example record:
+json.data[0];
+// {
+//   id: 1,
+//   title: "Mathematics",
+//   parent_id: null,
+//   in_used: true
+// }
+```
+
+Supported forms:
+
+```ts
+Subject.withExists("offerings");
+// adds: offerings_exists: boolean
+
+Subject.withExists("offerings", (offering) => offering.has("admissions"));
+// adds: offerings_exists: boolean
+
+Subject.withExists("offerings", "in_used", (offering) => offering.has("admissions"));
+// adds: in_used: boolean
+
+Subject.withExists({
+  offerings: (offering) => offering.has("admissions"),
+  "offerings as in_used": (offering) => offering.has("admissions"),
+});
+// adds: offerings_exists: boolean, in_used: boolean
+```
+
 #### whereRelation / orWhereRelation
 
 Shorthand for `whereHas` when you just need to check one column on the related model:
@@ -2010,6 +2059,35 @@ const users = await User
 users[0].posts_count;     // number of posts
 users[0].posts_sum_views; // sum of views across all posts
 ```
+
+Aggregate methods support constrained subqueries with the same relation-aware callback style:
+
+```ts
+const users = await User
+  .withAvg("posts", "score", (post) =>
+    post.where("status", "published")
+  )
+  .withMax("posts", "created_at", "latest_published_post_at", (post) =>
+    post.where("status", "published")
+  )
+  .get();
+
+users[0].posts_avg_score;          // average score for published posts
+users[0].latest_published_post_at; // max created_at for published posts
+```
+
+Supported aggregate overloads:
+
+```ts
+User.withAvg("posts", "score");
+User.withAvg("posts", "score", (post) => post.where("status", "published"));
+User.withAvg("posts", "score", "published_score_avg");
+User.withAvg("posts", "score", "published_score_avg", (post) =>
+  post.where("status", "published")
+);
+```
+
+The same overloads are available for `withSum`, `withMin`, and `withMax`. The relation name autocompletes from model relations, and the column argument autocompletes from the related model.
 
 #### loadMissing — Lazy Load Missing Relations on a Collection
 

@@ -1,5 +1,5 @@
 import { expect, test, describe, beforeAll } from "bun:test";
-import { Collection, Model, Schema } from "../src/index.js";
+import { Collection, Connection, Model, Schema } from "../src/index.js";
 import { setupTestDb } from "./helpers.js";
 
 class BUser extends Model {
@@ -156,6 +156,25 @@ describe("BelongsToMany", () => {
     expect(sql).toContain('"btm_offerings"');
     expect(sql).toContain('"btm_offerings"."section_id"');
     expect(sql).toContain('"btm_offerings"."student_id"');
+  });
+
+  test("belongsToMany existence queries qualify pivot table with PostgreSQL schema", () => {
+    class SchemaUser extends Model {
+      static table = "schema_users";
+      roles() {
+        return this.belongsToMany(SchemaRole, "schema_role_user", "schema_user_id", "schema_role_id");
+      }
+    }
+    class SchemaRole extends Model {
+      static table = "schema_roles";
+    }
+
+    const connection = new Connection({ url: "postgres://user:pass@localhost:5432/db", schema: "tenant_demo" });
+    (SchemaUser as any).connection = connection;
+
+    const sql = SchemaUser.withExists("roles", "has_roles").toSql();
+
+    expect(sql).toContain('INNER JOIN "tenant_demo"."schema_role_user"');
   });
 
   test("detach removes pivot rows", async () => {

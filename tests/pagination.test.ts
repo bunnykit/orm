@@ -1,10 +1,38 @@
 import { expect, test, describe, beforeAll } from "bun:test";
-import { Collection, Model, Schema } from "../src/index.js";
+import { Collection, Model, Schema, type RelationConstraintQuery } from "../src/index.js";
 import { setupTestDb } from "./helpers.js";
+
+enum PAdmissionStatus {
+  ENROLLED = "enrolled",
+}
 
 class PUser extends Model {
   static table = "p_users";
 }
+
+interface PSubjectAttrs {
+  id: number;
+  title: string;
+  parent_id: number | null;
+}
+
+class PSubject extends Model.define<PSubjectAttrs>("p_subjects") {
+  offerings() {
+    return this.hasMany(POffering, "subject_id");
+  }
+
+  admissions() {
+    return this.hasMany(PAdmission, "subject_id");
+  }
+}
+
+class POffering extends Model.define<{ id: number; subject_id: number }>("p_offerings") {
+  admissions() {
+    return this.hasMany(PAdmission, "offering_id");
+  }
+}
+
+class PAdmission extends Model.define<{ id: number; offering_id: number; subject_id: number | null; status: PAdmissionStatus | null }>("p_admissions") {}
 
 describe("Pagination", () => {
   beforeAll(async () => {
@@ -18,6 +46,25 @@ describe("Pagination", () => {
     for (let i = 1; i <= 25; i++) {
       await PUser.create({ name: `User ${i}` });
     }
+
+    await Schema.create("p_subjects", (table) => {
+      table.increments("id");
+      table.string("title");
+      table.integer("parent_id").nullable();
+      table.timestamps();
+    });
+    await Schema.create("p_offerings", (table) => {
+      table.increments("id");
+      table.integer("subject_id");
+      table.timestamps();
+    });
+    await Schema.create("p_admissions", (table) => {
+      table.increments("id");
+      table.integer("offering_id");
+      table.integer("subject_id").nullable();
+      table.string("status").nullable();
+      table.timestamps();
+    });
   });
 
   test("paginate returns correct structure", async () => {
@@ -67,5 +114,152 @@ describe("Pagination", () => {
     expect(result.total).toBe(0);
     expect(result.from).toBe(0);
     expect(result.to).toBe(0);
+  });
+
+  test("paginate json infers model attributes", async () => {
+    const pageResult = await PSubject.whereNull("parent_id")
+      .orderBy("title")
+      .paginate(10, 1);
+
+    const json = pageResult.json();
+
+    type Row = (typeof json.data)[number];
+    const _id: Row["id"] extends number ? true : false = true;
+    const _title: Row["title"] extends string ? true : false = true;
+    const _parentId: Row["parent_id"] extends number | null ? true : false = true;
+    // @ts-expect-error Unknown keys should not be admitted by paginator JSON rows.
+    type Missing = Row["missing"];
+
+    expect(json.data).toHaveLength(0);
+    expect(_id).toBe(true);
+    expect(_title).toBe(true);
+    expect(_parentId).toBe(true);
+  });
+
+  test("paginate json infers withExists aliases", async () => {
+    const usedSubject = await PSubject.create({ title: "Used", parent_id: null });
+    await PSubject.create({ title: "Unused", parent_id: null });
+    const offering = await POffering.create({ subject_id: usedSubject.id });
+    await PAdmission.create({ offering_id: offering.id, subject_id: usedSubject.id, status: PAdmissionStatus.ENROLLED });
+
+    const pageResult = await PSubject
+      .withExists("offerings", "in_used", (offeringQuery) => offeringQuery.has("admissions"))
+      .whereNull("parent_id")
+      .orderBy("title")
+      .paginate(10, 1);
+
+    const json = pageResult.json();
+
+    type Row = (typeof json.data)[number];
+    const _inUsed: Row["in_used"] extends boolean ? true : false = true;
+
+    const used = json.data.find((subject) => subject.title === "Used");
+    const unused = json.data.find((subject) => subject.title === "Unused");
+
+    expect(used?.in_used).toBe(true);
+    expect(unused?.in_used).toBe(false);
+    expect(_inUsed).toBe(true);
+  });
+
+  test("withExists supports Laravel-style overloads", async () => {
+    const usedSubject = await PSubject.create({ title: "Overload Used", parent_id: null });
+    await PSubject.create({ title: "Overload Unused", parent_id: null });
+    const offering = await POffering.create({ subject_id: usedSubject.id });
+    await PAdmission.create({ offering_id: offering.id, subject_id: usedSubject.id, status: PAdmissionStatus.ENROLLED });
+
+    const relationOnlyBuilder = PSubject.withExists("offerings");
+    const relationCallbackBuilder = PSubject.withExists("offerings", (offeringQuery) => offeringQuery.has("admissions"));
+    const relationAliasBuilder = PSubject.withExists("offerings", "in_used", (offeringQuery) => offeringQuery.has("admissions"));
+    const directRelationCallbackBuilder = PSubject.withExists("admissions", (admissionQuery) => {
+      const _query: RelationConstraintQuery<PSubject, "admissions"> = admissionQuery;
+      admissionQuery.where("status", PAdmissionStatus.ENROLLED);
+      return _query;
+    });
+    const mapBuilder = PSubject.withExists({
+      offerings: (offeringQuery) => offeringQuery.has("admissions"),
+    });
+    const mapAliasBuilder = PSubject.withExists({
+      "offerings as has_used_offerings": (offeringQuery) => offeringQuery.has("admissions"),
+    });
+    const mapDirectAliasBuilder = PSubject.withExists({
+      "admissions as has_enrolled_admissions": (admissionQuery) => {
+        const _query: RelationConstraintQuery<PSubject, "admissions"> = admissionQuery;
+        admissionQuery.where("status", PAdmissionStatus.ENROLLED);
+        return _query;
+      },
+    });
+
+    type RelationOnly = NonNullable<Awaited<ReturnType<typeof relationOnlyBuilder.first>>>;
+    type RelationCallback = NonNullable<Awaited<ReturnType<typeof relationCallbackBuilder.first>>>;
+    type RelationAlias = NonNullable<Awaited<ReturnType<typeof relationAliasBuilder.first>>>;
+    type DirectRelationCallback = NonNullable<Awaited<ReturnType<typeof directRelationCallbackBuilder.first>>>;
+    type MapResult = NonNullable<Awaited<ReturnType<typeof mapBuilder.first>>>;
+    type MapAlias = NonNullable<Awaited<ReturnType<typeof mapAliasBuilder.first>>>;
+    type MapDirectAlias = NonNullable<Awaited<ReturnType<typeof mapDirectAliasBuilder.first>>>;
+
+    const _relationOnly: ReturnType<RelationOnly["json"]>["offerings_exists"] extends boolean ? true : false = true;
+    const _relationCallback: ReturnType<RelationCallback["json"]>["offerings_exists"] extends boolean ? true : false = true;
+    const _relationAlias: ReturnType<RelationAlias["json"]>["in_used"] extends boolean ? true : false = true;
+    const _directRelationCallback: ReturnType<DirectRelationCallback["json"]>["admissions_exists"] extends boolean ? true : false = true;
+    const _mapDefault: ReturnType<MapResult["json"]>["offerings_exists"] extends boolean ? true : false = true;
+    const _mapAlias: ReturnType<MapAlias["json"]>["has_used_offerings"] extends boolean ? true : false = true;
+    const _mapDirectAlias: ReturnType<MapDirectAlias["json"]>["has_enrolled_admissions"] extends boolean ? true : false = true;
+    // @ts-expect-error Object-map alias should not expose the raw "relation as alias" key.
+    type InvalidMapAliasKey = ReturnType<MapAlias["json"]>["offerings as has_used_offerings"];
+
+    const pageResult = await relationCallbackBuilder
+      .withExists({
+        "offerings as has_used_offerings": (offeringQuery) => offeringQuery.has("admissions"),
+      })
+      .whereIn("title", ["Overload Used", "Overload Unused"])
+      .orderBy("title")
+      .paginate(10, 1);
+
+    const defaultOnly = await PSubject
+      .withExists("offerings")
+      .where("title", "Overload Used")
+      .first();
+
+    const json = pageResult.json();
+
+    type Row = (typeof json.data)[number];
+    const _defaultExists: Row["offerings_exists"] extends boolean ? true : false = true;
+    const _aliasedExists: Row["has_used_offerings"] extends boolean ? true : false = true;
+
+    const used = json.data.find((subject) => subject.title === "Overload Used");
+    const unused = json.data.find((subject) => subject.title === "Overload Unused");
+
+    expect(used?.offerings_exists).toBe(true);
+    expect(unused?.offerings_exists).toBe(false);
+    expect(used?.has_used_offerings).toBe(true);
+    expect(unused?.has_used_offerings).toBe(false);
+    expect(defaultOnly?.offerings_exists).toBe(true);
+    expect(_relationOnly).toBe(true);
+    expect(_relationCallback).toBe(true);
+    expect(_relationAlias).toBe(true);
+    expect(_directRelationCallback).toBe(true);
+    expect(_mapDefault).toBe(true);
+    expect(_mapAlias).toBe(true);
+    expect(_mapDirectAlias).toBe(true);
+    expect(_defaultExists).toBe(true);
+    expect(_aliasedExists).toBe(true);
+  });
+
+  test("with relation callback infers related query type", async () => {
+    const subject = await PSubject.create({ title: "Constrained Subject", parent_id: null });
+    await PAdmission.create({ offering_id: 0, subject_id: subject.id, status: PAdmissionStatus.ENROLLED });
+    await PAdmission.create({ offering_id: 0, subject_id: subject.id, status: null });
+
+    const builder = PSubject.with("admissions", (admissionQuery) => {
+      const _query: RelationConstraintQuery<PSubject, "admissions"> = admissionQuery;
+      admissionQuery.where("status", PAdmissionStatus.ENROLLED);
+      return _query;
+    });
+
+    const found = await builder.where("title", "Constrained Subject").first();
+    const admissions = found?.getRelation("admissions");
+
+    expect(admissions).toHaveLength(1);
+    expect(admissions[0].status).toBe(PAdmissionStatus.ENROLLED);
   });
 });

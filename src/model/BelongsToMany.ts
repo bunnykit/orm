@@ -301,7 +301,7 @@ export class BelongsToMany<T extends Model = Model> {
     const relatedTable = this.related.getTable();
     const query = this.decoratePivotQuery((this.related as any).on(this.parent.getConnection()).select(aggregate));
     query.join(
-      this.table,
+      this.qualifiedPivotTable(),
       `${this.table}.${this.relatedPivotKey}`,
       "=",
       `${relatedTable}.${this.relatedKey}`

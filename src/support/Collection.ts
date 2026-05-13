@@ -1,6 +1,7 @@
 type CollectionKey = string | number | symbol;
 
 type CollectionPredicate<T> = (item: T, index: number) => boolean;
+export type CollectionJson<T> = T extends { toJSON(): infer R } ? R[] : T[];
 
 function valueFor(item: any, key: CollectionKey): any {
   if (typeof key === "symbol") return item?.[key];
@@ -54,11 +55,11 @@ export class Collection<T = any> extends Array<T> {
     return this.all();
   }
 
-  toJSON(): any[] {
-    return this.map((item: any) => typeof item?.toJSON === "function" ? item.toJSON() : item);
+  toJSON(): CollectionJson<T> {
+    return this.map((item: any) => typeof item?.toJSON === "function" ? item.toJSON() : item) as CollectionJson<T>;
   }
 
-  json(): any[] {
+  json(): CollectionJson<T> {
     return this.toJSON();
   }
 

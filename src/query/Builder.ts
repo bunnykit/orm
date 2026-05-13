@@ -1,12 +1,23 @@
 import { Connection } from "../connection/Connection.js";
 import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../types/index.js";
-import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName, TypedEagerLoad, TypedConstraintMap, TypedConstraintSelection, ExtractStringPaths, WithLoadedRelations, WithLoadedRelationsFromConstraintMap, WithRelationCount, Relation, RelationConstraintQuery, NestedRelationPath } from "../model/Model.js";
+import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName, TypedEagerLoad, TypedConstraintMap, TypedConstraintSelection, TypedExistsConstraintMap, ExtractStringPaths, WithLoadedRelations, WithLoadedRelationsFromConstraintMap, WithRelationCount, WithRelationExists, WithRelationExistsMap, Relation, RelationConstraintQuery, NestedRelationPath, LiteralUnion, RelationRelatedModel } from "../model/Model.js";
 import { findRelationMethod } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
 import { IdentityMap } from "../model/IdentityMap.js";
-import { Collection } from "../support/Collection.js";
+import { Collection, type CollectionJson } from "../support/Collection.js";
 
-type RelationConstraint<TModel = any, TRelation extends string = string> = (query: RelationConstraintQuery<TModel, TRelation>) => void | Builder<any>;
+type RelationConstraint<TModel = any, TRelation extends string = string> = (query: RelationConstraintQuery<TModel, TRelation>) => void | Builder<any> | RelationConstraintQuery<TModel, TRelation>;
+type ExistsConstraintMap<TResult> = Record<string, RelationConstraint<TResult, any> | undefined>;
+type RelatedColumn<TResult, R extends string> = ModelColumn<RelationRelatedModel<TResult, R>>;
+export interface PaginatorJson<T> {
+  data: CollectionJson<T>;
+  current_page: number;
+  per_page: number;
+  total: number;
+  last_page: number;
+  from: number;
+  to: number;
+}
 
 export class Paginator<T> {
   data: Collection<T>;
@@ -35,7 +46,7 @@ export class Paginator<T> {
     this.to = init.to;
   }
 
-  json(): object {
+  json(): PaginatorJson<T> {
     return {
       data: this.data.toJSON(),
       current_page: this.current_page,
@@ -44,10 +55,10 @@ export class Paginator<T> {
       last_page: this.last_page,
       from: this.from,
       to: this.to,
-    };
+    } as PaginatorJson<T>;
   }
 
-  toJSON(): object {
+  toJSON(): PaginatorJson<T> {
     return this.json();
   }
 }
@@ -74,6 +85,7 @@ export class Builder<T = Record<string, any>, TResult = T> {
   bindings: any[] = [];
   private parameterize = false;
   private sqlCache?: string;
+  private booleanResultColumns = new Set<string>();
 
   constructor(connection: Connection, table: string) {
     this.connection = connection;
@@ -88,11 +100,34 @@ export class Builder<T = Record<string, any>, TResult = T> {
     this.sqlCache = undefined;
   }
 
-  private normalizeEagerLoads(relations: (EagerLoadInput | EagerLoadInput[])[]): EagerLoadDefinition[] {
+  private coerceBooleanResultColumns(row: any): any {
+    for (const column of this.booleanResultColumns) {
+      if (!(column in row)) continue;
+      const value = row[column];
+      row[column] = value === true || value === 1 || value === "1" || value === "t" || value === "true";
+    }
+    return row;
+  }
+
+  private parseRelationAlias(relation: string, defaultSuffix: string): { relationName: string; alias: string } {
+    const match = relation.match(/^(.+?)\s+as\s+(.+)$/i);
+    if (!match) return { relationName: relation, alias: `${relation}${defaultSuffix}` };
+    return { relationName: match[1].trim(), alias: match[2].trim() };
+  }
+
+  private normalizeEagerLoads(relations: any[]): EagerLoadDefinition[] {
     const normalized: EagerLoadDefinition[] = [];
-    for (const relation of relations.flat() as EagerLoadInput[]) {
+    const flattened = relations.flat() as any[];
+    for (let i = 0; i < flattened.length; i++) {
+      const relation = flattened[i];
       if (typeof relation === "string") {
-        normalized.push({ name: relation });
+        const next = flattened[i + 1];
+        if (typeof next === "function") {
+          normalized.push({ name: relation, constraint: next });
+          i++;
+        } else {
+          normalized.push({ name: relation });
+        }
       } else if ("name" in relation && typeof (relation as EagerLoadDefinition).name === "string") {
         normalized.push(relation as EagerLoadDefinition);
       } else {
@@ -480,6 +515,10 @@ export class Builder<T = Record<string, any>, TResult = T> {
 
   with<K extends string & NestedRelationPath<T>>(constraint: TypedConstraintSelection<T, K>): Builder<T, WithLoadedRelationsFromConstraintMap<TResult, TypedConstraintSelection<T, K>>>;
   with<R extends TypedConstraintMap<T> & object>(constraint: R): Builder<T, WithLoadedRelationsFromConstraintMap<TResult, R>>;
+  with<R extends string & NestedRelationPath<T>>(relation: R): Builder<T, WithLoadedRelations<TResult, R>>;
+  with(relation: LiteralUnion<string & NestedRelationPath<T>>): Builder<T, WithLoadedRelations<TResult, string>>;
+  with<R extends string & NestedRelationPath<T>>(relation: R, callback: RelationConstraint<T, R>): Builder<T, WithLoadedRelations<TResult, R>>;
+  with(relation: LiteralUnion<string & NestedRelationPath<T>>, callback: EagerLoadDefinition["constraint"]): Builder<T, WithLoadedRelations<TResult, string>>;
   with<Rs extends ReadonlyArray<TypedEagerLoad<T>>>(relations: Rs): Builder<T, WithLoadedRelations<TResult, ExtractStringPaths<Rs[number]>>>;
   with<Rs extends ReadonlyArray<TypedEagerLoad<T>>>(...relations: Rs): Builder<T, WithLoadedRelations<TResult, ExtractStringPaths<Rs[number]>>>;
   with(...relations: any[]): any {
@@ -613,26 +652,80 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return this.doesntHave(relationName, callback);
   }
 
-  withCount<R extends string, A extends string | undefined = undefined>(relationName: R, alias?: A): Builder<T, WithRelationCount<TResult, R, A>> {
+  withCount<R extends string & ModelRelationName<TResult>, A extends string | undefined = undefined>(relationName: R, alias?: A): Builder<T, WithRelationCount<TResult, R, A>>;
+  withCount<A extends string | undefined = undefined>(relationName: LiteralUnion<string & ModelRelationName<TResult>>, alias?: A): Builder<T, WithRelationCount<TResult, string, A>>;
+  withCount(relationName: string, alias?: string): any {
     const relation = this.getModelRelation(relationName);
     this.addSelect(`(${relation.getRelationCountSql(this)}) as ${alias || `${relationName}_count`}`);
     return this as any;
   }
 
-  withSum(relationName: string, column: ModelColumn<T>, alias?: string): this {
-    return this.withAggregate(relationName, column, "SUM", alias);
+  private addExistsSelect(relationName: string, alias: string, callback?: RelationConstraint<TResult, any>): void {
+    const relation = this.getModelRelation(relationName);
+    this.addSelect(`CASE WHEN EXISTS (${relation.getRelationExistenceSql(this, callback)}) THEN 1 ELSE 0 END as ${alias}`);
+    this.booleanResultColumns.add(alias);
   }
 
-  withAvg(relationName: string, column: ModelColumn<T>, alias?: string): this {
-    return this.withAggregate(relationName, column, "AVG", alias);
+  withExists<R extends TypedExistsConstraintMap<TResult> & object>(relations: R): Builder<T, WithRelationExistsMap<TResult, R>>;
+  withExists<R extends ExistsConstraintMap<TResult>>(relations: R): Builder<T, WithRelationExistsMap<TResult, R>>;
+  withExists<R extends string & NestedRelationPath<TResult>>(relationName: R, callback?: RelationConstraint<TResult, R>): Builder<T, WithRelationExists<TResult, R>>;
+  withExists<R extends string>(relationName: R, callback?: RelationConstraint<any, any>): Builder<T, WithRelationExists<TResult, R>>;
+  withExists<R extends string & NestedRelationPath<TResult>, A extends string>(relationName: R, alias: A, callback?: RelationConstraint<TResult, R>): Builder<T, WithRelationExists<TResult, R, A>>;
+  withExists<R extends string, A extends string>(relationName: R, alias: A, callback?: RelationConstraint<any, any>): Builder<T, WithRelationExists<TResult, R, A>>;
+  withExists(relationOrMap: any, aliasOrCallback?: any, callback?: any): any {
+    if (typeof relationOrMap === "object" && relationOrMap !== null) {
+      for (const [relation, constraint] of Object.entries(relationOrMap) as [string, RelationConstraint<TResult, any> | undefined][]) {
+        const parsed = this.parseRelationAlias(relation, "_exists");
+        this.addExistsSelect(parsed.relationName, parsed.alias, constraint);
+      }
+      return this;
+    }
+
+    const relationName = relationOrMap as string;
+    const alias = typeof aliasOrCallback === "string" ? aliasOrCallback : undefined;
+    const constraint = typeof aliasOrCallback === "function" ? aliasOrCallback : callback;
+    this.addExistsSelect(relationName, alias || `${relationName}_exists`, constraint);
+    return this as any;
   }
 
-  withMin(relationName: string, column: ModelColumn<T>, alias?: string): this {
-    return this.withAggregate(relationName, column, "MIN", alias);
+  withSum<R extends string & ModelRelationName<TResult>>(relationName: R, column: RelatedColumn<TResult, R>, callback: RelationConstraint<TResult, R>): this;
+  withSum<R extends string & ModelRelationName<TResult>>(relationName: R, column: RelatedColumn<TResult, R>, alias?: string): this;
+  withSum<R extends string & ModelRelationName<TResult>>(relationName: R, column: RelatedColumn<TResult, R>, alias: string, callback: RelationConstraint<TResult, R>): this;
+  withSum(relationName: LiteralUnion<string & ModelRelationName<TResult>>, column: string, callback: EagerLoadDefinition["constraint"]): this;
+  withSum(relationName: LiteralUnion<string & ModelRelationName<TResult>>, column: string, alias?: string): this;
+  withSum(relationName: LiteralUnion<string & ModelRelationName<TResult>>, column: string, alias: string, callback: EagerLoadDefinition["constraint"]): this;
+  withSum(relationName: string, column: string, aliasOrCallback?: string | RelationConstraint<any, any>, callback?: RelationConstraint<any, any>): this {
+    return this.withAggregate(relationName, column, "SUM", aliasOrCallback, callback);
   }
 
-  withMax(relationName: string, column: ModelColumn<T>, alias?: string): this {
-    return this.withAggregate(relationName, column, "MAX", alias);
+  withAvg<R extends string & ModelRelationName<TResult>>(relationName: R, column: RelatedColumn<TResult, R>, callback: RelationConstraint<TResult, R>): this;
+  withAvg<R extends string & ModelRelationName<TResult>>(relationName: R, column: RelatedColumn<TResult, R>, alias?: string): this;
+  withAvg<R extends string & ModelRelationName<TResult>>(relationName: R, column: RelatedColumn<TResult, R>, alias: string, callback: RelationConstraint<TResult, R>): this;
+  withAvg(relationName: LiteralUnion<string & ModelRelationName<TResult>>, column: string, callback: EagerLoadDefinition["constraint"]): this;
+  withAvg(relationName: LiteralUnion<string & ModelRelationName<TResult>>, column: string, alias?: string): this;
+  withAvg(relationName: LiteralUnion<string & ModelRelationName<TResult>>, column: string, alias: string, callback: EagerLoadDefinition["constraint"]): this;
+  withAvg(relationName: string, column: string, aliasOrCallback?: string | RelationConstraint<any, any>, callback?: RelationConstraint<any, any>): this {
+    return this.withAggregate(relationName, column, "AVG", aliasOrCallback, callback);
+  }
+
+  withMin<R extends string & ModelRelationName<TResult>>(relationName: R, column: RelatedColumn<TResult, R>, callback: RelationConstraint<TResult, R>): this;
+  withMin<R extends string & ModelRelationName<TResult>>(relationName: R, column: RelatedColumn<TResult, R>, alias?: string): this;
+  withMin<R extends string & ModelRelationName<TResult>>(relationName: R, column: RelatedColumn<TResult, R>, alias: string, callback: RelationConstraint<TResult, R>): this;
+  withMin(relationName: LiteralUnion<string & ModelRelationName<TResult>>, column: string, callback: EagerLoadDefinition["constraint"]): this;
+  withMin(relationName: LiteralUnion<string & ModelRelationName<TResult>>, column: string, alias?: string): this;
+  withMin(relationName: LiteralUnion<string & ModelRelationName<TResult>>, column: string, alias: string, callback: EagerLoadDefinition["constraint"]): this;
+  withMin(relationName: string, column: string, aliasOrCallback?: string | RelationConstraint<any, any>, callback?: RelationConstraint<any, any>): this {
+    return this.withAggregate(relationName, column, "MIN", aliasOrCallback, callback);
+  }
+
+  withMax<R extends string & ModelRelationName<TResult>>(relationName: R, column: RelatedColumn<TResult, R>, callback: RelationConstraint<TResult, R>): this;
+  withMax<R extends string & ModelRelationName<TResult>>(relationName: R, column: RelatedColumn<TResult, R>, alias?: string): this;
+  withMax<R extends string & ModelRelationName<TResult>>(relationName: R, column: RelatedColumn<TResult, R>, alias: string, callback: RelationConstraint<TResult, R>): this;
+  withMax(relationName: LiteralUnion<string & ModelRelationName<TResult>>, column: string, callback: EagerLoadDefinition["constraint"]): this;
+  withMax(relationName: LiteralUnion<string & ModelRelationName<TResult>>, column: string, alias?: string): this;
+  withMax(relationName: LiteralUnion<string & ModelRelationName<TResult>>, column: string, alias: string, callback: EagerLoadDefinition["constraint"]): this;
+  withMax(relationName: string, column: string, aliasOrCallback?: string | RelationConstraint<any, any>, callback?: RelationConstraint<any, any>): this {
+    return this.withAggregate(relationName, column, "MAX", aliasOrCallback, callback);
   }
 
   addSelect(...columns: ModelColumn<T>[]): this {
@@ -683,6 +776,7 @@ export class Builder<T = Record<string, any>, TResult = T> {
     cloned.updateJoins = [...this.updateJoins];
     cloned.bindings = [...this.bindings];
     cloned.parameterize = this.parameterize;
+    cloned.booleanResultColumns = new Set(this.booleanResultColumns);
     return cloned;
   }
 
@@ -872,7 +966,7 @@ export class Builder<T = Record<string, any>, TResult = T> {
     const sql = this.toSql();
     this.parameterize = false;
     const results = await this.connection.query(sql, this.bindings);
-    const rows = Array.from(results);
+    const rows = Array.from(results).map((row: any) => this.coerceBooleanResultColumns(row));
 
     if (this.model) {
       const identityMap = IdentityMap.current();
@@ -885,6 +979,11 @@ export class Builder<T = Record<string, any>, TResult = T> {
           if (pk !== null && pk !== undefined) {
             const cached = IdentityMap.get(table, pk);
             if (cached) {
+              for (const column of this.booleanResultColumns) {
+                if (column in row) {
+                  (cached.$attributes as any)[column] = row[column];
+                }
+              }
               return cached as T;
             }
           }
@@ -916,7 +1015,7 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return (await this.get()).all();
   }
 
-  async json(): Promise<any[]> {
+  async json(): Promise<CollectionJson<TResult>> {
     return (await this.get()).toJSON();
   }
 
@@ -1508,10 +1607,18 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return relation;
   }
 
-  private withAggregate(relationName: string, column: ModelColumn<T>, fn: string, alias?: string): this {
+  private withAggregate(
+    relationName: string,
+    column: string,
+    fn: string,
+    aliasOrCallback?: string | RelationConstraint<any, any>,
+    callback?: RelationConstraint<any, any>
+  ): this {
+    const alias = typeof aliasOrCallback === "string" ? aliasOrCallback : undefined;
+    const constraint = typeof aliasOrCallback === "function" ? aliasOrCallback : callback;
     const relation = this.getModelRelation(relationName);
     const defaultAlias = `${relationName}_${fn.toLowerCase()}_${column.replace(/\W+/g, "_")}`;
-    this.addSelect(`(${relation.getRelationAggregateSql(this, `${fn}(${relation.qualifyRelatedColumn(column)})`)}) as ${alias || defaultAlias}`);
+    this.addSelect(`(${relation.getRelationAggregateSql(this, `${fn}(${relation.qualifyRelatedColumn(column)})`, constraint)}) as ${alias || defaultAlias}`);
     return this;
   }
 }

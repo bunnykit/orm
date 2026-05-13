@@ -74,6 +74,18 @@ describe("Model", () => {
     expect(refreshed!.getAttribute("name")).toBe("Carl Updated");
   });
 
+  test("update fills and saves existing model", async () => {
+    const user = await TestUser.create({ name: "Cora", email: "cora@example.com" });
+    const result = await user.update({ name: "Cora Updated", email: "updated@example.com" });
+
+    expect(result).toBe(user);
+    expect(user.getAttribute("name")).toBe("Cora Updated");
+
+    const refreshed = await TestUser.find(user.getAttribute("id"));
+    expect(refreshed!.getAttribute("name")).toBe("Cora Updated");
+    expect(refreshed!.getAttribute("email")).toBe("updated@example.com");
+  });
+
   test("delete removes model", async () => {
     const user = await TestUser.create({ name: "Dan" });
     const id = user.getAttribute("id");

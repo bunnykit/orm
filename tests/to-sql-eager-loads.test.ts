@@ -282,14 +282,20 @@ describe("model json type", () => {
     const builder = Section
       .withCount("admissions")
       .withCount("admissions", "total_admissions");
+    const staticAutocompleteBuilder = Section.withCount("admissions");
+    const queryAutocompleteBuilder = Section.query().withCount("admissions");
 
     type Result = NonNullable<Awaited<ReturnType<typeof builder.find>>>;
     type Json = ReturnType<Result["json"]>;
+    type StaticAutocompleteResult = NonNullable<Awaited<ReturnType<typeof staticAutocompleteBuilder.find>>>;
+    type QueryAutocompleteResult = NonNullable<Awaited<ReturnType<typeof queryAutocompleteBuilder.find>>>;
 
     const _hasDefaultCount: "admissions_count" extends keyof Json ? true : false = true;
     const _hasAliasCount: "total_admissions" extends keyof Json ? true : false = true;
     const _defaultCount: Json["admissions_count"] extends number ? true : false = true;
     const _aliasCount: Json["total_admissions"] extends number ? true : false = true;
+    const _staticAutocompleteCount: ReturnType<StaticAutocompleteResult["json"]>["admissions_count"] extends number ? true : false = true;
+    const _queryAutocompleteCount: ReturnType<QueryAutocompleteResult["json"]>["admissions_count"] extends number ? true : false = true;
     // @ts-expect-error Unknown keys should not be admitted by a broad Record<string, any>.
     type MissingCount = Json["missing_count"];
 
@@ -297,5 +303,44 @@ describe("model json type", () => {
     expect(_hasAliasCount).toBe(true);
     expect(_defaultCount).toBe(true);
     expect(_aliasCount).toBe(true);
+    expect(_staticAutocompleteCount).toBe(true);
+    expect(_queryAutocompleteCount).toBe(true);
+  });
+
+  test("relation aggregates infer related model columns", () => {
+    interface AdmissionAttrs {
+      id: number;
+      section_id: number;
+      score: number;
+      status: string;
+    }
+    interface SectionAttrs {
+      id: number;
+      year_level: number;
+    }
+
+    class Admission extends Model.define<AdmissionAttrs>("typed_json_aggregate_admissions") {}
+    class Section extends Model.define<SectionAttrs>("typed_json_aggregate_sections") {
+      admissions() { return this.hasMany(Admission); }
+    }
+
+    const sumBuilder = Section.withSum("admissions", "id");
+    const avgBuilder = Section.withAvg("admissions", "score", (query) => query.where("status", "enrolled"));
+    const minBuilder = Section.withMin("admissions", "score", "minimum_score");
+    const maxBuilder = Section.withMax("admissions", "score", "maximum_score", (query) => query.where("status", "enrolled"));
+    const builderAvg = Section.query().withAvg("admissions", "score", (query) => query.where("status", "enrolled"));
+    const builderMax = Section.query().withMax("admissions", "score", "maximum_score", (query) => query.where("status", "enrolled"));
+
+    // @ts-expect-error Related aggregate columns should come from Admission, not Section.
+    Section.withSum("admissions", "year_level");
+    // @ts-expect-error Related aggregate columns should come from Admission, not Section.
+    Section.query().withAvg("admissions", "year_level");
+
+    expect(sumBuilder).toBeDefined();
+    expect(avgBuilder).toBeDefined();
+    expect(minBuilder).toBeDefined();
+    expect(maxBuilder).toBeDefined();
+    expect(builderAvg.toSql()).toContain("\"status\" = 'enrolled'");
+    expect(builderMax.toSql()).toContain("\"status\" = 'enrolled'");
   });
 });

@@ -54,6 +54,7 @@ type BaseModelInstanceKey =
   | "makeHidden"
   | "makeVisible"
   | "save"
+  | "update"
   | "updateTimestamps"
   | "touch"
   | "increment"
@@ -115,6 +116,12 @@ type RelationReturnModel<F> =
   : F extends (...args: any[]) => MorphToMany<infer R> ? R
   : F extends (...args: any[]) => Relation<infer R> ? R
   : Model;
+export type RelationRelatedModel<T, R extends string> =
+  R extends keyof T
+    ? T[R] extends (...args: any[]) => ModelRelationValue
+      ? RelationReturnModel<T[R]>
+      : Model
+    : Model;
 type RelationReturnType<F> =
   F extends (...args: any[]) => infer R ? R : never;
 type PrevDepth = [never, 0, 1, 2, 3];
@@ -162,13 +169,18 @@ type PivotRelationValue = BelongsToMany<any> | MorphToMany<any>;
 export type RelationConstraintQuery<T, P extends string> =
   Builder<PathToModel<T, P>> &
   (RelationInstanceAtPath<T, P> extends PivotRelationValue ? PivotQueryBuilder : {});
-export type TypedConstraintCallback<T, P extends string> = (query: RelationConstraintQuery<T, P>) => void | Builder<any>;
+export type TypedConstraintCallback<T, P extends string> = (query: RelationConstraintQuery<T, P>) => void | Builder<any> | RelationConstraintQuery<T, P>;
 export type TypedConstraintMap<T> = Partial<{
   [P in NestedRelationPath<T>]: TypedConstraintCallback<T, P>;
 }>;
 export type TypedConstraintSelection<T, K extends string & NestedRelationPath<T>> = {
   [P in K]: TypedConstraintCallback<T, P>;
 };
+export type ExistsRelationPath<T> = NestedRelationPath<T> | `${NestedRelationPath<T>} as ${string}`;
+type RelationPathFromExistsKey<Key extends string> = Key extends `${infer Relation} as ${string}` ? Relation : Key;
+export type TypedExistsConstraintMap<T> = Partial<{
+  [K in ExistsRelationPath<T>]: TypedConstraintCallback<T, RelationPathFromExistsKey<K> & NestedRelationPath<T>>;
+}>;
 export type TypedEagerLoad<T> =
   | LiteralUnion<string & NestedRelationPath<T>>
   | { name: LiteralUnion<string & NestedRelationPath<T>>; constraint?: EagerLoadConstraint }
@@ -227,6 +239,17 @@ export type WithRelationCount<T, RelationName extends string, Alias extends stri
   WithJsonMethods<T & {
     [K in Alias extends string ? Alias : `${RelationName}_count`]: number;
   }>;
+export type WithRelationExists<T, RelationName extends string, Alias extends string | undefined = undefined> =
+  WithJsonMethods<T & {
+    [K in Alias extends string ? Alias : `${RelationName}_exists`]: boolean;
+  }>;
+type RelationExistsAlias<Key extends string> = Key extends `${string} as ${infer Alias}` ? Alias : `${Key}_exists`;
+export type WithRelationExistsMap<T, R extends object> =
+  WithJsonMethods<T & {
+    [K in keyof R & string as RelationExistsAlias<K>]: boolean;
+  }>;
+type AggregateConstraint<T, R extends string> = TypedConstraintCallback<T, R & NestedRelationPath<T>>;
+type AggregateColumn<T, R extends string> = ModelColumn<RelationRelatedModel<T, R>>;
 // Variant of WithLoadedRelations for constraint map form — preserves nested loaded types
 // from each callback's Builder return type instead of using the raw relation model.
 type WithLoadedRelationsFromConstraintMapShape<T, R extends object> =
@@ -1334,6 +1357,10 @@ export class Model<T extends Record<string, any> = any> {
 
   static with<M extends ModelConstructor, K extends string & NestedRelationPath<InstanceType<M>>>(this: M, constraint: TypedConstraintSelection<InstanceType<M>, K>): Builder<InstanceType<M>, WithLoadedRelationsFromConstraintMap<InstanceType<M>, TypedConstraintSelection<InstanceType<M>, K>>>;
   static with<M extends ModelConstructor, R extends TypedConstraintMap<InstanceType<M>> & object>(this: M, constraint: R): Builder<InstanceType<M>, WithLoadedRelationsFromConstraintMap<InstanceType<M>, R>>;
+  static with<M extends ModelConstructor, R extends string & NestedRelationPath<InstanceType<M>>>(this: M, relation: R): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, R>>;
+  static with<M extends ModelConstructor>(this: M, relation: LiteralUnion<string & NestedRelationPath<InstanceType<M>>>): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, string>>;
+  static with<M extends ModelConstructor, R extends string & NestedRelationPath<InstanceType<M>>>(this: M, relation: R, callback: TypedConstraintCallback<InstanceType<M>, R>): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, R>>;
+  static with<M extends ModelConstructor>(this: M, relation: LiteralUnion<string & NestedRelationPath<InstanceType<M>>>, callback: EagerLoadConstraint): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, string>>;
   static with<M extends ModelConstructor, Rs extends ReadonlyArray<TypedEagerLoad<InstanceType<M>>>>(this: M, relations: Rs): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, ExtractStringPaths<Rs[number]>>>;
   static with<M extends ModelConstructor, Rs extends ReadonlyArray<TypedEagerLoad<InstanceType<M>>>>(this: M, ...relations: Rs): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, ExtractStringPaths<Rs[number]>>>;
   static with<M extends ModelConstructor>(this: M, ...relations: any[]): any {
@@ -1360,52 +1387,131 @@ export class Model<T extends Record<string, any> = any> {
     return this.query().scope(name, ...args);
   }
 
+  static has<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, operator?: string, count?: number): Builder<InstanceType<M>>;
+  static has<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, operator?: string, count?: number): Builder<InstanceType<M>>;
   static has<M extends ModelConstructor>(this: M, relationName: string, operator?: string, count?: number): Builder<InstanceType<M>> {
     return this.query().has(relationName as any, operator as any, count as any);
   }
 
+  static whereHas<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, callback?: (query: RelationConstraintQuery<InstanceType<M>, R>) => void | Builder<any>, operator?: string, count?: number): Builder<InstanceType<M>>;
+  static whereHas<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, callback?: (query: Builder<any>) => void | Builder<any>, operator?: string, count?: number): Builder<InstanceType<M>>;
   static whereHas<M extends ModelConstructor>(this: M, relationName: string, callback?: (query: Builder<any>) => void | Builder<any>, operator?: string, count?: number): Builder<InstanceType<M>> {
     return this.query().whereHas(relationName as any, callback as any, operator as any, count as any);
   }
 
+  static doesntHave<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R): Builder<InstanceType<M>>;
+  static doesntHave<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>): Builder<InstanceType<M>>;
   static doesntHave<M extends ModelConstructor>(this: M, relationName: string): Builder<InstanceType<M>> {
     return this.query().doesntHave(relationName as any);
   }
 
+  static whereDoesntHave<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, callback?: (query: RelationConstraintQuery<InstanceType<M>, R>) => void | Builder<any>): Builder<InstanceType<M>>;
+  static whereDoesntHave<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, callback?: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>>;
   static whereDoesntHave<M extends ModelConstructor>(this: M, relationName: string, callback?: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>> {
     return this.query().whereDoesntHave(relationName as any, callback as any);
   }
 
+  static whereRelation<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: ModelColumn<RelationRelatedModel<InstanceType<M>, R>>, operator: string | any, value?: any): Builder<InstanceType<M>>;
+  static whereRelation<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, operator: string | any, value?: any): Builder<InstanceType<M>>;
   static whereRelation<M extends ModelConstructor>(this: M, relationName: string, column: any, operator: any, value?: any): Builder<InstanceType<M>> {
     return this.query().whereRelation(relationName, column, operator, value);
   }
 
+  static orWhereRelation<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: ModelColumn<RelationRelatedModel<InstanceType<M>, R>>, operator: string | any, value?: any): Builder<InstanceType<M>>;
+  static orWhereRelation<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, operator: string | any, value?: any): Builder<InstanceType<M>>;
   static orWhereRelation<M extends ModelConstructor>(this: M, relationName: string, column: any, operator: any, value?: any): Builder<InstanceType<M>> {
     return this.query().orWhereRelation(relationName, column, operator, value);
   }
 
-  static withWhereHas<M extends ModelConstructor>(this: M, relation: string, callback?: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>> {
+  static withWhereHas<M extends ModelConstructor, R extends TypedEagerLoad<InstanceType<M>>>(this: M, relation: R, callback?: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>>;
+  static withWhereHas<M extends ModelConstructor>(this: M, relation: TypedEagerLoad<InstanceType<M>>, callback?: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>>;
+  static withWhereHas<M extends ModelConstructor>(this: M, relation: any, callback?: (query: Builder<any>) => void | Builder<any>): Builder<InstanceType<M>> {
     return this.query().withWhereHas(relation, callback) as any;
   }
 
-  static withCount<M extends ModelConstructor, R extends string, A extends string | undefined = undefined>(this: M, relationName: R, alias?: A): Builder<InstanceType<M>, WithRelationCount<InstanceType<M>, R, A>> {
+  static withCount<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>, A extends string | undefined = undefined>(this: M, relationName: R, alias?: A): Builder<InstanceType<M>, WithRelationCount<InstanceType<M>, R, A>>;
+  static withCount<M extends ModelConstructor, A extends string | undefined = undefined>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, alias?: A): Builder<InstanceType<M>, WithRelationCount<InstanceType<M>, string, A>>;
+  static withCount<M extends ModelConstructor>(this: M, relationName: string, alias?: string): Builder<InstanceType<M>, WithRelationCount<InstanceType<M>, string, string | undefined>> {
     return this.query().withCount(relationName, alias);
   }
 
-  static withSum<M extends ModelConstructor>(this: M, relationName: string, column: ModelColumn<InstanceType<M>>, alias?: string): Builder<InstanceType<M>> {
-    return this.query().withSum(relationName, column, alias);
+  static withExists<M extends ModelConstructor, R extends TypedExistsConstraintMap<InstanceType<M>> & object>(
+    this: M,
+    relations: R
+  ): Builder<InstanceType<M>, WithRelationExistsMap<InstanceType<M>, R>>;
+  static withExists<M extends ModelConstructor, R extends Record<string, ((query: Builder<any>) => any) | undefined>>(
+    this: M,
+    relations: R
+  ): Builder<InstanceType<M>, WithRelationExistsMap<InstanceType<M>, R>>;
+  static withExists<M extends ModelConstructor, R extends string & NestedRelationPath<InstanceType<M>>>(
+    this: M,
+    relationName: R,
+    callback?: TypedConstraintCallback<InstanceType<M>, R>
+  ): Builder<InstanceType<M>, WithRelationExists<InstanceType<M>, R>>;
+  static withExists<M extends ModelConstructor, R extends string>(
+    this: M,
+    relationName: R,
+    callback?: (query: Builder<any>) => any
+  ): Builder<InstanceType<M>, WithRelationExists<InstanceType<M>, R>>;
+  static withExists<M extends ModelConstructor, R extends string & NestedRelationPath<InstanceType<M>>, A extends string>(
+    this: M,
+    relationName: R,
+    alias: A,
+    callback?: TypedConstraintCallback<InstanceType<M>, R>
+  ): Builder<InstanceType<M>, WithRelationExists<InstanceType<M>, R, A>>;
+  static withExists<M extends ModelConstructor, R extends string, A extends string>(
+    this: M,
+    relationName: R,
+    alias: A,
+    callback?: (query: Builder<any>) => any
+  ): Builder<InstanceType<M>, WithRelationExists<InstanceType<M>, R, A>>;
+  static withExists<M extends ModelConstructor>(
+    this: M,
+    relationOrMap: any,
+    aliasOrCallback?: any,
+    callback?: any
+  ): any {
+    return this.query().withExists(relationOrMap, aliasOrCallback, callback);
   }
 
-  static withAvg<M extends ModelConstructor>(this: M, relationName: string, column: ModelColumn<InstanceType<M>>, alias?: string): Builder<InstanceType<M>> {
-    return this.query().withAvg(relationName, column, alias);
+  static withSum<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: AggregateColumn<InstanceType<M>, R>, callback: AggregateConstraint<InstanceType<M>, R>): Builder<InstanceType<M>>;
+  static withSum<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: AggregateColumn<InstanceType<M>, R>, alias?: string): Builder<InstanceType<M>>;
+  static withSum<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: AggregateColumn<InstanceType<M>, R>, alias: string, callback: AggregateConstraint<InstanceType<M>, R>): Builder<InstanceType<M>>;
+  static withSum<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, callback: EagerLoadConstraint): Builder<InstanceType<M>>;
+  static withSum<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, alias?: string): Builder<InstanceType<M>>;
+  static withSum<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, alias: string, callback: EagerLoadConstraint): Builder<InstanceType<M>>;
+  static withSum<M extends ModelConstructor>(this: M, relationName: string, column: string, aliasOrCallback?: string | EagerLoadConstraint, callback?: EagerLoadConstraint): Builder<InstanceType<M>> {
+    return this.query().withSum(relationName, column, aliasOrCallback as any, callback as any);
   }
 
-  static withMin<M extends ModelConstructor>(this: M, relationName: string, column: ModelColumn<InstanceType<M>>, alias?: string): Builder<InstanceType<M>> {
-    return this.query().withMin(relationName, column, alias);
+  static withAvg<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: AggregateColumn<InstanceType<M>, R>, callback: AggregateConstraint<InstanceType<M>, R>): Builder<InstanceType<M>>;
+  static withAvg<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: AggregateColumn<InstanceType<M>, R>, alias?: string): Builder<InstanceType<M>>;
+  static withAvg<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: AggregateColumn<InstanceType<M>, R>, alias: string, callback: AggregateConstraint<InstanceType<M>, R>): Builder<InstanceType<M>>;
+  static withAvg<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, callback: EagerLoadConstraint): Builder<InstanceType<M>>;
+  static withAvg<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, alias?: string): Builder<InstanceType<M>>;
+  static withAvg<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, alias: string, callback: EagerLoadConstraint): Builder<InstanceType<M>>;
+  static withAvg<M extends ModelConstructor>(this: M, relationName: string, column: string, aliasOrCallback?: string | EagerLoadConstraint, callback?: EagerLoadConstraint): Builder<InstanceType<M>> {
+    return this.query().withAvg(relationName, column, aliasOrCallback as any, callback as any);
   }
 
-  static withMax<M extends ModelConstructor>(this: M, relationName: string, column: ModelColumn<InstanceType<M>>, alias?: string): Builder<InstanceType<M>> {
-    return this.query().withMax(relationName, column, alias);
+  static withMin<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: AggregateColumn<InstanceType<M>, R>, callback: AggregateConstraint<InstanceType<M>, R>): Builder<InstanceType<M>>;
+  static withMin<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: AggregateColumn<InstanceType<M>, R>, alias?: string): Builder<InstanceType<M>>;
+  static withMin<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: AggregateColumn<InstanceType<M>, R>, alias: string, callback: AggregateConstraint<InstanceType<M>, R>): Builder<InstanceType<M>>;
+  static withMin<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, callback: EagerLoadConstraint): Builder<InstanceType<M>>;
+  static withMin<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, alias?: string): Builder<InstanceType<M>>;
+  static withMin<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, alias: string, callback: EagerLoadConstraint): Builder<InstanceType<M>>;
+  static withMin<M extends ModelConstructor>(this: M, relationName: string, column: string, aliasOrCallback?: string | EagerLoadConstraint, callback?: EagerLoadConstraint): Builder<InstanceType<M>> {
+    return this.query().withMin(relationName, column, aliasOrCallback as any, callback as any);
+  }
+
+  static withMax<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: AggregateColumn<InstanceType<M>, R>, callback: AggregateConstraint<InstanceType<M>, R>): Builder<InstanceType<M>>;
+  static withMax<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: AggregateColumn<InstanceType<M>, R>, alias?: string): Builder<InstanceType<M>>;
+  static withMax<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: AggregateColumn<InstanceType<M>, R>, alias: string, callback: AggregateConstraint<InstanceType<M>, R>): Builder<InstanceType<M>>;
+  static withMax<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, callback: EagerLoadConstraint): Builder<InstanceType<M>>;
+  static withMax<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, alias?: string): Builder<InstanceType<M>>;
+  static withMax<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, alias: string, callback: EagerLoadConstraint): Builder<InstanceType<M>>;
+  static withMax<M extends ModelConstructor>(this: M, relationName: string, column: string, aliasOrCallback?: string | EagerLoadConstraint, callback?: EagerLoadConstraint): Builder<InstanceType<M>> {
+    return this.query().withMax(relationName, column, aliasOrCallback as any, callback as any);
   }
 
   static async all<M extends ModelConstructor>(this: M): Promise<Collection<InstanceType<M>>> {
@@ -1821,6 +1927,11 @@ export class Model<T extends Record<string, any> = any> {
     await this.touchOwners();
 
     return this;
+  }
+
+  async update(attributes: Partial<T> | ModelAttributeInput<this>, options: SaveOptions = {}): Promise<this> {
+    this.fill(attributes);
+    return this.save(options);
   }
 
   private async touchOwners(): Promise<void> {
