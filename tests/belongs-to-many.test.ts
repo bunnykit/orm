@@ -48,6 +48,21 @@ class BItem extends Model {
   }
 }
 
+class Section extends Model {
+  static table = "btm_sections";
+  students() {
+    return this.belongsToMany(Student, Offering);
+  }
+}
+
+class Student extends Model {
+  static table = "btm_students";
+}
+
+class Offering extends Model {
+  static table = "btm_offerings";
+}
+
 describe("BelongsToMany", () => {
   beforeAll(async () => {
     setupTestDb();
@@ -97,6 +112,22 @@ describe("BelongsToMany", () => {
       table.string("notes").nullable();
       table.timestamps();
     });
+    await Schema.create("btm_sections", (table) => {
+      table.increments("id");
+      table.string("name");
+      table.timestamps();
+    });
+    await Schema.create("btm_students", (table) => {
+      table.increments("id");
+      table.string("name");
+      table.timestamps();
+    });
+    await Schema.create("btm_offerings", (table) => {
+      table.increments("id");
+      table.integer("section_id");
+      table.integer("student_id");
+      table.timestamps();
+    });
   });
 
   test("attach adds pivot rows", async () => {
@@ -109,6 +140,22 @@ describe("BelongsToMany", () => {
     expect(roles).toBeInstanceOf(Collection);
     expect(roles).toHaveLength(1);
     expect(roles[0].getAttribute("title")).toBe("Admin");
+  });
+
+  test("belongsToMany can use a pivot model to infer the pivot table", async () => {
+    const section = await Section.create({ name: "A" });
+    const student = await Student.create({ name: "Ada" });
+
+    await section.students().attach(student.getAttribute("id"));
+
+    const students = await section.students().getResults();
+    expect(students).toHaveLength(1);
+    expect(students[0].getAttribute("name")).toBe("Ada");
+
+    const sql = section.students().getQuery().toSql();
+    expect(sql).toContain('"btm_offerings"');
+    expect(sql).toContain('"btm_offerings"."section_id"');
+    expect(sql).toContain('"btm_offerings"."student_id"');
   });
 
   test("detach removes pivot rows", async () => {

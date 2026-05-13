@@ -1719,6 +1719,28 @@ const roles = await user.roles().get(); // Collection<Role>
 
 Bunny infers the pivot table name by sorting model names alphabetically: `role_user` for `Role` + `User`.
 
+You can also pass a pivot model as the second argument. In that form Bunny uses the pivot model's table name and still infers the pivot keys from the parent and related model names:
+
+```ts
+class Section extends Model {
+  static table = "sections";
+
+  students() {
+    return this.belongsToMany(Student, Offering);
+  }
+}
+
+class Student extends Model {
+  static table = "students";
+}
+
+class Offering extends Model {
+  static table = "offerings";
+}
+```
+
+This uses `offerings` as the pivot table, `section_id` as the parent pivot key, and `student_id` as the related pivot key.
+
 #### Pivot Columns and Timestamps
 
 ```ts

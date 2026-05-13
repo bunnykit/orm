@@ -2121,8 +2121,24 @@ export class Model<T extends Record<string, any> = any> {
     relatedPivotKey?: string,
     parentKey?: string,
     relatedKey?: string
+  ): BelongsToMany<R>;
+  belongsToMany<R extends Model, P extends Model>(
+    related: ModelConstructor<R>,
+    pivot: ModelConstructor<P>,
+    foreignPivotKey?: string,
+    relatedPivotKey?: string,
+    parentKey?: string,
+    relatedKey?: string
+  ): BelongsToMany<R>;
+  belongsToMany<R extends Model>(
+    related: ModelConstructor<R>,
+    tableOrPivot?: string | ModelConstructor,
+    foreignPivotKey?: string,
+    relatedPivotKey?: string,
+    parentKey?: string,
+    relatedKey?: string
   ): BelongsToMany<R> {
-    return new BelongsToMany<R>(this, related as any, table, foreignPivotKey, relatedPivotKey, parentKey, relatedKey);
+    return new BelongsToMany<R>(this, related as any, tableOrPivot as any, foreignPivotKey, relatedPivotKey, parentKey, relatedKey);
   }
 
   // Polymorphic relations

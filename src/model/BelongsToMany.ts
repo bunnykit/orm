@@ -191,16 +191,18 @@ export class BelongsToMany<T extends Model = Model> {
   constructor(
     parent: Model,
     related: ModelConstructor,
-    table?: string,
+    table?: string | ModelConstructor,
     foreignPivotKey?: string,
     relatedPivotKey?: string,
     parentKey?: string,
     relatedKey?: string
   ) {
     const parentConstructor = getModelConstructor(parent);
+    const pivotModel = typeof table === "function" ? table : undefined;
+    const pivotTable = typeof table === "string" ? table : undefined;
     this.parent = parent;
     this.related = related;
-    this.table = table || defaultPivotTable(parent, related);
+    this.table = pivotModel ? pivotModel.getTable() : pivotTable || defaultPivotTable(parent, related);
     this.parentKey = parentKey || parentConstructor.primaryKey;
     this.relatedKey = relatedKey || related.primaryKey;
     this.foreignPivotKey = foreignPivotKey || `${snakeCase(parentConstructor.name)}_id`;
