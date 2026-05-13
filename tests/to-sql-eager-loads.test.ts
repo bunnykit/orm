@@ -158,3 +158,144 @@ describe("string with() produces exact loaded type (no deferred union)", () => {
     expect(_assertNoMethod).toBe(true);
   });
 });
+
+describe("model json type", () => {
+  test("json() includes Model.define attributes", () => {
+    interface SectionAttrs {
+      id: number;
+      name: string;
+      year_level: number;
+    }
+
+    class Section extends Model.define<SectionAttrs>("typed_json_sections") {}
+
+    const section = new Section({ id: 1, name: "A", year_level: 2 });
+    const json = section.json();
+
+    const _id: number = json.id;
+    const _name: string = json.name;
+    const _yearLevel: number = json.year_level;
+
+    expect(_id).toBe(1);
+    expect(_name).toBe("A");
+    expect(_yearLevel).toBe(2);
+  });
+
+  test("json() includes loaded relation shapes", () => {
+    interface AdviserAttrs {
+      id: number;
+      name: string;
+    }
+    interface SubjectAttrs {
+      id: number;
+      title: string;
+    }
+    interface SectionAttrs {
+      id: number;
+      adviser_id: number | null;
+      name: string;
+    }
+
+    class Adviser extends Model.define<AdviserAttrs>("typed_json_advisers") {}
+    class Subject extends Model.define<SubjectAttrs>("typed_json_subjects") {}
+    class Section extends Model.define<SectionAttrs>("typed_json_sections") {
+      adviser() { return this.belongsTo(Adviser); }
+      subjects() { return this.hasMany(Subject); }
+    }
+
+    const builder = Section.with("adviser", "subjects");
+
+    type Result = NonNullable<Awaited<ReturnType<typeof builder.find>>>;
+    type Json = ReturnType<Result["json"]>;
+    type AdviserJson = Json["adviser"];
+    type SubjectsJson = Json["subjects"];
+
+    const _hasAdviserKey: "adviser" extends keyof Json ? true : false = true;
+    const _hasSubjectsKey: "subjects" extends keyof Json ? true : false = true;
+    const _adviserName: NonNullable<AdviserJson>["name"] extends string ? true : false = true;
+    const _subjectsAreArray: SubjectsJson extends Array<any> ? true : false = true;
+    const _subjectTitle: SubjectsJson[number]["title"] extends string ? true : false = true;
+
+    expect(_hasAdviserKey).toBe(true);
+    expect(_hasSubjectsKey).toBe(true);
+    expect(_adviserName).toBe(true);
+    expect(_subjectsAreArray).toBe(true);
+    expect(_subjectTitle).toBe(true);
+  });
+
+  test("json() keeps loaded relation shapes through chained array with()", () => {
+    interface AdviserAttrs {
+      id: number;
+      name: string;
+    }
+    interface BranchAttrs {
+      id: number;
+      name: string;
+    }
+    interface SectionAttrs {
+      id: number;
+      adviser_id: number | null;
+      branch_id: number | null;
+      name: string;
+    }
+
+    class Adviser extends Model.define<AdviserAttrs>("typed_json_chain_advisers") {}
+    class Branch extends Model.define<BranchAttrs>("typed_json_chain_branches") {}
+    class Section extends Model.define<SectionAttrs>("typed_json_chain_sections") {
+      adviser() { return this.belongsTo(Adviser); }
+      branch() { return this.belongsTo(Branch); }
+    }
+
+    const builder = Section
+      .with("adviser")
+      .with(["branch"]);
+
+    type Result = NonNullable<Awaited<ReturnType<typeof builder.find>>>;
+    type Json = ReturnType<Result["json"]>;
+
+    const _hasAdviserKey: "adviser" extends keyof Json ? true : false = true;
+    const _hasBranchKey: "branch" extends keyof Json ? true : false = true;
+    const _adviserName: NonNullable<Json["adviser"]>["name"] extends string ? true : false = true;
+    const _branchName: NonNullable<Json["branch"]>["name"] extends string ? true : false = true;
+
+    expect(_hasAdviserKey).toBe(true);
+    expect(_hasBranchKey).toBe(true);
+    expect(_adviserName).toBe(true);
+    expect(_branchName).toBe(true);
+  });
+
+  test("json() includes withCount result keys", () => {
+    interface AdmissionAttrs {
+      id: number;
+      section_id: number;
+    }
+    interface SectionAttrs {
+      id: number;
+      name: string;
+    }
+
+    class Admission extends Model.define<AdmissionAttrs>("typed_json_count_admissions") {}
+    class Section extends Model.define<SectionAttrs>("typed_json_count_sections") {
+      admissions() { return this.hasMany(Admission); }
+    }
+
+    const builder = Section
+      .withCount("admissions")
+      .withCount("admissions", "total_admissions");
+
+    type Result = NonNullable<Awaited<ReturnType<typeof builder.find>>>;
+    type Json = ReturnType<Result["json"]>;
+
+    const _hasDefaultCount: "admissions_count" extends keyof Json ? true : false = true;
+    const _hasAliasCount: "total_admissions" extends keyof Json ? true : false = true;
+    const _defaultCount: Json["admissions_count"] extends number ? true : false = true;
+    const _aliasCount: Json["total_admissions"] extends number ? true : false = true;
+    // @ts-expect-error Unknown keys should not be admitted by a broad Record<string, any>.
+    type MissingCount = Json["missing_count"];
+
+    expect(_hasDefaultCount).toBe(true);
+    expect(_hasAliasCount).toBe(true);
+    expect(_defaultCount).toBe(true);
+    expect(_aliasCount).toBe(true);
+  });
+});

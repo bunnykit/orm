@@ -12,7 +12,7 @@ import { TenantContext } from "../connection/TenantContext.js";
 import { IdentityMap } from "./IdentityMap.js";
 import { Collection } from "../support/Collection.js";
 
-export type ModelConstructor<T extends Model = Model> = (new (...args: any[]) => T) & Omit<typeof Model, "prototype">;
+export type ModelConstructor<T = Model> = (new (...args: any[]) => T) & Omit<typeof Model, "prototype">;
 export type GlobalScope = (builder: Builder<any>, model: ModelConstructor) => void;
 export type LiteralUnion<T extends string> = T | (string & {});
 export type EagerLoadConstraint = (query: Builder<any>) => void | Builder<any>;
@@ -35,6 +35,7 @@ type BaseModelInstanceKey =
   | "$connection"
   | "$hidden"
   | "$visible"
+  | "$wasRecentlyCreated"
   | "fill"
   | "setConnection"
   | "getConnection"
@@ -57,12 +58,17 @@ type BaseModelInstanceKey =
   | "touch"
   | "increment"
   | "decrement"
+  | "is"
+  | "isNot"
   | "load"
   | "delete"
+  | "saveQuietly"
+  | "deleteQuietly"
   | "restore"
   | "forceDelete"
   | "refresh"
   | "toJSON"
+  | "json"
   | "toString"
   | "freshTimestamp"
   | "setRelation"
@@ -201,20 +207,60 @@ type RelModelOf<F> =
 type CallbackResultModel<CB, Fallback> =
   NonNullable<CB> extends (...args: any[]) => Builder<any, infer TResult> ? TResult : Fallback;
 type TopLevelKey<S extends string> = S extends `${infer Head}.${string}` ? Head : S;
-export type ExtractStringPaths<R> = R extends string ? R : R extends object ? keyof R & string : never;
-export type WithLoadedRelations<T, Paths extends string> =
+export type ExtractStringPaths<R> =
+  R extends string ? R
+  : R extends ReadonlyArray<infer Item> ? ExtractStringPaths<Item>
+  : R extends object ? keyof R & string
+  : never;
+type WithJsonMethods<T> = Omit<T, "json" | "toJSON"> & {
+  toJSON(): ModelJson<Omit<T, "json" | "toJSON">>;
+  json(options?: { relations?: boolean }): ModelJson<Omit<T, "json" | "toJSON">>;
+};
+type WithLoadedRelationsShape<T, Paths extends string> =
   Omit<T, TopLevelKey<Paths> & keyof T> & {
     [K in TopLevelKey<Paths> & keyof T]: T[K] extends (...args: any[]) => ModelRelationValue
       ? LoadedRelationType<T[K]>
       : T[K];
   };
+export type WithLoadedRelations<T, Paths extends string> = WithJsonMethods<WithLoadedRelationsShape<T, Paths>>;
+export type WithRelationCount<T, RelationName extends string, Alias extends string | undefined = undefined> =
+  WithJsonMethods<T & {
+    [K in Alias extends string ? Alias : `${RelationName}_count`]: number;
+  }>;
 // Variant of WithLoadedRelations for constraint map form — preserves nested loaded types
 // from each callback's Builder return type instead of using the raw relation model.
-export type WithLoadedRelationsFromConstraintMap<T, R extends object> =
+type WithLoadedRelationsFromConstraintMapShape<T, R extends object> =
   Omit<T, keyof R & keyof T> & {
     [K in keyof R & keyof T & string]: T[K] extends (...args: any[]) => ModelRelationValue
       ? LoadedTypeWithNested<T[K], CallbackResultModel<R[K], RelModelOf<T[K]>>>
       : T[K];
+  };
+export type WithLoadedRelationsFromConstraintMap<T, R extends object> = WithJsonMethods<WithLoadedRelationsFromConstraintMapShape<T, R>>;
+type JsonRelationKeys<T> = Extract<{
+  [K in Exclude<keyof T, BaseModelInstanceKey | keyof ModelAttributes<T>>]-?:
+    T[K] extends (...args: any[]) => any ? never
+    : NonNullable<T[K]> extends Collection<any> ? K
+    : NonNullable<T[K]> extends { $attributes: Record<string, any> } ? K
+    : never;
+}[Exclude<keyof T, BaseModelInstanceKey | keyof ModelAttributes<T>>], string>;
+type JsonExtraKeys<T> = Extract<{
+  [K in Exclude<keyof T, BaseModelInstanceKey | keyof ModelAttributes<T>>]-?:
+    T[K] extends (...args: any[]) => any ? never
+    : NonNullable<T[K]> extends Collection<any> ? never
+    : NonNullable<T[K]> extends { $attributes: Record<string, any> } ? never
+    : K;
+}[Exclude<keyof T, BaseModelInstanceKey | keyof ModelAttributes<T>>], string>;
+type JsonRelationValue<T> =
+  T extends Collection<infer R> ? ModelJson<R>[]
+  : T extends { $attributes: Record<string, any> } ? ModelJson<T>
+  : T;
+export type ModelJson<T> =
+  ModelAttributes<T> &
+  {
+    [K in JsonRelationKeys<T>]: JsonRelationValue<T[K]>;
+  } &
+  {
+    [K in JsonExtraKeys<T>]: T[K];
   };
 export type CastDefinition =
   | string
@@ -732,7 +778,7 @@ export class HasOne<T extends Model = Model> extends Relation<T> {
   }
 }
 
-export class Model<T extends Record<string, any> = Record<string, any>> {
+export class Model<T extends Record<string, any> = any> {
   static table: string;
   static primaryKey = "id";
   static timestamps = true;
@@ -1288,6 +1334,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
 
   static with<M extends ModelConstructor, K extends string & NestedRelationPath<InstanceType<M>>>(this: M, constraint: TypedConstraintSelection<InstanceType<M>, K>): Builder<InstanceType<M>, WithLoadedRelationsFromConstraintMap<InstanceType<M>, TypedConstraintSelection<InstanceType<M>, K>>>;
   static with<M extends ModelConstructor, R extends TypedConstraintMap<InstanceType<M>> & object>(this: M, constraint: R): Builder<InstanceType<M>, WithLoadedRelationsFromConstraintMap<InstanceType<M>, R>>;
+  static with<M extends ModelConstructor, Rs extends ReadonlyArray<TypedEagerLoad<InstanceType<M>>>>(this: M, relations: Rs): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, ExtractStringPaths<Rs[number]>>>;
   static with<M extends ModelConstructor, Rs extends ReadonlyArray<TypedEagerLoad<InstanceType<M>>>>(this: M, ...relations: Rs): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, ExtractStringPaths<Rs[number]>>>;
   static with<M extends ModelConstructor>(this: M, ...relations: any[]): any {
     return this.query().with(...relations) as any;
@@ -1341,7 +1388,7 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return this.query().withWhereHas(relation, callback) as any;
   }
 
-  static withCount<M extends ModelConstructor>(this: M, relationName: string, alias?: string): Builder<InstanceType<M>> {
+  static withCount<M extends ModelConstructor, R extends string, A extends string | undefined = undefined>(this: M, relationName: R, alias?: A): Builder<InstanceType<M>, WithRelationCount<InstanceType<M>, R, A>> {
     return this.query().withCount(relationName, alias);
   }
 
@@ -2008,12 +2055,12 @@ export class Model<T extends Record<string, any> = Record<string, any>> {
     return result;
   }
 
-  toJSON(): Record<string, any> {
-    return this.serialize(true);
+  toJSON(): ModelJson<this> {
+    return this.serialize(true) as ModelJson<this>;
   }
 
-  json(options?: { relations?: boolean }): Record<string, any> {
-    return this.serialize(options?.relations !== false);
+  json(options?: { relations?: boolean }): ModelJson<this> {
+    return this.serialize(options?.relations !== false) as ModelJson<this>;
   }
 
   toString(): string {

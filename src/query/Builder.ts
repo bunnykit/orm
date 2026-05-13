@@ -1,6 +1,6 @@
 import { Connection } from "../connection/Connection.js";
 import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../types/index.js";
-import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName, TypedEagerLoad, TypedConstraintMap, TypedConstraintSelection, ExtractStringPaths, WithLoadedRelations, WithLoadedRelationsFromConstraintMap, Relation, RelationConstraintQuery, NestedRelationPath } from "../model/Model.js";
+import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName, TypedEagerLoad, TypedConstraintMap, TypedConstraintSelection, ExtractStringPaths, WithLoadedRelations, WithLoadedRelationsFromConstraintMap, WithRelationCount, Relation, RelationConstraintQuery, NestedRelationPath } from "../model/Model.js";
 import { findRelationMethod } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
 import { IdentityMap } from "../model/IdentityMap.js";
@@ -480,6 +480,7 @@ export class Builder<T = Record<string, any>, TResult = T> {
 
   with<K extends string & NestedRelationPath<T>>(constraint: TypedConstraintSelection<T, K>): Builder<T, WithLoadedRelationsFromConstraintMap<TResult, TypedConstraintSelection<T, K>>>;
   with<R extends TypedConstraintMap<T> & object>(constraint: R): Builder<T, WithLoadedRelationsFromConstraintMap<TResult, R>>;
+  with<Rs extends ReadonlyArray<TypedEagerLoad<T>>>(relations: Rs): Builder<T, WithLoadedRelations<TResult, ExtractStringPaths<Rs[number]>>>;
   with<Rs extends ReadonlyArray<TypedEagerLoad<T>>>(...relations: Rs): Builder<T, WithLoadedRelations<TResult, ExtractStringPaths<Rs[number]>>>;
   with(...relations: any[]): any {
     this.eagerLoads.push(...this.normalizeEagerLoads(relations as any));
@@ -585,15 +586,15 @@ export class Builder<T = Record<string, any>, TResult = T> {
   }
 
   whereRelation(relationName: string, column: ModelColumn<T>, operator: string | any, value?: any): this {
-    return this.whereHas(relationName as any, (q) => {
+    return (this as any).whereHas(relationName, (q: Builder<any>) => {
       value === undefined ? q.where(column as any, operator) : q.where(column as any, operator, value);
-    });
+    }) as this;
   }
 
   orWhereRelation(relationName: string, column: ModelColumn<T>, operator: string | any, value?: any): this {
-    return this.orWhereHas(relationName as any, (q) => {
+    return (this as any).orWhereHas(relationName, (q: Builder<any>) => {
       value === undefined ? q.where(column as any, operator) : q.where(column as any, operator, value);
-    });
+    }) as this;
   }
 
   withWhereHas<R extends TypedEagerLoad<T>>(
@@ -601,7 +602,7 @@ export class Builder<T = Record<string, any>, TResult = T> {
     callback?: RelationConstraint<any, any>
   ): Builder<T, WithLoadedRelations<TResult, ExtractStringPaths<R>>> {
     this.whereHas(relation as string, callback);
-    return this.with(relation) as any;
+    return (this as any).with(relation);
   }
 
   doesntHave<R extends ModelRelationName<TResult>>(relationName: R, callback?: RelationConstraint<TResult, R>): this {
@@ -612,10 +613,10 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return this.doesntHave(relationName, callback);
   }
 
-  withCount(relationName: string, alias?: string): this {
+  withCount<R extends string, A extends string | undefined = undefined>(relationName: R, alias?: A): Builder<T, WithRelationCount<TResult, R, A>> {
     const relation = this.getModelRelation(relationName);
     this.addSelect(`(${relation.getRelationCountSql(this)}) as ${alias || `${relationName}_count`}`);
-    return this;
+    return this as any;
   }
 
   withSum(relationName: string, column: ModelColumn<T>, alias?: string): this {

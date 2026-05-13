@@ -25,6 +25,7 @@ export type {
   SaveOptions,
   ModelColumn,
   ModelColumnValue,
+  ModelJson,
   ModelConstructor,
   ModelRelationName,
   EagerLoadConstraint,
