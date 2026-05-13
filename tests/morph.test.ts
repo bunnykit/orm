@@ -33,6 +33,20 @@ class MImage extends Model {
   }
 }
 
+class MStudent extends Model {
+  static table = "m_students";
+  attachments() {
+    return this.morphMany(MAttachment, "attachable");
+  }
+  profilePicture() {
+    return this.morphOne(MAttachment, "attachable").where("collection", "profile_picture");
+  }
+}
+
+class MAttachment extends Model {
+  static table = "m_attachments";
+}
+
 class MTag extends Model {
   static table = "m_tags";
   posts() {
@@ -71,6 +85,19 @@ describe("Polymorphic Relations", () => {
       table.string("url");
       table.integer("imageable_id");
       table.string("imageable_type");
+      table.timestamps();
+    });
+    await Schema.create("m_students", (table) => {
+      table.increments("id");
+      table.string("name");
+      table.timestamps();
+    });
+    await Schema.create("m_attachments", (table) => {
+      table.increments("id");
+      table.integer("attachable_id");
+      table.string("attachable_type");
+      table.string("collection").nullable();
+      table.string("filename").nullable();
       table.timestamps();
     });
     await Schema.create("taggables", (table) => {
@@ -150,6 +177,37 @@ describe("Polymorphic Relations", () => {
     const posts = await tag.posts().getResults();
     expect(posts).toHaveLength(1);
     expect(posts[0].getAttribute("title")).toBe("Tagged Post");
+  });
+
+  test("morphMany attach() and attachMany() set morph columns automatically", async () => {
+    const student = await MStudent.create({ name: "Ada" });
+
+    const one = await student.attachments().attach({ filename: "transcript.pdf" });
+    expect(one.getAttribute("attachable_id")).toBe(student.getAttribute("id"));
+    expect(one.getAttribute("attachable_type")).toBe("MStudent");
+
+    const many = await student.attachments().attachMany([
+      { filename: "photo-1.jpg" },
+      { filename: "photo-2.jpg" },
+    ]);
+    expect(many).toHaveLength(2);
+    expect(many.every((item) => item.getAttribute("attachable_type") === "MStudent")).toBe(true);
+  });
+
+  test("morphOne attach() applies the fixed constraint and omits it from input typing", async () => {
+    const student = await MStudent.create({ name: "Bea" });
+
+    const picture = await student.profilePicture().attach({ filename: "profile.jpg" });
+    expect(picture.getAttribute("collection")).toBe("profile_picture");
+    expect(picture.getAttribute("attachable_id")).toBe(student.getAttribute("id"));
+
+    const relation = student.profilePicture();
+    if (false) {
+      // @ts-expect-error attachable_id is injected by the relation and should not be suggested.
+      relation.attach({ attachable_id: 1 });
+      // @ts-expect-error collection is fixed by the relation constraint and should not be suggested.
+      relation.attach({ collection: "profile_picture" });
+    }
   });
 
   test("morphToMany existence queries qualify pivot table with PostgreSQL schema", () => {

@@ -25,6 +25,7 @@ export class BelongsToMany<T extends Model = Model> {
   protected pivotTimestamps = false;
   protected builder: Builder<T>;
   protected pivotWheres: Array<{ column: string; operator: string; value: any; boolean: "and" | "or" }> = [];
+  protected extraConstraints: Array<(builder: Builder<T>) => void> = [];
   protected pivotAccessor = "pivot";
 
   protected decoratePivotQuery(builder: Builder<any>): Builder<any> & PivotQueryBuilder {
@@ -121,6 +122,17 @@ export class BelongsToMany<T extends Model = Model> {
   wherePivotNull(column: string): this {
     this.applyPivotWhere(this.builder, column, "IS NULL", null, "and");
     return this;
+  }
+
+  where(column: string, operatorOrValue: any, value?: any): this {
+    const args: any[] = value !== undefined ? [column, operatorOrValue, value] : [column, operatorOrValue];
+    this.extraConstraints.push((b) => (b.where as any)(...args));
+    (this.builder.where as any)(...args);
+    return this;
+  }
+
+  protected applyExtraConstraints(): void {
+    for (const constraint of this.extraConstraints) constraint(this.builder);
   }
 
   protected qualifiedPivotTable(): string {
@@ -256,6 +268,7 @@ export class BelongsToMany<T extends Model = Model> {
     );
     this.builder.whereIn(`${this.table}.${this.foreignPivotKey}`, keys);
     this.applyPivotWheres(this.builder);
+    this.applyExtraConstraints();
   }
 
   async getEager(): Promise<Collection<any>> {
@@ -327,8 +340,8 @@ export class BelongsToMany<T extends Model = Model> {
   async attach(ids: any | any[], attributes?: Record<string, any>): Promise<any> {
     const idList = Array.isArray(ids) ? ids : [ids];
     const pivotAttributes = {
-      ...this.getDefaultPivotAttributes(),
       ...attributes,
+      ...this.getDefaultPivotAttributes(),
     };
     const records = idList.map((id) => ({
       [this.foreignPivotKey]: this.parent.getAttribute(this.parentKey),

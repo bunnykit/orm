@@ -1585,6 +1585,47 @@ class Post extends Model {
 const author = await post.author().get(); // User | null
 ```
 
+#### Constrained relations
+
+You can chain `where()` directly inside a relation method. The constraint stays attached to the relation, so lazy loading and eager loading both respect it. When the related column could be ambiguous, qualify it with the related table name.
+
+```ts
+class Customer extends Model {
+  openInvoices() {
+    return this.hasMany(Invoice).where("status", "open");
+  }
+
+  primaryContact() {
+    return this.hasOne(Contact).where("kind", "primary");
+  }
+
+  accountOwner() {
+    return this.belongsTo(User).where("users.active", true);
+  }
+
+  preferredTags() {
+    return this.belongsToMany(Tag, "customer_tag")
+      .where("tags.enabled", true);
+  }
+
+  coverImage() {
+    return this.morphOne(Media, "attachable").where("role", "cover");
+  }
+
+  publicAssets() {
+    return this.morphMany(Media, "attachable").where("visibility", "public");
+  }
+}
+
+const customers = await Customer.with("openInvoices", "primaryContact").get();
+const customer = customers[0];
+
+const invoices = await customer
+  .openInvoices()
+  .where("total", ">", 100)
+  .get();
+```
+
 #### belongsTo — associate / dissociate
 
 Update the foreign key without touching the database directly:
@@ -2146,6 +2187,30 @@ comments[0].getRelation("commentable"); // Post | Video | null
 
 const postComments = await post.comments().get(); // Collection<Comment>
 ```
+
+#### Creating morph records
+
+`morphMany()` and `morphOne()` relations can create records directly through the relation. The morph columns are filled automatically, and any fixed `where()` constraints are excluded from the input type and applied for you at write time.
+
+```ts
+const student = await Student.first();
+if (!student) return;
+
+await student.attachments().attach({
+  filename: "transcript.pdf",
+});
+
+await student.attachments().attachMany([
+  { filename: "id-card-front.jpg" },
+  { filename: "id-card-back.jpg" },
+]);
+
+await student.profilePicture().attach({
+  filename: "profile.jpg",
+});
+```
+
+For `profilePicture()`, `collection` is injected from the relation constraint, so it does not appear in IntelliSense. Also avoid optional chaining on the relation call itself if you want method autocomplete; guard the model first, as above.
 
 ### Customizing Morph Type
 

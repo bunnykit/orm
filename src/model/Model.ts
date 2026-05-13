@@ -94,6 +94,9 @@ export type ModelAttributes<T> = T extends { $attributes: Record<string, any> }
 export type ModelColumn<T> = LiteralUnion<Extract<keyof ModelAttributes<T>, string>>;
 export type ModelColumnValue<T, K> = K extends keyof ModelAttributes<T> ? ModelAttributes<T>[K] : any;
 export type ModelAttributeInput<T> = Partial<ModelAttributes<T>> & Record<string, any>;
+export type StripTablePrefix<S extends string> = S extends `${string}.${infer Tail}` ? Tail : S;
+export type ModelAttributeInputWithout<T, K extends string> = Partial<Omit<ModelAttributes<T>, K>> & Record<string, any>;
+export type MorphRelationInput<T, N extends string, Fixed extends string = never> = ModelAttributeInputWithout<T, Fixed | `${N}_id` | `${N}_type`>;
 export interface BulkModelOptions {
   chunkSize?: number;
   events?: boolean;
@@ -411,6 +414,8 @@ export abstract class Relation<T extends Model = Model> {
   protected related: ModelConstructor;
   protected foreignKey: string;
   protected localKey: string;
+  protected extraConstraints: Array<(builder: Builder<T>) => void> = [];
+  protected whereConstraints: Array<{ column: string; operator: string; value: any; boolean: "and" | "or" }> = [];
 
   constructor(parent: Model, related: ModelConstructor, foreignKey?: string, localKey?: string) {
     this.parent = parent;
@@ -470,6 +475,36 @@ export abstract class Relation<T extends Model = Model> {
   getRelationAggregateSql(parentQuery: Builder<any>, aggregate: string, callback?: (query: Builder<any>) => void | Builder<any>): string {
     return this.newExistenceQuery(parentQuery, aggregate, callback).toSql();
   }
+
+  where(column: ModelColumn<T> | string, operatorOrValue: any, value?: any): this {
+    const args: any[] = value !== undefined ? [column, operatorOrValue, value] : [column, operatorOrValue];
+    const operator = value !== undefined ? operatorOrValue : "=";
+    const whereValue = value !== undefined ? value : operatorOrValue;
+    this.whereConstraints.push({
+      column: String(column),
+      operator,
+      value: whereValue,
+      boolean: "and",
+    });
+    this.extraConstraints.push((b) => (b.where as any)(...args));
+    (this.builder.where as any)(...args);
+    return this;
+  }
+
+  protected getDefaultAttributes(): Record<string, any> {
+    const defaults: Record<string, any> = {};
+    for (const where of this.whereConstraints) {
+      if (where.boolean !== "and") continue;
+      if (where.operator !== "=") continue;
+      const column = where.column.includes(".") ? where.column.split(".").pop()! : where.column;
+      defaults[column] = where.value;
+    }
+    return defaults;
+  }
+
+  protected applyExtraConstraints(): void {
+    for (const constraint of this.extraConstraints) constraint(this.builder);
+  }
 }
 
 export class HasMany<T extends Model = Model> extends Relation<T> {
@@ -481,7 +516,11 @@ export class HasMany<T extends Model = Model> extends Relation<T> {
   }
 
   async saveMany(models: T[]): Promise<T[]> {
+    const defaults = this.getDefaultAttributes();
     for (const model of models) {
+      for (const [key, value] of Object.entries(defaults)) {
+        model.setAttribute(key as any, value);
+      }
       model.setAttribute(this.foreignKey as any, this.parent.getAttribute(this.localKey));
       await model.save();
     }
@@ -491,6 +530,7 @@ export class HasMany<T extends Model = Model> extends Relation<T> {
   async create(attributes: Record<string, any>): Promise<T> {
     const instance = new (this.related as any)({
       ...attributes,
+      ...this.getDefaultAttributes(),
       [this.foreignKey]: this.parent.getAttribute(this.localKey),
     }) as T;
     await instance.save();
@@ -498,10 +538,12 @@ export class HasMany<T extends Model = Model> extends Relation<T> {
   }
 
   async createMany(records: Record<string, any>[]): Promise<T[]> {
+    const defaults = this.getDefaultAttributes();
     const models: T[] = [];
     for (const record of records) {
       const instance = new (this.related as any)({
         ...record,
+        ...defaults,
         [this.foreignKey]: this.parent.getAttribute(this.localKey),
       }) as T;
       await instance.save();
@@ -519,6 +561,7 @@ export class HasMany<T extends Model = Model> extends Relation<T> {
     this.builder = (this.related as any).on(this.parent.getConnection());
     const keys = models.map((m) => m.getAttribute(this.localKey));
     this.builder.whereIn(this.foreignKey, keys);
+    this.applyExtraConstraints();
   }
 
   async getEager(): Promise<Collection<any>> {
@@ -555,6 +598,7 @@ export class HasMany<T extends Model = Model> extends Relation<T> {
     relation.getQuery().orderBy(column, aggregate === "max" ? "desc" : "asc");
     return relation;
   }
+
 }
 
 export class BelongsTo<T extends Model = Model> extends Relation<T> {
@@ -581,6 +625,7 @@ export class BelongsTo<T extends Model = Model> extends Relation<T> {
     this.builder = (this.related as any).on(this.parent.getConnection());
     const keys = models.map((m) => m.getAttribute(this.foreignKey));
     this.builder.whereIn(this.localKey, keys);
+    this.applyExtraConstraints();
   }
 
   async getEager(): Promise<Collection<any>> {
@@ -686,6 +731,7 @@ export class HasManyThrough<T extends Model = Model> extends Relation<T> {
       `${relatedTable}.${this.secondKey}`
     );
     this.builder.whereIn(`${throughTable}.${this.firstKey}`, keys);
+    this.applyExtraConstraints();
   }
 
   async getEager(): Promise<Collection<any>> {
@@ -776,6 +822,7 @@ export class HasOne<T extends Model = Model> extends Relation<T> {
     this.builder = (this.related as any).on(this.parent.getConnection());
     const keys = models.map((m) => m.getAttribute(this.localKey));
     this.builder.whereIn(this.foreignKey, keys);
+    this.applyExtraConstraints();
   }
 
   async getEager(): Promise<Collection<any>> {
@@ -2257,38 +2304,38 @@ export class Model<T extends Record<string, any> = any> {
     return new MorphTo(this, name, typeMap);
   }
 
-  morphOne<R extends Model>(
+  morphOne<R extends Model, N extends string>(
     related: ModelConstructor<R>,
-    name: string,
+    name: N,
     typeColumn?: string,
     idColumn?: string,
     localKey?: string
-  ): MorphOne<R> {
-    return new MorphOne<R>(this, related as any, name, typeColumn, idColumn, localKey);
+  ): MorphOne<R, N> {
+    return new MorphOne<R, N>(this, related as any, name, typeColumn, idColumn, localKey);
   }
 
-  morphMany<R extends Model>(
+  morphMany<R extends Model, N extends string>(
     related: ModelConstructor<R>,
-    name: string,
+    name: N,
     typeColumn?: string,
     idColumn?: string,
     localKey?: string
-  ): MorphMany<R> {
-    return new MorphMany<R>(this, related as any, name, typeColumn, idColumn, localKey);
+  ): MorphMany<R, N> {
+    return new MorphMany<R, N>(this, related as any, name, typeColumn, idColumn, localKey);
   }
 
-  morphToMany<R extends Model>(
+  morphToMany<R extends Model, N extends string>(
     related: ModelConstructor<R>,
-    name: string,
+    name: N,
     table?: string,
     foreignPivotKey?: string,
     relatedPivotKey?: string,
     parentKey?: string,
     relatedKey?: string
-  ): MorphToMany<R> {
+  ): MorphToMany<R, N> {
     const constructor = this.getModelConstructor();
     const type = constructor.morphName || constructor.name;
-    return new MorphToMany<R>(
+    return new MorphToMany<R, N>(
       this,
       related as any,
       name,
@@ -2301,18 +2348,18 @@ export class Model<T extends Record<string, any> = any> {
     );
   }
 
-  morphedByMany<R extends Model>(
+  morphedByMany<R extends Model, N extends string>(
     related: ModelConstructor<R>,
-    name: string,
+    name: N,
     table?: string,
     foreignPivotKey?: string,
     relatedPivotKey?: string,
     parentKey?: string,
     relatedKey?: string
-  ): MorphToMany<R> {
+  ): MorphToMany<R, N> {
     const type = related.morphName || related.name;
     const constructor = this.getModelConstructor();
-    return new MorphToMany<R>(
+    return new MorphToMany<R, N>(
       this,
       related as any,
       name,

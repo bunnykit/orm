@@ -1,8 +1,9 @@
 import { Builder } from "../query/Builder.js";
+import { Schema } from "../schema/Schema.js";
 import { Collection } from "../support/Collection.js";
 import { snakeCase } from "../utils.js";
 import { MorphMap } from "./MorphMap.js";
-import type { Model, ModelConstructor, PivotQueryBuilder } from "./Model.js";
+import type { Model, ModelConstructor, MorphRelationInput, PivotQueryBuilder, StripTablePrefix } from "./Model.js";
 
 function getModelConstructor(model: Model): typeof Model {
   return Object.getPrototypeOf(model).constructor as typeof Model;
@@ -115,19 +116,21 @@ export class MorphTo<T extends Model = Model> {
   }
 }
 
-export class MorphOne<T extends Model = Model> {
+export class MorphOne<T extends Model = Model, N extends string = string, Fixed extends string = never> {
   protected builder: Builder<T>;
   protected parent: Model;
   protected related: ModelConstructor;
-  protected name: string;
+  protected name: N;
   protected typeColumn: string;
   protected idColumn: string;
   protected localKey: string;
+  protected extraConstraints: Array<(builder: Builder<T>) => void> = [];
+  protected whereConstraints: Array<{ column: string; operator: string; value: any; boolean: "and" | "or" }> = [];
 
   constructor(
     parent: Model,
     related: ModelConstructor,
-    name: string,
+    name: N,
     typeColumn?: string,
     idColumn?: string,
     localKey?: string
@@ -170,6 +173,48 @@ export class MorphOne<T extends Model = Model> {
     const keys = models.map((m) => m.getAttribute(this.localKey));
     this.builder.whereIn(this.idColumn, keys);
     this.builder.where(this.typeColumn, this.getMorphType());
+    this.applyExtraConstraints();
+  }
+
+  where<K extends string>(column: K, operatorOrValue: any, value?: any): MorphOne<T, N, Fixed | StripTablePrefix<K>> {
+    const args: any[] = value !== undefined ? [column, operatorOrValue, value] : [column, operatorOrValue];
+    const operator = value !== undefined ? operatorOrValue : "=";
+    const whereValue = value !== undefined ? value : operatorOrValue;
+    this.whereConstraints.push({
+      column: String(column),
+      operator,
+      value: whereValue,
+      boolean: "and",
+    });
+    this.extraConstraints.push((b) => (b.where as any)(...args));
+    (this.builder.where as any)(...args);
+    return this as MorphOne<T, N, Fixed | StripTablePrefix<K>>;
+  }
+
+  protected getDefaultAttributes(): Record<string, any> {
+    const defaults: Record<string, any> = {};
+    for (const where of this.whereConstraints) {
+      if (where.boolean !== "and") continue;
+      if (where.operator !== "=") continue;
+      const column = where.column.includes(".") ? where.column.split(".").pop()! : where.column;
+      defaults[column] = where.value;
+    }
+    return defaults;
+  }
+
+  protected applyExtraConstraints(): void {
+    for (const constraint of this.extraConstraints) constraint(this.builder);
+  }
+
+  async attach(attributes: MorphRelationInput<T, N, Fixed>): Promise<T> {
+    const instance = new (this.related as any)({
+      ...attributes,
+      ...this.getDefaultAttributes(),
+      [this.idColumn]: this.parent.getAttribute(this.localKey),
+      [this.typeColumn]: this.getMorphType(),
+    }) as T;
+    await instance.save();
+    return instance;
   }
 
   async getEager(): Promise<Collection<any>> {
@@ -219,19 +264,21 @@ export class MorphOne<T extends Model = Model> {
   }
 }
 
-export class MorphMany<T extends Model = Model> {
+export class MorphMany<T extends Model = Model, N extends string = string, Fixed extends string = never> {
   protected builder: Builder<T>;
   protected parent: Model;
   protected related: ModelConstructor;
-  protected name: string;
+  protected name: N;
   protected typeColumn: string;
   protected idColumn: string;
   protected localKey: string;
+  protected extraConstraints: Array<(builder: Builder<T>) => void> = [];
+  protected whereConstraints: Array<{ column: string; operator: string; value: any; boolean: "and" | "or" }> = [];
 
   constructor(
     parent: Model,
     related: ModelConstructor,
-    name: string,
+    name: N,
     typeColumn?: string,
     idColumn?: string,
     localKey?: string
@@ -274,6 +321,37 @@ export class MorphMany<T extends Model = Model> {
     const keys = models.map((m) => m.getAttribute(this.localKey));
     this.builder.whereIn(this.idColumn, keys);
     this.builder.where(this.typeColumn, this.getMorphType());
+    this.applyExtraConstraints();
+  }
+
+  where<K extends string>(column: K, operatorOrValue: any, value?: any): MorphMany<T, N, Fixed | StripTablePrefix<K>> {
+    const args: any[] = value !== undefined ? [column, operatorOrValue, value] : [column, operatorOrValue];
+    const operator = value !== undefined ? operatorOrValue : "=";
+    const whereValue = value !== undefined ? value : operatorOrValue;
+    this.whereConstraints.push({
+      column: String(column),
+      operator,
+      value: whereValue,
+      boolean: "and",
+    });
+    this.extraConstraints.push((b) => (b.where as any)(...args));
+    (this.builder.where as any)(...args);
+    return this as MorphMany<T, N, Fixed | StripTablePrefix<K>>;
+  }
+
+  protected getDefaultAttributes(): Record<string, any> {
+    const defaults: Record<string, any> = {};
+    for (const where of this.whereConstraints) {
+      if (where.boolean !== "and") continue;
+      if (where.operator !== "=") continue;
+      const column = where.column.includes(".") ? where.column.split(".").pop()! : where.column;
+      defaults[column] = where.value;
+    }
+    return defaults;
+  }
+
+  protected applyExtraConstraints(): void {
+    for (const constraint of this.extraConstraints) constraint(this.builder);
   }
 
   async getEager(): Promise<Collection<any>> {
@@ -298,6 +376,25 @@ export class MorphMany<T extends Model = Model> {
   }
 
   get(): Promise<Collection<T>> { return this.getResults(); }
+
+  async attach(attributes: MorphRelationInput<T, N, Fixed>): Promise<T> {
+    const instance = new (this.related as any)({
+      ...attributes,
+      ...this.getDefaultAttributes(),
+      [this.idColumn]: this.parent.getAttribute(this.localKey),
+      [this.typeColumn]: this.getMorphType(),
+    }) as T;
+    await instance.save();
+    return instance;
+  }
+
+  async attachMany(records: MorphRelationInput<T, N, Fixed>[]): Promise<T[]> {
+    const results: T[] = [];
+    for (const record of records) {
+      results.push(await this.attach(record));
+    }
+    return results;
+  }
 
   qualifyRelatedColumn(column: string): string {
     return column.includes(".") ? column : `${this.related.getTable()}.${column}`;
@@ -324,18 +421,22 @@ export class MorphMany<T extends Model = Model> {
   }
 }
 
-export class MorphToMany<T extends Model = Model> {
+export class MorphToMany<T extends Model = Model, N extends string = string> {
   protected builder: Builder<T>;
   protected parent: Model;
   protected related: ModelConstructor;
-  protected name: string;
+  protected name: N;
   protected table: string;
   protected foreignPivotKey: string;
   protected relatedPivotKey: string;
   protected parentKey: string;
   protected relatedKey: string;
   protected morphType: string;
+  protected pivotColumns: string[] = [];
+  protected pivotTimestamps = false;
+  protected pivotAccessor = "pivot";
   protected pivotWheres: Array<{ column: string; operator: string; value: any; boolean: "and" | "or" }> = [];
+  protected extraConstraints: Array<(builder: Builder<T>) => void> = [];
 
   protected decoratePivotQuery(builder: Builder<any>): Builder<any> & PivotQueryBuilder {
     const query = builder as Builder<any> & PivotQueryBuilder;
@@ -375,7 +476,7 @@ export class MorphToMany<T extends Model = Model> {
   constructor(
     parent: Model,
     related: ModelConstructor,
-    name: string,
+    name: N,
     table?: string,
     foreignPivotKey?: string,
     relatedPivotKey?: string,
@@ -457,9 +558,76 @@ export class MorphToMany<T extends Model = Model> {
     return this;
   }
 
+  where(column: string, operatorOrValue: any, value?: any): this {
+    const args: any[] = value !== undefined ? [column, operatorOrValue, value] : [column, operatorOrValue];
+    this.extraConstraints.push((b) => (b.where as any)(...args));
+    (this.builder.where as any)(...args);
+    return this;
+  }
+
+  withPivot(...columns: (string | string[])[]): this {
+    const cols = columns.flat();
+    this.pivotColumns.push(...cols);
+    this.builder.addSelect(...cols.map((c) => `${this.table}.${c}`) as any);
+    return this;
+  }
+
+  withTimestamps(): this {
+    this.pivotTimestamps = true;
+    this.builder.addSelect(`${this.table}.created_at` as any, `${this.table}.updated_at` as any);
+    return this;
+  }
+
+  protected getPivotColumnName(column: string): string {
+    return column.startsWith(`${this.table}.`) ? column.slice(this.table.length + 1) : column;
+  }
+
+  protected getPivotSelectColumns(): string[] {
+    const pivot = [...this.pivotColumns];
+    if (this.pivotTimestamps) {
+      pivot.push("created_at", "updated_at");
+    }
+    return pivot.map((col) => `${this.table}.${col}`);
+  }
+
+  protected attachPivotToResults(results: Collection<any>): void {
+    if (this.pivotColumns.length === 0 && !this.pivotTimestamps) return;
+    const pivotCols = this.getPivotSelectColumns().map((col) => col.replace(`${this.table}.`, ""));
+    for (const result of results) {
+      const pivot: Record<string, any> = {};
+      for (const col of pivotCols) {
+        pivot[col] = (result.$attributes as any)[col];
+        delete (result.$attributes as any)[col];
+      }
+      (result as any)[this.pivotAccessor] = pivot;
+    }
+  }
+
+  protected getDefaultPivotAttributes(): Record<string, any> {
+    const defaults: Record<string, any> = {};
+
+    for (const where of this.pivotWheres) {
+      if (where.boolean !== "and") continue;
+
+      const column = this.getPivotColumnName(where.column);
+      if (where.operator === "=") {
+        defaults[column] = where.value;
+      } else if (where.operator === "IS NULL") {
+        defaults[column] = null;
+      }
+    }
+
+    return defaults;
+  }
+
+  protected applyExtraConstraints(): void {
+    for (const constraint of this.extraConstraints) constraint(this.builder);
+  }
+
   protected addConstraints(): void {
     const relatedTable = this.related.getTable();
-    this.builder.select(`${relatedTable}.*`);
+    const pivotSelect = this.getPivotSelectColumns();
+    this.builder.select(`${relatedTable}.*`, ...pivotSelect);
     this.builder.join(
       this.qualifiedPivotTable(),
       `${this.table}.${this.relatedPivotKey}`,
@@ -478,7 +646,8 @@ export class MorphToMany<T extends Model = Model> {
     const keys = models.map((m) => m.getAttribute(this.parentKey));
     const relatedTable = this.related.getTable();
     this.builder = this.decoratePivotQuery((this.related as any).on(this.parent.getConnection()));
-    this.builder.select(`${relatedTable}.*`, `${this.table}.${this.foreignPivotKey}`);
+    const pivotSelect = this.getPivotSelectColumns();
+    this.builder.select(`${relatedTable}.*`, `${this.table}.${this.foreignPivotKey}`, ...pivotSelect);
     this.builder.join(
       this.qualifiedPivotTable(),
       `${this.table}.${this.relatedPivotKey}`,
@@ -490,10 +659,13 @@ export class MorphToMany<T extends Model = Model> {
     for (const where of this.pivotWheres) {
       this.applyStoredPivotWhere(this.builder, where);
     }
+    this.applyExtraConstraints();
   }
 
   async getEager(): Promise<Collection<any>> {
-    return this.builder.get();
+    const results = await this.builder.get();
+    this.attachPivotToResults(results);
+    return results;
   }
 
   match(models: Model[], results: Collection<any>, relationName: string): void {
@@ -511,10 +683,60 @@ export class MorphToMany<T extends Model = Model> {
   }
 
   async getResults(): Promise<Collection<T>> {
-    return this.builder.get();
+    const results = await this.builder.get();
+    this.attachPivotToResults(results);
+    return results;
   }
 
   get(): Promise<Collection<T>> { return this.getResults(); }
+
+  protected async shouldAutoGeneratePivotPrimaryKey(primaryKey: string): Promise<boolean> {
+    const column = await Schema.getColumn(this.table, primaryKey);
+    if (!column) return false;
+    if (!column.primary) return false;
+    if (column.autoIncrement) return false;
+
+    const type = String(column.type || "").toLowerCase();
+    const numericTypes = new Set(["integer", "int", "bigint", "smallint", "tinyint", "real", "float", "double", "decimal", "numeric"]);
+    return !numericTypes.has(type);
+  }
+
+  async attach(ids: any | any[], attributes?: Record<string, any>): Promise<any> {
+    const idList = Array.isArray(ids) ? ids : [ids];
+    const pivotAttributes = {
+      ...attributes,
+      ...this.getDefaultPivotAttributes(),
+    };
+    const records = idList.map((id) => ({
+      [this.foreignPivotKey]: this.parent.getAttribute(this.parentKey),
+      [this.relatedPivotKey]: id,
+      [`${this.name}_type`]: this.morphType,
+      ...pivotAttributes,
+    }));
+
+    const pk = "id";
+    const needsUuid = await this.shouldAutoGeneratePivotPrimaryKey(pk);
+
+    for (const record of records) {
+      if (needsUuid && !record[pk]) {
+        record[pk] = crypto.randomUUID();
+      }
+    }
+
+    const connection = this.parent.getConnection();
+    const builder = new Builder(connection, connection.qualifyTable(this.table));
+
+    if (idList.length === 1) {
+      if (needsUuid) {
+        await builder.insert(records[0]);
+        return records[0][pk];
+      }
+      return await builder.insertGetId(records[0]);
+    }
+
+    await builder.insert(records);
+    return;
+  }
 
   qualifyRelatedColumn(column: string): string {
     return column.includes(".") ? column : `${this.related.getTable()}.${column}`;
