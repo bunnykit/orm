@@ -202,6 +202,20 @@ export class Connection {
   }
 
   async transaction<T>(callback: (connection: Connection) => T | Promise<T>): Promise<T> {
+    if (!this.ownsDriver) {
+      const savepointName = `bunny_trans_${++this.savepointId}`;
+      await this.getDriver().unsafe(`SAVEPOINT ${savepointName}`);
+      try {
+        const result = await callback(this);
+        await this.getDriver().unsafe(`RELEASE SAVEPOINT ${savepointName}`);
+        return result;
+      } catch (error) {
+        await this.getDriver().unsafe(`ROLLBACK TO SAVEPOINT ${savepointName}`).catch(() => null);
+        await this.getDriver().unsafe(`RELEASE SAVEPOINT ${savepointName}`).catch(() => null);
+        this.savepointId--;
+        throw error;
+      }
+    }
     return await this.driver.begin(async (sql) => {
       const connection = new Connection(this.config, {
         driver: sql as unknown as SQL,
