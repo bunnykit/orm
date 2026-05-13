@@ -1448,23 +1448,23 @@ export class Model<T extends Record<string, any> = any> {
     relationName: R,
     callback?: TypedConstraintCallback<InstanceType<M>, R>
   ): Builder<InstanceType<M>, WithRelationExists<InstanceType<M>, R>>;
-  static withExists<M extends ModelConstructor, R extends string>(
+  static withExists<M extends ModelConstructor>(
     this: M,
-    relationName: R,
+    relationName: LiteralUnion<string & NestedRelationPath<InstanceType<M>>>,
     callback?: (query: Builder<any>) => any
-  ): Builder<InstanceType<M>, WithRelationExists<InstanceType<M>, R>>;
+  ): Builder<InstanceType<M>, WithRelationExists<InstanceType<M>, string>>;
   static withExists<M extends ModelConstructor, R extends string & NestedRelationPath<InstanceType<M>>, A extends string>(
     this: M,
     relationName: R,
     alias: A,
     callback?: TypedConstraintCallback<InstanceType<M>, R>
   ): Builder<InstanceType<M>, WithRelationExists<InstanceType<M>, R, A>>;
-  static withExists<M extends ModelConstructor, R extends string, A extends string>(
+  static withExists<M extends ModelConstructor, A extends string>(
     this: M,
-    relationName: R,
+    relationName: LiteralUnion<string & NestedRelationPath<InstanceType<M>>>,
     alias: A,
     callback?: (query: Builder<any>) => any
-  ): Builder<InstanceType<M>, WithRelationExists<InstanceType<M>, R, A>>;
+  ): Builder<InstanceType<M>, WithRelationExists<InstanceType<M>, string, A>>;
   static withExists<M extends ModelConstructor>(
     this: M,
     relationOrMap: any,

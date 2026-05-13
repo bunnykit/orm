@@ -666,12 +666,12 @@ export class Builder<T = Record<string, any>, TResult = T> {
     this.booleanResultColumns.add(alias);
   }
 
-  withExists<R extends TypedExistsConstraintMap<TResult> & object>(relations: R): Builder<T, WithRelationExistsMap<TResult, R>>;
-  withExists<R extends ExistsConstraintMap<TResult>>(relations: R): Builder<T, WithRelationExistsMap<TResult, R>>;
-  withExists<R extends string & NestedRelationPath<TResult>>(relationName: R, callback?: RelationConstraint<TResult, R>): Builder<T, WithRelationExists<TResult, R>>;
-  withExists<R extends string>(relationName: R, callback?: RelationConstraint<any, any>): Builder<T, WithRelationExists<TResult, R>>;
-  withExists<R extends string & NestedRelationPath<TResult>, A extends string>(relationName: R, alias: A, callback?: RelationConstraint<TResult, R>): Builder<T, WithRelationExists<TResult, R, A>>;
-  withExists<R extends string, A extends string>(relationName: R, alias: A, callback?: RelationConstraint<any, any>): Builder<T, WithRelationExists<TResult, R, A>>;
+  withExists<R extends TypedExistsConstraintMap<T> & object>(relations: R): Builder<T, WithRelationExistsMap<TResult, R>>;
+  withExists<R extends ExistsConstraintMap<T>>(relations: R): Builder<T, WithRelationExistsMap<TResult, R>>;
+  withExists<R extends string & NestedRelationPath<T>>(relationName: R, callback?: RelationConstraint<T, R>): Builder<T, WithRelationExists<TResult, R>>;
+  withExists(relationName: LiteralUnion<string & NestedRelationPath<T>>, callback?: RelationConstraint<any, any>): Builder<T, WithRelationExists<TResult, string>>;
+  withExists<R extends string & NestedRelationPath<T>, A extends string>(relationName: R, alias: A, callback?: RelationConstraint<T, R>): Builder<T, WithRelationExists<TResult, R, A>>;
+  withExists<A extends string>(relationName: LiteralUnion<string & NestedRelationPath<T>>, alias: A, callback?: RelationConstraint<any, any>): Builder<T, WithRelationExists<TResult, string, A>>;
   withExists(relationOrMap: any, aliasOrCallback?: any, callback?: any): any {
     if (typeof relationOrMap === "object" && relationOrMap !== null) {
       for (const [relation, constraint] of Object.entries(relationOrMap) as [string, RelationConstraint<TResult, any> | undefined][]) {
