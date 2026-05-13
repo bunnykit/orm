@@ -301,11 +301,14 @@ export class Migrator {
   private async withRuntimeConnection<T>(connection: Connection, callback: () => T | Promise<T>): Promise<T> {
     const previousSchemaConnection = (Schema as any).connection as Connection | undefined;
     const previousDefaultConnection = ConnectionManager.getDefault();
+    const previousLogQueries = connection.logQueries;
 
     Schema.setConnection(connection);
+    connection.logQueries = false;
     try {
       return await TenantContext.withConnection(connection, callback);
     } finally {
+      connection.logQueries = previousLogQueries;
       if (previousSchemaConnection) {
         Schema.setConnection(previousSchemaConnection);
       } else {
