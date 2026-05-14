@@ -1,6 +1,6 @@
 # Bunny
 
-[Buy me a coffee](https://paypal.me/jbeduya)
+[☕ Buy me a coffee](https://paypal.me/jbeduya)
 
 > **Bun-only package.** Install with:
 >
@@ -273,8 +273,14 @@ For multi-tenant apps, use grouped migrations so landlord tables and tenant tabl
 export default {
   connection: { url: process.env.LANDLORD_DATABASE_URL! },
   migrations: {
-    landlord: ["./database/landlord-migrations", "./modules/billing/migrations"],
-    tenant: ["./database/tenant-migrations", "./modules/tenant-features/migrations"],
+    landlord: [
+      "./database/landlord-migrations",
+      "./modules/billing/migrations",
+    ],
+    tenant: [
+      "./database/tenant-migrations",
+      "./modules/tenant-features/migrations",
+    ],
   },
   tenancy: {
     resolveTenant: async (tenantId) => ({
@@ -384,10 +390,10 @@ await Schema.create("products", (table) => {
 ### Column Modifiers
 
 ```ts
-table.string("email").unique();    // UNIQUE index
-table.string("slug").index();      // INDEX
-table.string("name").nullable();   // NULLABLE
-table.integer("role").default(1);  // DEFAULT value
+table.string("email").unique(); // UNIQUE index
+table.string("slug").index(); // INDEX
+table.string("name").nullable(); // NULLABLE
+table.integer("role").default(1); // DEFAULT value
 table.string("code").comment("SKU code");
 table.integer("user_id").unsigned();
 ```
@@ -438,21 +444,21 @@ await Schema.create("posts", (table) => {
 await Schema.create("posts", (table) => {
   table.increments("id");
   table.string("title");
-  table.string("slug").index();                        // single-column index
-  table.index(["title", "slug"]);                      // composite index, auto-name
-  table.uniqueIndex(["slug"], "posts_slug_unique");    // unique index, custom name
+  table.string("slug").index(); // single-column index
+  table.index(["title", "slug"]); // composite index, auto-name
+  table.uniqueIndex(["slug"], "posts_slug_unique"); // unique index, custom name
 });
 ```
 
-| Method | Description |
-|--------|-------------|
-| `.index()` | Index the current column (auto-names the index) |
-| `.index(columns)` | Multi-column index with auto-generated name |
-| `.index(columns, name)` | Multi-column index with custom name |
-| `.unique()` | UNIQUE constraint on current column |
-| `.uniqueIndex(columns, name)` | Multi-column unique index |
-| `.dropIndex(name)` | Remove an index |
-| `.dropUnique(name)` | Remove a unique constraint |
+| Method                        | Description                                     |
+| ----------------------------- | ----------------------------------------------- |
+| `.index()`                    | Index the current column (auto-names the index) |
+| `.index(columns)`             | Multi-column index with auto-generated name     |
+| `.index(columns, name)`       | Multi-column index with custom name             |
+| `.unique()`                   | UNIQUE constraint on current column             |
+| `.uniqueIndex(columns, name)` | Multi-column unique index                       |
+| `.dropIndex(name)`            | Remove an index                                 |
+| `.dropUnique(name)`           | Remove a unique constraint                      |
 
 ### Polymorphic Column Shortcuts
 
@@ -478,22 +484,22 @@ Every model exposes a chainable query builder via static methods.
 ### Basic Queries
 
 ```ts
-const all   = await User.all();                           // all rows
-const found = await User.find(1);                         // by primary key
-const first = await User.first();                         // first row
-const user  = await User.where("email", "a@b.com").first();
+const all = await User.all(); // all rows
+const found = await User.find(1); // by primary key
+const first = await User.first(); // first row
+const user = await User.where("email", "a@b.com").first();
 const users = await User.where("active", true).orderBy("name").get(); // Collection<User>
-const arr   = await User.where("active", true).getArray(); // plain User[]
+const arr = await User.where("active", true).getArray(); // plain User[]
 
 // Find-or-fail (throws ModelNotFoundException if not found)
-const user  = await User.findOrFail(1);
+const user = await User.findOrFail(1);
 const first = await User.firstOrFail();
 
 // Exactly one row or throw (throws if zero or more than one)
-const sole  = await User.where("email", "alice@example.com").sole();
+const sole = await User.where("email", "alice@example.com").sole();
 
 // Single scalar value from the first row
-const name  = await User.where("id", 1).value("name");
+const name = await User.where("id", 1).value("name");
 
 // Array of a single column's values
 const emails = await User.pluck("email");
@@ -503,88 +509,89 @@ const emails = await User.pluck("email");
 
 ```ts
 // Equality
-User.where("active", true)
-User.where({ role: "admin", active: true })   // object shorthand
-User.where((q) => q.where("a", 1).orWhere("b", 2)) // nested group
+User.where("active", true);
+User.where({ role: "admin", active: true }); // object shorthand
+User.where((q) => q.where("a", 1).orWhere("b", 2)); // nested group
 
 // Operators
-User.where("age", ">=", 18)
-User.whereNot("status", "banned")             // !=
-User.whereIn("role", ["admin", "mod"])
-User.whereNotIn("status", ["banned", "spam"])
-User.whereNull("deleted_at")
-User.whereNotNull("email")
-User.whereBetween("age", [18, 65])
-User.whereNotBetween("score", [0, 10])
+User.where("age", ">=", 18);
+User.whereNot("status", "banned"); // !=
+User.whereIn("role", ["admin", "mod"]);
+User.whereNotIn("status", ["banned", "spam"]);
+User.whereNull("deleted_at");
+User.whereNotNull("email");
+User.whereBetween("age", [18, 65]);
+User.whereNotBetween("score", [0, 10]);
 
 // OR variants
-User.where("role", "admin").orWhere("role", "mod")
-User.where("a", 1).orWhereNot("b", 2)
-User.where("a", 1).orWhereIn("role", ["x", "y"])
-User.where("a", 1).orWhereNull("email")
-User.where("a", 1).orWhereBetween("score", [5, 10])
+User.where("role", "admin").orWhere("role", "mod");
+User.where("a", 1).orWhereNot("b", 2);
+User.where("a", 1).orWhereIn("role", ["x", "y"]);
+User.where("a", 1).orWhereNull("email");
+User.where("a", 1).orWhereBetween("score", [5, 10]);
 
 // Column comparison
-User.whereColumn("updated_at", ">", "created_at")
-User.where("a", 1).orWhereColumn("updated_at", ">", "created_at")
+User.whereColumn("updated_at", ">", "created_at");
+User.where("a", 1).orWhereColumn("updated_at", ">", "created_at");
 
 // EXISTS subquery
-User.whereExists("SELECT 1 FROM orders WHERE orders.user_id = users.id")
-User.where("a", 1).orWhereExists("SELECT 1 FROM posts WHERE posts.user_id = users.id")
-User.whereNotExists("SELECT 1 FROM orders WHERE orders.user_id = users.id")
+User.whereExists("SELECT 1 FROM orders WHERE orders.user_id = users.id");
+User.where("a", 1).orWhereExists(
+  "SELECT 1 FROM posts WHERE posts.user_id = users.id",
+);
+User.whereNotExists("SELECT 1 FROM orders WHERE orders.user_id = users.id");
 
 // Raw SQL
-User.whereRaw("score > 100")
-User.where("active", true).orWhereRaw("score > 100")
+User.whereRaw("score > 100");
+User.where("active", true).orWhereRaw("score > 100");
 
 // Date parts (cross-database)
-Event.whereDate("happened_at", "2024-01-01")
-Event.whereYear("created_at", ">=", 2023)
-Event.whereMonth("birthday", 12)
-Event.whereDay("anniversary", 14)
-Event.whereTime("opened_at", "09:00:00")
+Event.whereDate("happened_at", "2024-01-01");
+Event.whereYear("created_at", ">=", 2023);
+Event.whereMonth("birthday", 12);
+Event.whereDay("anniversary", 14);
+Event.whereTime("opened_at", "09:00:00");
 
 // JSON (cross-database)
-User.whereJsonContains("settings", { theme: "dark" })
-User.whereJsonLength("tags", ">", 2)
+User.whereJsonContains("settings", { theme: "dark" });
+User.whereJsonLength("tags", ">", 2);
 
 // LIKE / Regexp / Full-text
-User.whereLike("name", "Ali%")
-User.whereNotLike("name", "Bot%")
-User.whereRegexp("email", "^alice")
-User.whereFullText(["bio", "summary"], "laravel orm")
+User.whereLike("name", "Ali%");
+User.whereNotLike("name", "Bot%");
+User.whereRegexp("email", "^alice");
+User.whereFullText(["bio", "summary"], "laravel orm");
 
 // Multi-column AND / OR
-User.whereAll(["first_name", "last_name"], "like", "%smith%")
-User.whereAny(["email", "phone"], "like", "%example%")
+User.whereAll(["first_name", "last_name"], "like", "%smith%");
+User.whereAny(["email", "phone"], "like", "%example%");
 ```
 
 ### Ordering, Grouping & Limiting
 
 ```ts
-User.orderBy("name", "asc")
-User.orderByDesc("created_at")          // shorthand
-User.latest()                           // orderBy created_at desc
-User.latest("published_at")
-User.oldest()                           // orderBy created_at asc
-User.inRandomOrder()                    // ORDER BY RANDOM() / RAND()
-User.orderBy("name").reorder()          // clear all orders
-User.orderBy("name").reorder("id")      // replace with new order
+User.orderBy("name", "asc");
+User.orderByDesc("created_at"); // shorthand
+User.latest(); // orderBy created_at desc
+User.latest("published_at");
+User.oldest(); // orderBy created_at asc
+User.inRandomOrder(); // ORDER BY RANDOM() / RAND()
+User.orderBy("name").reorder(); // clear all orders
+User.orderBy("name").reorder("id"); // replace with new order
 
-User.limit(10).offset(20)
-User.take(10).skip(20)                  // aliases for limit/offset
-User.forPage(3, 15)                     // page 3, 15 per page
+User.limit(10).offset(20);
+User.take(10).skip(20); // aliases for limit/offset
+User.forPage(3, 15); // page 3, 15 per page
 
-User.groupBy("role")
-User.groupBy("role").having("count", ">", 1)
-User.groupBy("role").havingRaw("COUNT(*) > 1").orHavingRaw("SUM(score) > 100")
+User.groupBy("role");
+User.groupBy("role").having("count", ">", 1);
+User.groupBy("role").havingRaw("COUNT(*) > 1").orHavingRaw("SUM(score) > 100");
 ```
 
 ### Joins
 
 ```ts
-const posts = await Post
-  .query()
+const posts = await Post.query()
   .select("posts.*", "users.name as author_name")
   .join("users", "posts.user_id", "=", "users.id")
   .leftJoin("comments", "comments.post_id", "=", "posts.id")
@@ -598,20 +605,20 @@ const posts = await Post
 const q1 = User.where("active", true);
 const q2 = User.where("role", "admin");
 
-const results    = await q1.union(q2).get();    // UNION (deduplicates)
+const results = await q1.union(q2).get(); // UNION (deduplicates)
 const allResults = await q1.unionAll(q2).get(); // UNION ALL (keeps duplicates)
 ```
 
 ### Aggregates
 
 ```ts
-const count  = await User.where("active", true).count();
+const count = await User.where("active", true).count();
 const exists = await User.where("email", "test@example.com").exists();
-const none   = await User.where("email", "missing@example.com").doesntExist();
-const total  = await Order.sum("amount");
-const avg    = await Order.avg("amount");
-const min    = await Product.min("price");
-const max    = await Product.max("price");
+const none = await User.where("email", "missing@example.com").doesntExist();
+const total = await Order.sum("amount");
+const avg = await Order.avg("amount");
+const min = await Product.min("price");
+const max = await Product.max("price");
 ```
 
 ### Streaming Large Datasets
@@ -669,20 +676,20 @@ for await (const user of User.lazyById(500)) {
 const page = await User.orderBy("name").paginate(15, 1);
 // { data: Collection<User>, total: number, perPage: 15, currentPage: 1, lastPage: number }
 
-page.data;        // Collection<User>
-page.total;       // total row count
-page.lastPage;    // last page number
-page.json();      // plain object for API responses
+page.data; // Collection<User>
+page.total; // total row count
+page.lastPage; // last page number
+page.json(); // plain object for API responses
 
 const simple = await User.orderBy("name").simplePaginate(15, 1);
-simple.data;             // Collection<User>
-simple.has_more_pages;   // boolean
-simple.next_page;        // number | null
-simple.prev_page;        // number | null
+simple.data; // Collection<User>
+simple.has_more_pages; // boolean
+simple.next_page; // number | null
+simple.prev_page; // number | null
 // No total/last_page query is run.
 
 const first = await User.orderBy("id").cursorPaginate(15);
-first.data;        // Collection<User>
+first.data; // Collection<User>
 first.next_cursor; // opaque string | null
 
 if (first.next_cursor) {
@@ -695,12 +702,13 @@ if (first.next_cursor) {
 
 ```ts
 const filters = { name: "Alice", age: 25 };
-const showAll  = false;
+const showAll = false;
 
-const users = await User
-  .when(filters.name, (q) => q.where("name", filters.name))
-  .when(filters.age,  (q) => q.where("age", ">=", filters.age))
-  .unless(showAll,    (q) => q.where("active", true))
+const users = await User.when(filters.name, (q) =>
+  q.where("name", filters.name),
+)
+  .when(filters.age, (q) => q.where("age", ">=", filters.age))
+  .unless(showAll, (q) => q.where("active", true))
   .tap((q) => console.log(q.toSql()))
   .get();
 ```
@@ -708,22 +716,24 @@ const users = await User
 ### Select, Raw & Subquery
 
 ```ts
-User.select("name", "email")
-User.addSelect("role")                                // append without replacing
-User.select("name").selectRaw("price * 2 as doubled")
-User.fromSub(User.where("price", ">", 100), "expensive")
-User.select("*").distinct()
-User.orderByRaw("LOWER(name) ASC")
-User.selectRaw("DATE(created_at) as day, COUNT(*) as total").groupByRaw("DATE(created_at)")
+User.select("name", "email");
+User.addSelect("role"); // append without replacing
+User.select("name").selectRaw("price * 2 as doubled");
+User.fromSub(User.where("price", ">", 100), "expensive");
+User.select("*").distinct();
+User.orderByRaw("LOWER(name) ASC");
+User.selectRaw("DATE(created_at) as day, COUNT(*) as total").groupByRaw(
+  "DATE(created_at)",
+);
 ```
 
 ### Locking (MySQL / PostgreSQL)
 
 ```ts
-await User.where("id", 1).lockForUpdate().first()   // FOR UPDATE
-await User.where("id", 1).sharedLock().first()      // LOCK IN SHARE MODE / FOR SHARE
-await Job.where("status", "pending").skipLocked().limit(10).get()  // SKIP LOCKED
-await Job.where("status", "pending").noWait().first()              // NOWAIT
+await User.where("id", 1).lockForUpdate().first(); // FOR UPDATE
+await User.where("id", 1).sharedLock().first(); // LOCK IN SHARE MODE / FOR SHARE
+await Job.where("status", "pending").skipLocked().limit(10).get(); // SKIP LOCKED
+await Job.where("status", "pending").noWait().first(); // NOWAIT
 ```
 
 ### Bulk Write Operations
@@ -737,8 +747,8 @@ const id = await User.query().insertGetId({ name: "Bob" });
 // Upsert — insert or update on conflict
 await User.query().upsert(
   [{ email: "alice@example.com", name: "Alice" }],
-  ["email"],       // unique key columns
-  ["name"],        // columns to update on conflict
+  ["email"], // unique key columns
+  ["name"], // columns to update on conflict
 );
 
 // Update matched rows
@@ -760,10 +770,10 @@ await User.where("active", false).decrement("score", 2);
 ### Debugging
 
 ```ts
-User.where("name", "Alice").toSql()  // compile to SQL string without running
-User.where("name", "Alice").dump()   // log SQL to console, return builder (chainable)
-User.where("name", "Alice").dd()     // log SQL and throw (halt execution)
-await User.where("name", "Alice").explain() // return query plan
+User.where("name", "Alice").toSql(); // compile to SQL string without running
+User.where("name", "Alice").dump(); // log SQL to console, return builder (chainable)
+User.where("name", "Alice").dd(); // log SQL and throw (halt execution)
+await User.where("name", "Alice").explain(); // return query plan
 ```
 
 ### Query Builder Reference
@@ -771,142 +781,144 @@ await User.where("name", "Alice").explain() // return query plan
 Most query builder helpers can be called either from `Model.query()` or directly on the model class:
 
 ```ts
-await Room.whereExists("SELECT 1 FROM bookings WHERE bookings.room_id = rooms.id").get();
+await Room.whereExists(
+  "SELECT 1 FROM bookings WHERE bookings.room_id = rooms.id",
+).get();
 await Room.whereBetween("capacity", [2, 8]).orderByDesc("capacity").get();
 ```
 
-| Method | Description |
-| ---------------------------------------------------------- | ----------------------------------- |
-| `where(col, op, val)` | Basic equality or operator filter |
-| `where(obj)` | Object of column → value pairs |
-| `where(fn)` | Nested where group via closure |
-| `orWhere(...)` | OR variant of `where` |
-| `whereNot(col, val)` | `!=` filter |
-| `orWhereNot(...)` | OR `!=` |
-| `whereIn(col, vals)` | `IN` set |
-| `orWhereIn(...)` | OR `IN` |
-| `whereNotIn(col, vals)` | `NOT IN` |
-| `orWhereNotIn(...)` | OR `NOT IN` |
-| `whereNull(col)` | `IS NULL` |
-| `orWhereNull(...)` | OR `IS NULL` |
-| `whereNotNull(col)` | `IS NOT NULL` |
-| `orWhereNotNull(...)` | OR `IS NOT NULL` |
-| `whereBetween(col, [a, b])` | `BETWEEN` |
-| `orWhereBetween(...)` | OR `BETWEEN` |
-| `whereNotBetween(col, [a, b])` | `NOT BETWEEN` |
-| `orWhereNotBetween(...)` | OR `NOT BETWEEN` |
-| `whereExists(sql)` | `EXISTS (subquery)` |
-| `orWhereExists(...)` | OR `EXISTS` |
-| `whereNotExists(sql)` | `NOT EXISTS` |
-| `orWhereNotExists(...)` | OR `NOT EXISTS` |
-| `whereColumn(a, op, b)` | Compare two columns |
-| `orWhereColumn(...)` | OR column compare |
-| `whereRaw(sql)` | Raw SQL where clause |
-| `orWhereRaw(...)` | OR raw SQL |
-| `whereDate(col, op, val)` | Cross-database date filter |
-| `whereDay / whereMonth / whereYear / whereTime` | Date part filters |
-| `whereJsonContains(col, val)` | JSON membership (cross-db) |
-| `whereJsonLength(col, op, val)` | JSON array length |
-| `whereLike(col, pattern)` | `LIKE` pattern |
-| `whereNotLike(...)` | `NOT LIKE` |
-| `whereRegexp(col, pattern)` | Regular expression match |
-| `whereFullText(cols, query)` | Full-text search (cross-db) |
-| `whereAll(cols, op, val)` | Multi-column `AND` |
-| `whereAny(cols, op, val)` | Multi-column `OR` |
-| `whereKey(id \| ids)` | Filter by the model primary key |
-| `whereKeyNot(id \| ids)` | Exclude by the model primary key |
-| `orderBy(col, dir)` | Sort ascending or descending |
-| `orderByDesc(col)` | Sort descending shorthand |
-| `orderByRaw(sql)` | Raw `ORDER BY` expression |
-| `latest(col?)` | `orderBy(created_at, desc)` |
-| `oldest(col?)` | `orderBy(created_at, asc)` |
-| `inRandomOrder()` | `ORDER BY RANDOM()` / `RAND()` |
-| `reorder(col?, dir?)` | Clear and optionally replace orders |
-| `groupBy(...cols)` | `GROUP BY` |
-| `groupByRaw(sql)` | Raw `GROUP BY` expression |
-| `having(col, op, val)` | `HAVING` filter |
-| `orHaving(...)` | OR `HAVING` |
-| `havingRaw(sql)` | Raw `HAVING` |
-| `orHavingRaw(...)` | OR raw `HAVING` |
-| `join(tbl, a, op, b)` | `INNER JOIN` |
-| `leftJoin(...)` | `LEFT JOIN` |
-| `rightJoin(...)` | `RIGHT JOIN` |
-| `crossJoin(tbl)` | `CROSS JOIN` |
-| `union(query, all?)` | `UNION` another query |
-| `unionAll(query)` | `UNION ALL` |
-| `select(...cols)` | Choose columns |
-| `addSelect(...cols)` | Append columns |
-| `selectRaw(sql)` | Raw SELECT expression |
-| `fromSub(query, alias)` | Derived table from subquery |
-| `distinct()` | `SELECT DISTINCT` |
-| `limit(n)` / `take(n)` | Row limit |
-| `offset(n)` / `skip(n)` | Row offset |
-| `forPage(page, perPage)` | Pagination offset/limit |
-| `lockForUpdate()` | `FOR UPDATE` (MySQL/Postgres) |
-| `sharedLock()` | `LOCK IN SHARE MODE` / `FOR SHARE` |
-| `skipLocked()` | Append `SKIP LOCKED` |
-| `noWait()` | Append `NOWAIT` |
-| `get()` | Fetch all rows as `Collection<T>` |
-| `getArray()` | Fetch all rows as a plain array |
-| `first()` | Fetch first row |
-| `find(id, col?)` | Find by ID |
-| `findMany(ids)` | Fetch many rows by primary key |
-| `findOrFail(id, col?)` | Find or throw |
-| `firstWhere(col, op?, val)` | Apply one where clause and fetch first |
-| `firstOrFail()` | First or throw |
-| `sole()` | Exactly one row or throw |
-| `value(col)` | Single scalar from first row |
-| `pluck(col)` | Array of column values |
-| `count(col?)` | `COUNT` aggregate |
-| `sum(col)` | `SUM` |
-| `avg(col)` | `AVG` |
-| `min(col)` | `MIN` |
-| `max(col)` | `MAX` |
-| `exists()` | Check any rows exist |
-| `doesntExist()` | Check no rows exist |
-| `paginate(perPage?, page?)` | Paginated result set with total/last-page metadata |
-| `simplePaginate(perPage?, page?)` | Offset pagination without a total count query |
-| `cursorPaginate(perPage?, cursor?)` | Keyset pagination with opaque next cursor |
-| `chunk(n, fn)` | Batch iterate with collection chunks |
-| `each(n, fn)` | Per-item iterate |
-| `chunkById(n, fn, col?)` | Keyset-paginated chunk (no offset drift) |
-| `chunkByIdDesc(n, fn, col?)` | Descending keyset-paginated chunk |
-| `eachById(n, fn, col?)` | Keyset-paginated per-item iterate |
-| `cursor()` | Lazy async generator |
-| `lazy(n?)` | Chunked lazy generator |
-| `lazyById(n?, col?)` | Keyset chunked lazy generator |
-| `insert(data, options?)` | Insert row(s) with optional chunking |
-| `insertGetId(data, col?)` | Insert and return ID |
-| `insertOrIgnore(data)` | Insert, ignore conflicts |
-| `upsert(data, uniqueBy, updateCols?, options?)` | Insert or update on conflict |
-| `update(data)` | Update matched rows |
-| `updateFrom(tbl, a, op, b)` | Update with JOIN |
-| `delete()` | Delete matched rows |
-| `increment(col, amt?, extra?)` | Add to column |
-| `decrement(col, amt?, extra?)` | Subtract from column |
-| `restore()` | Restore soft-deleted rows |
-| `with(...rels)` | Eager load relations |
-| `has(rel)` / `orHas(rel)` | Relation existence |
-| `whereHas(rel, fn?)` / `orWhereHas(...)` | Filtered relation existence |
-| `doesntHave(rel)` / `whereDoesntHave(...)` | Relation absence |
-| `whereRelation(rel, col, op?, val)` | Filter by related column (shorthand) |
-| `orWhereRelation(...)` | OR variant of `whereRelation` |
-| `whereMorphedTo(rel, model)` | Filter a `morphTo` relation by type/id |
-| `orWhereMorphedTo(rel, model)` | OR variant of `whereMorphedTo` |
-| `whereNotMorphedTo(rel, model)` | Exclude a `morphTo` target |
-| `withWhereHas(rel, fn?)` | Filter + eager load in one call |
-| `withCount(rel)` / `withSum(rel, col, alias?, fn?)` / `withAvg / withMin / withMax` | Relation aggregates |
-| `withExists(rel, alias?, fn?)` | Add a typed boolean relation-exists field |
-| `scope(name, ...args)` | Apply local scope |
-| `withoutGlobalScope(name)` / `withoutGlobalScopes()` | Remove scopes |
-| `withTrashed()` / `onlyTrashed()` | Soft delete visibility |
-| `when(cond, fn, elseFn?)` / `unless(...)` | Conditional building |
-| `tap(fn)` | Mutate and return |
-| `clone()` | Copy builder state |
-| `toSql()` | Compile to SQL string |
-| `dump()` | Log SQL, return builder |
-| `dd()` | Log SQL and halt |
-| `explain()` | Return query plan |
+| Method                                                                              | Description                                        |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `where(col, op, val)`                                                               | Basic equality or operator filter                  |
+| `where(obj)`                                                                        | Object of column → value pairs                     |
+| `where(fn)`                                                                         | Nested where group via closure                     |
+| `orWhere(...)`                                                                      | OR variant of `where`                              |
+| `whereNot(col, val)`                                                                | `!=` filter                                        |
+| `orWhereNot(...)`                                                                   | OR `!=`                                            |
+| `whereIn(col, vals)`                                                                | `IN` set                                           |
+| `orWhereIn(...)`                                                                    | OR `IN`                                            |
+| `whereNotIn(col, vals)`                                                             | `NOT IN`                                           |
+| `orWhereNotIn(...)`                                                                 | OR `NOT IN`                                        |
+| `whereNull(col)`                                                                    | `IS NULL`                                          |
+| `orWhereNull(...)`                                                                  | OR `IS NULL`                                       |
+| `whereNotNull(col)`                                                                 | `IS NOT NULL`                                      |
+| `orWhereNotNull(...)`                                                               | OR `IS NOT NULL`                                   |
+| `whereBetween(col, [a, b])`                                                         | `BETWEEN`                                          |
+| `orWhereBetween(...)`                                                               | OR `BETWEEN`                                       |
+| `whereNotBetween(col, [a, b])`                                                      | `NOT BETWEEN`                                      |
+| `orWhereNotBetween(...)`                                                            | OR `NOT BETWEEN`                                   |
+| `whereExists(sql)`                                                                  | `EXISTS (subquery)`                                |
+| `orWhereExists(...)`                                                                | OR `EXISTS`                                        |
+| `whereNotExists(sql)`                                                               | `NOT EXISTS`                                       |
+| `orWhereNotExists(...)`                                                             | OR `NOT EXISTS`                                    |
+| `whereColumn(a, op, b)`                                                             | Compare two columns                                |
+| `orWhereColumn(...)`                                                                | OR column compare                                  |
+| `whereRaw(sql)`                                                                     | Raw SQL where clause                               |
+| `orWhereRaw(...)`                                                                   | OR raw SQL                                         |
+| `whereDate(col, op, val)`                                                           | Cross-database date filter                         |
+| `whereDay / whereMonth / whereYear / whereTime`                                     | Date part filters                                  |
+| `whereJsonContains(col, val)`                                                       | JSON membership (cross-db)                         |
+| `whereJsonLength(col, op, val)`                                                     | JSON array length                                  |
+| `whereLike(col, pattern)`                                                           | `LIKE` pattern                                     |
+| `whereNotLike(...)`                                                                 | `NOT LIKE`                                         |
+| `whereRegexp(col, pattern)`                                                         | Regular expression match                           |
+| `whereFullText(cols, query)`                                                        | Full-text search (cross-db)                        |
+| `whereAll(cols, op, val)`                                                           | Multi-column `AND`                                 |
+| `whereAny(cols, op, val)`                                                           | Multi-column `OR`                                  |
+| `whereKey(id \| ids)`                                                               | Filter by the model primary key                    |
+| `whereKeyNot(id \| ids)`                                                            | Exclude by the model primary key                   |
+| `orderBy(col, dir)`                                                                 | Sort ascending or descending                       |
+| `orderByDesc(col)`                                                                  | Sort descending shorthand                          |
+| `orderByRaw(sql)`                                                                   | Raw `ORDER BY` expression                          |
+| `latest(col?)`                                                                      | `orderBy(created_at, desc)`                        |
+| `oldest(col?)`                                                                      | `orderBy(created_at, asc)`                         |
+| `inRandomOrder()`                                                                   | `ORDER BY RANDOM()` / `RAND()`                     |
+| `reorder(col?, dir?)`                                                               | Clear and optionally replace orders                |
+| `groupBy(...cols)`                                                                  | `GROUP BY`                                         |
+| `groupByRaw(sql)`                                                                   | Raw `GROUP BY` expression                          |
+| `having(col, op, val)`                                                              | `HAVING` filter                                    |
+| `orHaving(...)`                                                                     | OR `HAVING`                                        |
+| `havingRaw(sql)`                                                                    | Raw `HAVING`                                       |
+| `orHavingRaw(...)`                                                                  | OR raw `HAVING`                                    |
+| `join(tbl, a, op, b)`                                                               | `INNER JOIN`                                       |
+| `leftJoin(...)`                                                                     | `LEFT JOIN`                                        |
+| `rightJoin(...)`                                                                    | `RIGHT JOIN`                                       |
+| `crossJoin(tbl)`                                                                    | `CROSS JOIN`                                       |
+| `union(query, all?)`                                                                | `UNION` another query                              |
+| `unionAll(query)`                                                                   | `UNION ALL`                                        |
+| `select(...cols)`                                                                   | Choose columns                                     |
+| `addSelect(...cols)`                                                                | Append columns                                     |
+| `selectRaw(sql)`                                                                    | Raw SELECT expression                              |
+| `fromSub(query, alias)`                                                             | Derived table from subquery                        |
+| `distinct()`                                                                        | `SELECT DISTINCT`                                  |
+| `limit(n)` / `take(n)`                                                              | Row limit                                          |
+| `offset(n)` / `skip(n)`                                                             | Row offset                                         |
+| `forPage(page, perPage)`                                                            | Pagination offset/limit                            |
+| `lockForUpdate()`                                                                   | `FOR UPDATE` (MySQL/Postgres)                      |
+| `sharedLock()`                                                                      | `LOCK IN SHARE MODE` / `FOR SHARE`                 |
+| `skipLocked()`                                                                      | Append `SKIP LOCKED`                               |
+| `noWait()`                                                                          | Append `NOWAIT`                                    |
+| `get()`                                                                             | Fetch all rows as `Collection<T>`                  |
+| `getArray()`                                                                        | Fetch all rows as a plain array                    |
+| `first()`                                                                           | Fetch first row                                    |
+| `find(id, col?)`                                                                    | Find by ID                                         |
+| `findMany(ids)`                                                                     | Fetch many rows by primary key                     |
+| `findOrFail(id, col?)`                                                              | Find or throw                                      |
+| `firstWhere(col, op?, val)`                                                         | Apply one where clause and fetch first             |
+| `firstOrFail()`                                                                     | First or throw                                     |
+| `sole()`                                                                            | Exactly one row or throw                           |
+| `value(col)`                                                                        | Single scalar from first row                       |
+| `pluck(col)`                                                                        | Array of column values                             |
+| `count(col?)`                                                                       | `COUNT` aggregate                                  |
+| `sum(col)`                                                                          | `SUM`                                              |
+| `avg(col)`                                                                          | `AVG`                                              |
+| `min(col)`                                                                          | `MIN`                                              |
+| `max(col)`                                                                          | `MAX`                                              |
+| `exists()`                                                                          | Check any rows exist                               |
+| `doesntExist()`                                                                     | Check no rows exist                                |
+| `paginate(perPage?, page?)`                                                         | Paginated result set with total/last-page metadata |
+| `simplePaginate(perPage?, page?)`                                                   | Offset pagination without a total count query      |
+| `cursorPaginate(perPage?, cursor?)`                                                 | Keyset pagination with opaque next cursor          |
+| `chunk(n, fn)`                                                                      | Batch iterate with collection chunks               |
+| `each(n, fn)`                                                                       | Per-item iterate                                   |
+| `chunkById(n, fn, col?)`                                                            | Keyset-paginated chunk (no offset drift)           |
+| `chunkByIdDesc(n, fn, col?)`                                                        | Descending keyset-paginated chunk                  |
+| `eachById(n, fn, col?)`                                                             | Keyset-paginated per-item iterate                  |
+| `cursor()`                                                                          | Lazy async generator                               |
+| `lazy(n?)`                                                                          | Chunked lazy generator                             |
+| `lazyById(n?, col?)`                                                                | Keyset chunked lazy generator                      |
+| `insert(data, options?)`                                                            | Insert row(s) with optional chunking               |
+| `insertGetId(data, col?)`                                                           | Insert and return ID                               |
+| `insertOrIgnore(data)`                                                              | Insert, ignore conflicts                           |
+| `upsert(data, uniqueBy, updateCols?, options?)`                                     | Insert or update on conflict                       |
+| `update(data)`                                                                      | Update matched rows                                |
+| `updateFrom(tbl, a, op, b)`                                                         | Update with JOIN                                   |
+| `delete()`                                                                          | Delete matched rows                                |
+| `increment(col, amt?, extra?)`                                                      | Add to column                                      |
+| `decrement(col, amt?, extra?)`                                                      | Subtract from column                               |
+| `restore()`                                                                         | Restore soft-deleted rows                          |
+| `with(...rels)`                                                                     | Eager load relations                               |
+| `has(rel)` / `orHas(rel)`                                                           | Relation existence                                 |
+| `whereHas(rel, fn?)` / `orWhereHas(...)`                                            | Filtered relation existence                        |
+| `doesntHave(rel)` / `whereDoesntHave(...)`                                          | Relation absence                                   |
+| `whereRelation(rel, col, op?, val)`                                                 | Filter by related column (shorthand)               |
+| `orWhereRelation(...)`                                                              | OR variant of `whereRelation`                      |
+| `whereMorphedTo(rel, model)`                                                        | Filter a `morphTo` relation by type/id             |
+| `orWhereMorphedTo(rel, model)`                                                      | OR variant of `whereMorphedTo`                     |
+| `whereNotMorphedTo(rel, model)`                                                     | Exclude a `morphTo` target                         |
+| `withWhereHas(rel, fn?)`                                                            | Filter + eager load in one call                    |
+| `withCount(rel)` / `withSum(rel, col, alias?, fn?)` / `withAvg / withMin / withMax` | Relation aggregates                                |
+| `withExists(rel, alias?, fn?)`                                                      | Add a typed boolean relation-exists field          |
+| `scope(name, ...args)`                                                              | Apply local scope                                  |
+| `withoutGlobalScope(name)` / `withoutGlobalScopes()`                                | Remove scopes                                      |
+| `withTrashed()` / `onlyTrashed()`                                                   | Soft delete visibility                             |
+| `when(cond, fn, elseFn?)` / `unless(...)`                                           | Conditional building                               |
+| `tap(fn)`                                                                           | Mutate and return                                  |
+| `clone()`                                                                           | Copy builder state                                 |
+| `toSql()`                                                                           | Compile to SQL string                              |
+| `dump()`                                                                            | Log SQL, return builder                            |
+| `dd()`                                                                              | Log SQL and halt                                   |
+| `explain()`                                                                         | Return query plan                                  |
 
 ---
 
@@ -922,11 +934,11 @@ import { collect, Collection } from "@bunnykit/orm";
 const users = await User.where("active", true).orderBy("name").get();
 
 users instanceof Collection; // true
-users.length;                // standard array length
-users[0];                    // index access
-users.all();                 // plain User[]
-users.toArray();             // alias for all()
-JSON.stringify(users);       // [{"id":1,...}] — serializes as array
+users.length; // standard array length
+users[0]; // index access
+users.all(); // plain User[]
+users.toArray(); // alias for all()
+JSON.stringify(users); // [{"id":1,...}] — serializes as array
 
 for (const user of users) {
   console.log(user.getAttribute("name"));
@@ -950,53 +962,53 @@ numbers.sum(); // 6
 
 ```ts
 // Transforming
-users.pluck("email")                          // Collection of email values
-users.pluck("address.city")                   // dot-notation path
-users.keyBy("email")                          // Record<string, User> keyed by email
-users.keyBy((u) => u.getAttribute("role"))    // key by callback
-users.groupBy("role")                         // Record<string, Collection<User>>
+users.pluck("email"); // Collection of email values
+users.pluck("address.city"); // dot-notation path
+users.keyBy("email"); // Record<string, User> keyed by email
+users.keyBy((u) => u.getAttribute("role")); // key by callback
+users.groupBy("role"); // Record<string, Collection<User>>
 
 // Filtering
-users.where("role", "admin")                  // equality filter
-users.whereIn("role", ["admin", "mod"])        // IN filter
-users.reject((u) => u.getAttribute("active") === false) // inverse of filter
+users.where("role", "admin"); // equality filter
+users.whereIn("role", ["admin", "mod"]); // IN filter
+users.reject((u) => u.getAttribute("active") === false); // inverse of filter
 
 // Sorting
-users.sortBy("name")                          // ascending
-users.sortByDesc("created_at")                // descending
-users.sortBy((u) => u.getAttribute("score"))  // by callback
+users.sortBy("name"); // ascending
+users.sortByDesc("created_at"); // descending
+users.sortBy((u) => u.getAttribute("score")); // by callback
 
 // Slicing
-users.take(10)                                // first N
-users.skip(5)                                 // drop first N
-users.take(-3)                                // last 3
+users.take(10); // first N
+users.skip(5); // drop first N
+users.take(-3); // last 3
 
 // Finding
-users.first()                                 // first item or null
-users.first((u) => u.getAttribute("active"))  // first matching predicate
-users.last()                                  // last item or null
-users.firstWhere("email", "alice@example.com")
-users.get(0)                                  // by index, null if missing
-users.contains("role", "admin")               // key/value check
-users.contains((u) => u.getAttribute("active")) // predicate check
+users.first(); // first item or null
+users.first((u) => u.getAttribute("active")); // first matching predicate
+users.last(); // last item or null
+users.firstWhere("email", "alice@example.com");
+users.get(0); // by index, null if missing
+users.contains("role", "admin"); // key/value check
+users.contains((u) => u.getAttribute("active")); // predicate check
 
 // Aggregates
-users.count()
-users.sum("score")
-users.avg("score")
-users.min("score")
-users.max("score")
+users.count();
+users.sum("score");
+users.avg("score");
+users.min("score");
+users.max("score");
 
 // Iteration
-users.each((user, index) => console.log(index, user.getAttribute("name")))
+users.each((user, index) => console.log(index, user.getAttribute("name")));
 
 // State
-users.isEmpty()
-users.isNotEmpty()
+users.isEmpty();
+users.isNotEmpty();
 
 // Serialization
-users.toJSON()  // array of plain objects (calls toJSON() on each item)
-users.json()    // alias for toJSON()
+users.toJSON(); // array of plain objects (calls toJSON() on each item)
+users.json(); // alias for toJSON()
 ```
 
 ---
@@ -1044,7 +1056,10 @@ For tables with irregular plural names (e.g. `curricula`), pass the class name a
 class Curriculum extends Model.define<CurriculumAttributes>("curricula") {}
 
 // Direct assignment — provide name explicitly:
-const Curriculum = Model.define<CurriculumAttributes>("curricula", "Curriculum");
+const Curriculum = Model.define<CurriculumAttributes>(
+  "curricula",
+  "Curriculum",
+);
 ```
 
 #### Without `Model.define<T>()` (plain class)
@@ -1091,7 +1106,7 @@ class User extends Model {
 
 const user = new User({ name: "Ada" });
 user.active; // true
-user.role;   // "member"
+user.role; // "member"
 ```
 
 These are model defaults, not database defaults. Values provided by the caller override them.
@@ -1114,22 +1129,22 @@ class User extends Model {
 const user = new User({ active: true, settings: { theme: "dark" } });
 
 user.$attributes.active; // 1      (stored)
-user.active;             // true   (cast on read)
-user.settings.theme;     // "dark" (parsed from JSON)
+user.active; // true   (cast on read)
+user.settings.theme; // "dark" (parsed from JSON)
 ```
 
 Supported built-in casts:
 
-| Cast | Behavior |
+| Cast                                          | Behavior                                            |
 | --------------------------------------------- | --------------------------------------------------- |
-| `boolean`, `bool` | Stores `1` / `0`, reads boolean |
-| `number`, `integer`, `int`, `float`, `double` | Reads/writes numbers |
-| `decimal:2` | Stores fixed precision string |
-| `string` | Reads/writes string |
-| `date`, `datetime` | Reads as `Date`, stores ISO string for `Date` input |
-| `json`, `array`, `object` | Stores JSON string, reads parsed value |
-| `enum` | Stores enum `.value` when present |
-| `encrypted` | Base64 encodes on write and decodes on read |
+| `boolean`, `bool`                             | Stores `1` / `0`, reads boolean                     |
+| `number`, `integer`, `int`, `float`, `double` | Reads/writes numbers                                |
+| `decimal:2`                                   | Stores fixed precision string                       |
+| `string`                                      | Reads/writes string                                 |
+| `date`, `datetime`                            | Reads as `Date`, stores ISO string for `Date` input |
+| `json`, `array`, `object`                     | Stores JSON string, reads parsed value              |
+| `enum`                                        | Stores enum `.value` when present                   |
+| `encrypted`                                   | Base64 encodes on write and decodes on read         |
 
 Custom casts can implement `CastsAttributes`:
 
@@ -1190,7 +1205,7 @@ const user = new User({ email: "  ALICE@Example.com  " });
 user.$attributes.email; // "alice@example.com" — mutator ran on set
 
 const found = await User.create({ name: "alice" });
-found.name;               // "ALICE" — accessor ran on get
+found.name; // "ALICE" — accessor ran on get
 found.getAttribute("name"); // "ALICE" — same result
 ```
 
@@ -1212,7 +1227,7 @@ class User extends Model {
 
 const user = new User({ first_name: "Ada", last_name: "Lovelace" });
 user.getAttribute("full_name"); // "Ada Lovelace"
-(user as any).full_name;        // "Ada Lovelace" — via proxy
+(user as any).full_name; // "Ada Lovelace" — via proxy
 ```
 
 Computed accessors appear in `ownKeys` / `getOwnPropertyDescriptor` so they serialize correctly with `toJSON()`.
@@ -1222,19 +1237,19 @@ Computed accessors appear in `ownKeys` / `getOwnPropertyDescriptor` so they seri
 #### Creating & Finding
 
 ```ts
-const all   = await User.all();                   // Collection<User>
+const all = await User.all(); // Collection<User>
 const count = await User.count();
-const user  = await User.create({ name: "Alice", email: "alice@example.com" });
+const user = await User.create({ name: "Alice", email: "alice@example.com" });
 const found = await User.find(1);
 const first = await User.first();
-const many  = await User.findMany([1, 2, 3]);
+const many = await User.findMany([1, 2, 3]);
 const admin = await User.firstWhere("role", "admin");
 
 const selected = await User.whereKey([1, 3, 5]).get();
-const others   = await User.whereKeyNot(1).get();
+const others = await User.whereKeyNot(1).get();
 
 // Find-or-fail (throws if not found)
-const user  = await User.findOrFail(1);
+const user = await User.findOrFail(1);
 const first = await User.firstOrFail();
 ```
 
@@ -1257,9 +1272,9 @@ user.getAttribute("name");
 user.setAttribute("name", "Dana");
 
 await user.delete();
-await user.refresh();           // reload from database
-await user.touch();             // update only timestamps
-user.toJSON();                  // plain object: attributes + relations
+await user.refresh(); // reload from database
+await user.touch(); // update only timestamps
+user.toJSON(); // plain object: attributes + relations
 user.json({ relations: false }); // attributes only
 ```
 
@@ -1268,7 +1283,7 @@ user.json({ relations: false }); // attributes only
 `saveQuietly()` and `deleteQuietly()` bypass all registered observers:
 
 ```ts
-await user.saveQuietly();   // save without firing creating/updating/saving observers
+await user.saveQuietly(); // save without firing creating/updating/saving observers
 await user.deleteQuietly(); // delete without firing deleting/deleted observers
 
 // For bulk operations, pass { events: false }
@@ -1282,10 +1297,10 @@ model.save({ events: false });
 ```ts
 // firstOrNew — find or instantiate (does NOT save automatically)
 const user = await User.firstOrNew(
-  { email: "alice@example.com" },  // search attributes
-  { name: "Alice" },               // fill if not found
+  { email: "alice@example.com" }, // search attributes
+  { name: "Alice" }, // fill if not found
 );
-user.$exists;    // false if not found in DB
+user.$exists; // false if not found in DB
 await user.save(); // persist when ready
 
 // firstOrCreate — find or create (saves automatically)
@@ -1296,7 +1311,7 @@ const user = await User.firstOrCreate(
 
 // updateOrInsert — update existing record or create a new one
 await User.updateOrInsert(
-  { email: "alice@example.com" },  // match by these
+  { email: "alice@example.com" }, // match by these
   { name: "Alice Smith", active: true }, // set these
 );
 ```
@@ -1326,7 +1341,7 @@ await User.truncate();
 // withoutTimestamps — disable created_at / updated_at for one block
 await User.withoutTimestamps(async () => {
   await User.create({ name: "No Timestamp" }); // timestamps not set
-  await user.save();                            // updated_at not changed
+  await user.save(); // updated_at not changed
 });
 ```
 
@@ -1365,10 +1380,10 @@ Track which attributes changed after the last `save()`:
 user.setAttribute("name", "Updated");
 await user.save();
 
-user.wasChanged();         // true — at least one attribute changed
-user.wasChanged("name");   // true
-user.wasChanged("email");  // false
-user.getChanges();         // { name: "Updated" }
+user.wasChanged(); // true — at least one attribute changed
+user.wasChanged("name"); // true
+user.wasChanged("email"); // false
+user.getChanges(); // { name: "Updated" }
 ```
 
 #### is / isNot — Model Identity
@@ -1379,7 +1394,7 @@ Compare two model instances by their table and primary key:
 const a = await User.find(1);
 const b = await User.find(1);
 
-a.is(b);    // true — same table, same primary key
+a.is(b); // true — same table, same primary key
 a.isNot(b); // false
 ```
 
@@ -1389,11 +1404,11 @@ Check in-memory attributes that have not yet been saved:
 
 ```ts
 user.setAttribute("name", "Pending");
-user.isDirty();       // true
+user.isDirty(); // true
 user.isDirty("name"); // true
-user.getDirty();      // { name: "Pending" }
+user.getDirty(); // { name: "Pending" }
 await user.save();
-user.isDirty();       // false
+user.isDirty(); // false
 ```
 
 ### Bulk Operations
@@ -1404,10 +1419,13 @@ Bunny provides bulk methods for inserting, upserting, and creating multiple reco
 
 ```ts
 // insert — bulk insert with automatic processing (no model events)
-await User.insert([
-  { name: "Alice", email: "alice@example.com" },
-  { name: "Bob",   email: "bob@example.com" },
-], { chunkSize: 500 }); // chunkSize batches large inserts
+await User.insert(
+  [
+    { name: "Alice", email: "alice@example.com" },
+    { name: "Bob", email: "bob@example.com" },
+  ],
+  { chunkSize: 500 },
+); // chunkSize batches large inserts
 
 // insertOrIgnore — skip conflicting rows
 await User.query().insertOrIgnore([
@@ -1418,8 +1436,8 @@ await User.query().insertOrIgnore([
 // upsert — insert or update on conflict
 await User.upsert(
   [{ email: "alice@example.com", name: "Alice Updated" }],
-  "email",    // unique key column
-  ["name"],   // columns to update on conflict
+  "email", // unique key column
+  ["name"], // columns to update on conflict
   { chunkSize: 500 },
 );
 
@@ -1436,7 +1454,7 @@ await User.upsert(
 // createMany — create multiple instances, fires model events
 const users = await User.createMany([
   { name: "Alice", email: "alice@example.com" },
-  { name: "Bob",   email: "bob@example.com" },
+  { name: "Bob", email: "bob@example.com" },
 ]);
 users[0].$exists; // true
 
@@ -1462,7 +1480,7 @@ const user = await User.with("posts").first();
 user.toJSON();
 // { id: 1, name: "Alice", posts: [{ id: 1, title: "Hello" }, ...] }
 
-user.json();                    // same as toJSON()
+user.json(); // same as toJSON()
 user.json({ relations: false }); // { id: 1, name: "Alice" } — attributes only
 ```
 
@@ -1505,7 +1523,7 @@ const withInitials = user.append("initials");
 withInitials.json().initials; // string, included for this instance
 
 user.setAppends(["initials"]); // replace instance-level appends
-user.getAppends();             // ["full_name", "initials"]
+user.getAppends(); // ["full_name", "initials"]
 ```
 
 Visibility still applies to appended fields: `makeHidden("full_name")` removes the computed value from serialized output.
@@ -1519,11 +1537,11 @@ class User extends Model {
   static softDeletes = true;
 }
 
-await user.delete();        // sets deleted_at, row stays in DB
-await user.restore();       // clears deleted_at
-await user.forceDelete();   // permanently deletes
+await user.delete(); // sets deleted_at, row stays in DB
+await user.restore(); // clears deleted_at
+await user.forceDelete(); // permanently deletes
 
-await User.all();               // excludes trashed rows automatically
+await User.all(); // excludes trashed rows automatically
 await User.withTrashed().get(); // includes trashed rows
 await User.onlyTrashed().get(); // only trashed rows
 await User.onlyTrashed().restore(); // restore all trashed
@@ -1600,7 +1618,7 @@ await Schema.create("users", (t) => {
 });
 await Schema.create("posts", (t) => {
   t.increments("id");
-  t.integer("user_id");   // foreign key pointing to users.id
+  t.integer("user_id"); // foreign key pointing to users.id
   t.string("title");
   t.timestamps();
 });
@@ -1608,8 +1626,12 @@ await Schema.create("posts", (t) => {
 // Models
 class User extends Model {
   static table = "users";
-  posts() { return this.hasMany(Post); }              // FK: post.user_id
-  posts() { return this.hasMany(Post, "author_id"); } // custom FK
+  posts() {
+    return this.hasMany(Post);
+  } // FK: post.user_id
+  posts() {
+    return this.hasMany(Post, "author_id");
+  } // custom FK
 }
 
 class Post extends Model {
@@ -1617,8 +1639,8 @@ class Post extends Model {
 }
 
 // Usage
-const posts = await user.posts().get();               // Collection<Post>
-const post  = await user.posts().where("published", true).first();
+const posts = await user.posts().get(); // Collection<Post>
+const post = await user.posts().where("published", true).first();
 ```
 
 ### hasOne
@@ -1629,14 +1651,16 @@ One record has exactly one related record.
 // Schema
 await Schema.create("profiles", (t) => {
   t.increments("id");
-  t.integer("user_id");   // foreign key pointing to users.id
+  t.integer("user_id"); // foreign key pointing to users.id
   t.string("bio").nullable();
   t.timestamps();
 });
 
 // Model
 class User extends Model {
-  profile() { return this.hasOne(Profile); }
+  profile() {
+    return this.hasOne(Profile);
+  }
 }
 
 // Usage
@@ -1656,8 +1680,8 @@ class User extends Model {
 
 // No profile row exists → returns an unsaved Profile with bio set
 const profile = await user.profile().get();
-profile.$exists;                // false
-profile.getAttribute("bio");    // "No bio yet"
+profile.$exists; // false
+profile.getAttribute("bio"); // "No bio yet"
 
 // withDefault() with no args returns an empty unsaved instance
 this.hasOne(Profile).withDefault();
@@ -1674,8 +1698,12 @@ The model holds the foreign key pointing to the parent.
 
 // Model
 class Post extends Model {
-  author() { return this.belongsTo(User); }              // FK: post.user_id
-  author() { return this.belongsTo(User, "author_id"); } // custom FK
+  author() {
+    return this.belongsTo(User);
+  } // FK: post.user_id
+  author() {
+    return this.belongsTo(User, "author_id");
+  } // custom FK
 }
 
 // Usage
@@ -1701,8 +1729,7 @@ class Customer extends Model {
   }
 
   preferredTags() {
-    return this.belongsToMany(Tag, "customer_tag")
-      .where("tags.enabled", true);
+    return this.belongsToMany(Tag, "customer_tag").where("tags.enabled", true);
   }
 
   coverImage() {
@@ -1717,10 +1744,7 @@ class Customer extends Model {
 const customers = await Customer.with("openInvoices", "primaryContact").get();
 const customer = customers[0];
 
-const invoices = await customer
-  .openInvoices()
-  .where("total", ">", 100)
-  .get();
+const invoices = await customer.openInvoices().where("total", ">", 100).get();
 ```
 
 #### belongsTo — associate / dissociate
@@ -1732,7 +1756,7 @@ const post = new Post({ title: "Draft" });
 post.author().associate(user); // sets post.user_id = user.id (in memory)
 await post.save();
 
-post.author().dissociate();    // sets post.user_id = null (in memory)
+post.author().dissociate(); // sets post.user_id = null (in memory)
 await post.save();
 ```
 
@@ -1749,8 +1773,8 @@ class Post extends Model {
 
 // FK is null → returns an unsaved User with name "Anonymous"
 const author = await post.author().get();
-author.$exists;                // false
-author.getAttribute("name");   // "Anonymous"
+author.$exists; // false
+author.getAttribute("name"); // "Anonymous"
 ```
 
 ### hasMany — create / saveMany / createMany
@@ -1762,23 +1786,22 @@ const user = await User.find(1);
 
 // create — create a single model and return it
 const post = await user.posts().create({ title: "My Post" });
-post.$exists;                       // true
-post.getAttribute("user_id");       // user.id
+post.$exists; // true
+post.getAttribute("user_id"); // user.id
 
 // saveMany — set FK and save each model instance
 const p1 = new Post({ title: "First" });
 const p2 = new Post({ title: "Second" });
 await user.posts().saveMany([p1, p2]);
 
-p1.$exists;                      // true
-p1.getAttribute("user_id");      // user.id
+p1.$exists; // true
+p1.getAttribute("user_id"); // user.id
 
 // createMany — create and return multiple models
-const posts = await user.posts().createMany([
-  { title: "Alpha" },
-  { title: "Beta" },
-]);
-posts[0].$exists;                // true
+const posts = await user
+  .posts()
+  .createMany([{ title: "Alpha" }, { title: "Beta" }]);
+posts[0].$exists; // true
 posts[0].getAttribute("user_id"); // user.id
 ```
 
@@ -1841,18 +1864,23 @@ await Schema.create("roles", (t) => {
   t.string("name");
   t.timestamps();
 });
-await Schema.create("role_user", (t) => { // pivot: alphabetical model names
+await Schema.create("role_user", (t) => {
+  // pivot: alphabetical model names
   t.integer("user_id");
   t.integer("role_id");
 });
 
 // Models
 class User extends Model {
-  roles() { return this.belongsToMany(Role); }
+  roles() {
+    return this.belongsToMany(Role);
+  }
 }
 
 class Role extends Model {
-  users() { return this.belongsToMany(User); }
+  users() {
+    return this.belongsToMany(User);
+  }
 }
 
 // Usage
@@ -1896,7 +1924,7 @@ class User extends Model {
 }
 
 const roles = await user.roles().get();
-roles[0].pivot.is_active;  // pivot data attached to each related model
+roles[0].pivot.is_active; // pivot data attached to each related model
 roles[0].pivot.expires_at;
 roles[0].pivot.created_at;
 ```
@@ -1958,15 +1986,13 @@ await post.featuredTags().create({ name: "Ignored" });
 const tag = new Tag({ name: "Ignored" });
 await post.featuredTags().save(tag);
 
-await post.featuredTags().createMany([
-  { name: "Ignored 1" },
-  { name: "Ignored 2" },
-]);
+await post
+  .featuredTags()
+  .createMany([{ name: "Ignored 1" }, { name: "Ignored 2" }]);
 
-await post.featuredTags().saveMany([
-  new Tag({ name: "Ignored 3" }),
-  new Tag({ name: "Ignored 4" }),
-]);
+await post
+  .featuredTags()
+  .saveMany([new Tag({ name: "Ignored 3" }), new Tag({ name: "Ignored 4" })]);
 ```
 
 The constrained fields do not appear in IntelliSense for the create helpers, because Bunny fills them from the relation itself.
@@ -1997,18 +2023,20 @@ await user.roles().toggle(4); // single ID
 #### Filtering by Pivot Columns
 
 ```ts
-const active  = await user.roles().wherePivot("is_active", true).get();
-const heavy   = await user.skills().wherePivot("weight", ">", 5).get();
-const mixed   = await user.skills()
+const active = await user.roles().wherePivot("is_active", true).get();
+const heavy = await user.skills().wherePivot("weight", ">", 5).get();
+const mixed = await user
+  .skills()
   .wherePivot("weight", ">", 5)
   .orWherePivot("featured", true)
   .get();
-const some    = await user.roles().wherePivotIn("priority", [1, 2]).get();
-const others  = await user.roles().wherePivotNotIn("priority", [3, 4]).get();
-const unset   = await user.tags().wherePivotNull("expires_at").get();
+const some = await user.roles().wherePivotIn("priority", [1, 2]).get();
+const others = await user.roles().wherePivotNotIn("priority", [3, 4]).get();
+const unset = await user.tags().wherePivotNull("expires_at").get();
 const expiring = await user.tags().wherePivotNotNull("expires_at").get();
-const ranked  = await user.skills().wherePivotBetween("weight", [5, 10]).get();
-const flagged = await user.roles()
+const ranked = await user.skills().wherePivotBetween("weight", [5, 10]).get();
+const flagged = await user
+  .roles()
   .wherePivot("priority", 1)
   .orWherePivotIn("priority", [2, 3])
   .orWherePivotNull("priority")
@@ -2032,9 +2060,8 @@ Pivot filters are also preserved in constrained eager loading. For `belongsToMan
 
 ```ts
 const users = await User.with({
-  roles: (q) => q
-    .wherePivot("is_active", true)
-    .wherePivotNotNull("approved_at"),
+  roles: (q) =>
+    q.wherePivot("is_active", true).wherePivotNotNull("approved_at"),
 }).get();
 ```
 
@@ -2044,11 +2071,19 @@ Convert a `hasMany` into a single "latest", "oldest", or aggregate-selected reco
 
 ```ts
 class User extends Model {
-  posts() { return this.hasMany(Post); }
+  posts() {
+    return this.hasMany(Post);
+  }
 
-  latestPost()          { return this.posts().latestOfMany("id"); }
-  oldestPost()          { return this.posts().oldestOfMany("id"); }
-  highestScoringPost()  { return this.posts().ofMany("score", "max"); }
+  latestPost() {
+    return this.posts().latestOfMany("id");
+  }
+  oldestPost() {
+    return this.posts().oldestOfMany("id");
+  }
+  highestScoringPost() {
+    return this.posts().ofMany("score", "max");
+  }
 }
 
 const post = await user.latestPost().get(); // Post | null
@@ -2111,25 +2146,26 @@ Semester.with("sections.offerings");
 Semester.with("sections.offerings.subjects");
 
 // After eager loading, the relation type narrows automatically
-const years = await AcademicCalendar
-  .with("semesters", "semesters.gradingPeriods")
-  .get();
+const years = await AcademicCalendar.with(
+  "semesters",
+  "semesters.gradingPeriods",
+).get();
 
-years[0].semesters;                   // Collection<Semester>  ✓
+years[0].semesters; // Collection<Semester>  ✓
 years[0].semesters[0].gradingPeriods; // Collection<GradingPeriod>  ✓
 ```
 
 Without `with()`, `years[0].semesters` stays as `() => HasMany<Semester>` (the relation method).
 
-| Relation type | Loaded type |
-|--------------------|------------------------|
-| `hasMany` | `Collection<R>` |
+| Relation type   | Loaded type     |
+| --------------- | --------------- |
+| `hasMany`       | `Collection<R>` |
 | `belongsToMany` | `Collection<R>` |
-| `morphMany` | `Collection<R>` |
-| `morphToMany` | `Collection<R>` |
-| `hasOne` | `R \| null` |
-| `belongsTo` | `R \| null` |
-| `morphOne` | `R \| null` |
+| `morphMany`     | `Collection<R>` |
+| `morphToMany`   | `Collection<R>` |
+| `hasOne`        | `R \| null`     |
+| `belongsTo`     | `R \| null`     |
+| `morphOne`      | `R \| null`     |
 
 ### Relation Queries
 
@@ -2138,7 +2174,7 @@ Without `with()`, `years[0].semesters` stays as `() => HasMany<Semester>` (the r
 Filter parent models by whether a relation exists:
 
 ```ts
-const usersWithPosts    = await User.has("posts").get();
+const usersWithPosts = await User.has("posts").get();
 const usersWithoutPosts = await User.doesntHave("posts").get();
 ```
 
@@ -2151,8 +2187,9 @@ const usersWithPublished = await User.whereHas("posts", (q) => {
   q.where("status", "published");
 }).get();
 
-const usersWithPublishedOrFeatured = await User
-  .whereHas("posts", (q) => q.where("status", "published"))
+const usersWithPublishedOrFeatured = await User.whereHas("posts", (q) =>
+  q.where("status", "published"),
+)
   .orWhereHas("posts", (q) => q.where("featured", true))
   .get();
 
@@ -2168,10 +2205,13 @@ The same pivot-aware callback behavior applies to `whereHas()` and `whereDoesntH
 Add a relation-exists field. The alias is included as `boolean` in model JSON and paginated JSON types:
 
 ```ts
-const pageResult = await Subject
-  .withExists("offerings", "in_used", (offering) => {
+const pageResult = await Subject.withExists(
+  "offerings",
+  "in_used",
+  (offering) => {
     offering.has("admissions");
-  })
+  },
+)
   .whereNull("parent_id")
   .orderBy("title")
   .paginate(15, 1);
@@ -2198,7 +2238,9 @@ Subject.withExists("offerings");
 Subject.withExists("offerings", (offering) => offering.has("admissions"));
 // adds: offerings_exists: boolean
 
-Subject.withExists("offerings", "in_used", (offering) => offering.has("admissions"));
+Subject.withExists("offerings", "in_used", (offering) =>
+  offering.has("admissions"),
+);
 // adds: in_used: boolean
 
 Subject.withExists({
@@ -2220,8 +2262,7 @@ const posts = await Post.whereRelation("comments", "status", "approved").get();
 const posts = await Post.whereRelation("comments", "votes", ">", 10).get();
 
 // OR variant
-const posts = await Post
-  .whereRelation("comments", "status", "approved")
+const posts = await Post.whereRelation("comments", "status", "approved")
   .orWhereRelation("comments", "status", "featured")
   .get();
 ```
@@ -2257,7 +2298,10 @@ if (!tag) return;
 const taggedPosts = await Post.whereAttachedTo("tags", tag).get();
 
 // Multiple related models are supported too.
-const selectedTags = await Tag.whereIn("slug", ["release-notes", "guide"]).get();
+const selectedTags = await Tag.whereIn("slug", [
+  "release-notes",
+  "guide",
+]).get();
 const posts = await Post.whereAttachedTo("tags", selectedTags).get();
 
 // It also works in the middle of a query chain.
@@ -2277,7 +2321,7 @@ Filter parent models and eager load the filtered relation in one call:
 ```ts
 // Only users who have published posts — and also load those posts
 const users = await User.withWhereHas("posts", (q) =>
-  q.where("status", "published")
+  q.where("status", "published"),
 ).get();
 
 users[0].getRelation("posts"); // only published posts, already loaded
@@ -2288,31 +2332,29 @@ users[0].getRelation("posts"); // only published posts, already loaded
 Add aggregate columns from a relation without loading the related records:
 
 ```ts
-const users = await User
-  .withCount("posts")
+const users = await User.withCount("posts")
   .withSum("posts", "views")
   .withAvg("posts", "score")
   .withMin("posts", "created_at")
   .withMax("posts", "created_at")
   .get();
 
-users[0].posts_count;     // number of posts
+users[0].posts_count; // number of posts
 users[0].posts_sum_views; // sum of views across all posts
 ```
 
 Aggregate methods support constrained subqueries with the same relation-aware callback style:
 
 ```ts
-const users = await User
-  .withAvg("posts", "score", (post) =>
-    post.where("status", "published")
-  )
+const users = await User.withAvg("posts", "score", (post) =>
+  post.where("status", "published"),
+)
   .withMax("posts", "created_at", "latest_published_post_at", (post) =>
-    post.where("status", "published")
+    post.where("status", "published"),
   )
   .get();
 
-users[0].posts_avg_score;          // average score for published posts
+users[0].posts_avg_score; // average score for published posts
 users[0].latest_published_post_at; // max created_at for published posts
 ```
 
@@ -2323,7 +2365,7 @@ User.withAvg("posts", "score");
 User.withAvg("posts", "score", (post) => post.where("status", "published"));
 User.withAvg("posts", "score", "published_score_avg");
 User.withAvg("posts", "score", "published_score_avg", (post) =>
-  post.where("status", "published")
+  post.where("status", "published"),
 );
 ```
 
@@ -2339,7 +2381,7 @@ const posts = await Post.where("status", "published").get();
 
 await posts.loadMissing("author", "comments");
 
-posts[0].getRelation("author");   // User — now loaded
+posts[0].getRelation("author"); // User — now loaded
 posts[0].getRelation("comments"); // Collection<Comment> — now loaded
 
 // Safe to call multiple times — only triggers queries for truly missing relations
@@ -2398,12 +2440,18 @@ class Comment extends Model {
 }
 
 class Post extends Model {
-  comments() { return this.morphMany(Comment, "commentable"); }
+  comments() {
+    return this.morphMany(Comment, "commentable");
+  }
 }
 
 class Video extends Model {
-  comments()   { return this.morphMany(Comment, "commentable"); }
-  thumbnail()  { return this.morphOne(Image, "imageable"); }
+  comments() {
+    return this.morphMany(Comment, "commentable");
+  }
+  thumbnail() {
+    return this.morphOne(Image, "imageable");
+  }
 }
 
 // Usage
@@ -2425,10 +2473,12 @@ await student.attachments().attach({
   filename: "transcript.pdf",
 });
 
-await student.attachments().attachMany([
-  { filename: "id-card-front.jpg" },
-  { filename: "id-card-back.jpg" },
-]);
+await student
+  .attachments()
+  .attachMany([
+    { filename: "id-card-front.jpg" },
+    { filename: "id-card-back.jpg" },
+  ]);
 
 await student.profilePicture().attach({
   filename: "profile.jpg",
@@ -2450,24 +2500,19 @@ const comments = await Comment.whereHasMorph(
   },
 ).get();
 
-const missingVideos = await Comment.whereDoesntHaveMorph("commentable", [Video]).get();
+const missingVideos = await Comment.whereDoesntHaveMorph("commentable", [
+  Video,
+]).get();
 
 const post = await Post.firstOrFail();
 
-const onThisPost = await Comment
-  .whereMorphedTo("commentable", post)
-  .get();
+const onThisPost = await Comment.whereMorphedTo("commentable", post).get();
 
-const onAnyPost = await Comment
-  .whereMorphedTo("commentable", Post)
-  .get();
+const onAnyPost = await Comment.whereMorphedTo("commentable", Post).get();
 
-const notThisPost = await Comment
-  .whereNotMorphedTo("commentable", post)
-  .get();
+const notThisPost = await Comment.whereNotMorphedTo("commentable", post).get();
 
-const postOrVideo = await Comment
-  .whereMorphedTo("commentable", post)
+const postOrVideo = await Comment.whereMorphedTo("commentable", post)
   .orWhereMorphedTo("commentable", "Video")
   .get();
 
@@ -2522,7 +2567,9 @@ await Schema.create("taggables", (t) => {
 
 // Models
 class Post extends Model {
-  tags() { return this.morphToMany(Tag, "taggable"); }
+  tags() {
+    return this.morphToMany(Tag, "taggable");
+  }
 
   importantTags() {
     return this.morphToMany(Tag, "taggable")
@@ -2533,13 +2580,17 @@ class Post extends Model {
 }
 
 class Tag extends Model {
-  posts()  { return this.morphedByMany(Post, "taggable"); }
-  videos() { return this.morphedByMany(Video, "taggable"); }
+  posts() {
+    return this.morphedByMany(Post, "taggable");
+  }
+  videos() {
+    return this.morphedByMany(Video, "taggable");
+  }
 }
 
 // Usage
-const tags = await post.tags().get();       // Collection<Tag>
-const posts = await tag.posts().get();      // Collection<Post>
+const tags = await post.tags().get(); // Collection<Tag>
+const posts = await tag.posts().get(); // Collection<Post>
 
 const post = await Post.first();
 if (!post) return;
@@ -2696,7 +2747,10 @@ Programmatic seeding is available through `SeederRunner`:
 ```ts
 import { SeederRunner } from "@bunnykit/orm";
 
-await new SeederRunner(connection).runTarget("UserSeeder", "./database/seeders");
+await new SeederRunner(connection).runTarget(
+  "UserSeeder",
+  "./database/seeders",
+);
 await new SeederRunner(connection).runFile("./database/seeders/UserSeeder.ts");
 ```
 
@@ -2712,8 +2766,8 @@ const users = factory(User, (sequence) => ({
 }));
 
 const attributes = users.raw();
-const model      = users.make();
-const created    = await users.count(3).state({ role: "admin" }).create();
+const model = users.make();
+const created = await users.count(3).state({ role: "admin" }).create();
 ```
 
 ---
@@ -2877,25 +2931,29 @@ interface UserAttributes {
 }
 
 class User extends Model.define<UserAttributes>("users") {
-  posts()   { return this.hasMany(Post); }
-  profile() { return this.hasOne(Profile); }
+  posts() {
+    return this.hasMany(Post);
+  }
+  profile() {
+    return this.hasOne(Profile);
+  }
 }
 
 // Attribute access
 const user = await User.find(1);
-user.name;   // string
-user.email;  // string | null
+user.name; // string
+user.email; // string | null
 user.active; // boolean
 
 // Column autocomplete in query builder
-User.where("email", "alice@example.com");  // ✓
-User.orderBy("created_at", "desc");         // ✓
-User.where("nonexistent", "x");             // ✗ TS error
+User.where("email", "alice@example.com"); // ✓
+User.orderBy("created_at", "desc"); // ✓
+User.where("nonexistent", "x"); // ✗ TS error
 
 // with() autocomplete
-User.with("posts");           // ✓
-User.with("posts.comments");  // ✓ nested
-User.with("nonexistent");     // ✗ TS error
+User.with("posts"); // ✓
+User.with("posts.comments"); // ✓ nested
+User.with("nonexistent"); // ✗ TS error
 
 // Typed eager-load results
 const users = await User.with("posts").get();
@@ -2913,8 +2971,8 @@ class User extends Model<UserAttributes> {
 
 const user = await User.first();
 user.getAttribute("name"); // string
-user.$attributes.email;    // string | null
-user.name;                 // ✗ not typed — use getAttribute()
+user.$attributes.email; // string | null
+user.name; // ✗ not typed — use getAttribute()
 ```
 
 ### Query Builder Typing
@@ -2936,7 +2994,7 @@ Bunny can introspect your database schema and generate TypeScript declaration fi
 
 ```ts
 const user = await User.first();
-user.name;  // ✅ autocomplete + type-checking
+user.name; // ✅ autocomplete + type-checking
 user.email = "a@example.com"; // ✅ typed setter
 ```
 
@@ -2975,7 +3033,10 @@ export default {
   typeDeclarationImportPrefix: "$models",
   // Explicit per-table overrides (takes precedence over convention):
   typeDeclarations: {
-    admin_users: { path: "$models/admin/AdminAccount", className: "AdminAccount" },
+    admin_users: {
+      path: "$models/admin/AdminAccount",
+      className: "AdminAccount",
+    },
   },
 };
 ```
@@ -2994,7 +3055,11 @@ export default {
   typesOutDir: "./src/generated/types",
   typeDeclarationImportPrefix: "$models",
   tenancy: {
-    resolveTenant: (tenantId) => ({ strategy: "schema", name: "tenant_db", schema: `tenant_${tenantId}` }),
+    resolveTenant: (tenantId) => ({
+      strategy: "schema",
+      name: "tenant_db",
+      schema: `tenant_${tenantId}`,
+    }),
     listTenants: () => ["acme", "globex"],
   },
 };
@@ -3017,11 +3082,11 @@ Landlord types are introspected via the default connection. Tenant types are int
 
 With `modelsPath`, Bunny discovers your actual model files and writes the generated declarations into `types/` beside each model root. Discovered models use their real file path, so subfolders are preserved automatically. The generator also reads `tsconfig.json` `compilerOptions.paths` and emits an additional `declare module` block for every alias that resolves to the model file — so intellisense works regardless of how you import the model (`../User`, `$models/User`, `@app/models/User`, etc.):
 
-| Table | Model file | No prefix (relative) | With `typeDeclarationImportPrefix: "$models"` |
-| ------------ | ------------------------------ | ----------------------- | --------------------------------------------- |
-| `users` | `src/models/User.ts` | `../User` / `User` | `$models/User` / `User` |
-| `blog_posts` | `src/models/BlogPost.ts` | `../BlogPost` / `BlogPost` | `$models/BlogPost` / `BlogPost` |
-| `tenants` | `src/models/landlord/tenant.ts`| `../landlord/tenant` / `Tenant` | `$models/landlord/tenant` / `Tenant` |
+| Table        | Model file                      | No prefix (relative)            | With `typeDeclarationImportPrefix: "$models"` |
+| ------------ | ------------------------------- | ------------------------------- | --------------------------------------------- |
+| `users`      | `src/models/User.ts`            | `../User` / `User`              | `$models/User` / `User`                       |
+| `blog_posts` | `src/models/BlogPost.ts`        | `../BlogPost` / `BlogPost`      | `$models/BlogPost` / `BlogPost`               |
+| `tenants`    | `src/models/landlord/tenant.ts` | `../landlord/tenant` / `Tenant` | `$models/landlord/tenant` / `Tenant`          |
 
 Set `typeDeclarationSingularModels: false` if your model classes use plural names.
 
@@ -3085,7 +3150,9 @@ interface UserAttributes {
 }
 
 class User extends Model.define<UserAttributes>("users") {
-  posts() { return this.hasMany(Post); }
+  posts() {
+    return this.hasMany(Post);
+  }
 }
 
 const user = await User.first();
@@ -3101,7 +3168,7 @@ class User extends Model<UserAttributes> {
 
 const user = await User.first();
 user.getAttribute("name"); // string
-user.$attributes.email;    // string | null
+user.$attributes.email; // string | null
 ```
 
 ---
