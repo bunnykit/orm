@@ -1,7 +1,8 @@
 import { Connection } from "../connection/Connection.js";
+import { MorphTo } from "../model/MorphRelations.js";
 import type { WhereClause, OrderClause, HavingClause, UnionClause } from "../types/index.js";
-import type { EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName, TypedEagerLoad, TypedConstraintMap, TypedConstraintSelection, TypedExistsConstraintMap, ExtractStringPaths, WithLoadedRelations, WithLoadedRelationsFromConstraintMap, WithRelationCount, WithRelationExists, WithRelationExistsMap, Relation, RelationConstraintQuery, NestedRelationPath, LiteralUnion, RelationRelatedModel } from "../model/Model.js";
-import { findRelationMethod } from "../model/Model.js";
+import type { AttachedToRelationName, BelongsToRelationName, EagerLoadDefinition, EagerLoadInput, Model, ModelAttributeInput, ModelColumn, ModelColumnValue, ModelConstructor, ModelRelationName, MorphToRelationName, TypedEagerLoad, TypedConstraintMap, TypedConstraintSelection, TypedExistsConstraintMap, ExtractStringPaths, WithLoadedRelations, WithLoadedRelationsFromConstraintMap, WithRelationCount, WithRelationExists, WithRelationExistsMap, Relation, RelationConstraintQuery, NestedRelationPath, LiteralUnion, RelationRelatedModel, MorphToConstraintCallback } from "../model/Model.js";
+import { findRelationMethod, Model as BaseModel } from "../model/Model.js";
 import { ModelNotFoundError } from "../model/ModelNotFoundError.js";
 import { IdentityMap } from "../model/IdentityMap.js";
 import { Collection, type CollectionJson } from "../support/Collection.js";
@@ -9,6 +10,7 @@ import { Collection, type CollectionJson } from "../support/Collection.js";
 type RelationConstraint<TModel = any, TRelation extends string = string> = (query: RelationConstraintQuery<TModel, TRelation>) => void | Builder<any> | RelationConstraintQuery<TModel, TRelation>;
 type ExistsConstraintMap<TResult> = Record<string, RelationConstraint<TResult, any> | undefined>;
 type RelatedColumn<TResult, R extends string> = ModelColumn<RelationRelatedModel<TResult, R>>;
+type RelationShortcutInput = Model | Model[] | Collection<Model>;
 export interface PaginatorJson<T> {
   data: CollectionJson<T>;
   current_page: number;
@@ -17,6 +19,25 @@ export interface PaginatorJson<T> {
   last_page: number;
   from: number;
   to: number;
+}
+
+export interface SimplePaginatorJson<T> {
+  data: CollectionJson<T>;
+  current_page: number;
+  per_page: number;
+  from: number;
+  to: number;
+  has_more_pages: boolean;
+  next_page: number | null;
+  prev_page: number | null;
+}
+
+export interface CursorPaginatorJson<T> {
+  data: CollectionJson<T>;
+  per_page: number;
+  next_cursor: string | null;
+  prev_cursor: string | null;
+  has_more_pages: boolean;
 }
 
 export class Paginator<T> {
@@ -59,6 +80,90 @@ export class Paginator<T> {
   }
 
   toJSON(): PaginatorJson<T> {
+    return this.json();
+  }
+}
+
+export class SimplePaginator<T> {
+  data: Collection<T>;
+  current_page: number;
+  per_page: number;
+  from: number;
+  to: number;
+  has_more_pages: boolean;
+  next_page: number | null;
+  prev_page: number | null;
+
+  constructor(init: {
+    data: Collection<T>;
+    current_page: number;
+    per_page: number;
+    from: number;
+    to: number;
+    has_more_pages: boolean;
+    next_page: number | null;
+    prev_page: number | null;
+  }) {
+    this.data = init.data;
+    this.current_page = init.current_page;
+    this.per_page = init.per_page;
+    this.from = init.from;
+    this.to = init.to;
+    this.has_more_pages = init.has_more_pages;
+    this.next_page = init.next_page;
+    this.prev_page = init.prev_page;
+  }
+
+  json(): SimplePaginatorJson<T> {
+    return {
+      data: this.data.toJSON(),
+      current_page: this.current_page,
+      per_page: this.per_page,
+      from: this.from,
+      to: this.to,
+      has_more_pages: this.has_more_pages,
+      next_page: this.next_page,
+      prev_page: this.prev_page,
+    } as SimplePaginatorJson<T>;
+  }
+
+  toJSON(): SimplePaginatorJson<T> {
+    return this.json();
+  }
+}
+
+export class CursorPaginator<T> {
+  data: Collection<T>;
+  per_page: number;
+  next_cursor: string | null;
+  prev_cursor: string | null;
+  has_more_pages: boolean;
+
+  constructor(init: {
+    data: Collection<T>;
+    per_page: number;
+    next_cursor: string | null;
+    prev_cursor: string | null;
+    has_more_pages: boolean;
+  }) {
+    this.data = init.data;
+    this.per_page = init.per_page;
+    this.next_cursor = init.next_cursor;
+    this.prev_cursor = init.prev_cursor;
+    this.has_more_pages = init.has_more_pages;
+  }
+
+  json(): CursorPaginatorJson<T> {
+    return {
+      data: this.data.toJSON(),
+      per_page: this.per_page,
+      next_cursor: this.next_cursor,
+      prev_cursor: this.prev_cursor,
+      has_more_pages: this.has_more_pages,
+    } as CursorPaginatorJson<T>;
+  }
+
+  toJSON(): CursorPaginatorJson<T> {
     return this.json();
   }
 }
@@ -139,6 +244,14 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return normalized;
   }
 
+  private normalizeMorphTypes(types: string | string[] | ModelConstructor | ModelConstructor[]): string[] {
+    const list = Array.isArray(types) ? types : [types];
+    return list.map((type) => {
+      if (typeof type === "string") return type;
+      return (type as any).morphName || (type as any).name;
+    });
+  }
+
   setModel(model: ModelConstructor): this {
     this.model = model;
     return this;
@@ -185,6 +298,20 @@ export class Builder<T = Record<string, any>, TResult = T> {
     this.invalidateSqlCache();
     this.wheres.push({ type: "basic", column, operator, value, boolean, scope });
     return this;
+  }
+
+  whereKey(value: ModelColumnValue<T, any> | ModelColumnValue<T, any>[]): this {
+    const key = this.getModelPrimaryKey();
+    return Array.isArray(value)
+      ? this.whereIn(key as any, value as any[])
+      : this.where(key as any, value);
+  }
+
+  whereKeyNot(value: ModelColumnValue<T, any> | ModelColumnValue<T, any>[]): this {
+    const key = this.getModelPrimaryKey();
+    return Array.isArray(value)
+      ? this.whereNotIn(key as any, value as any[])
+      : this.where(key as any, "!=", value);
   }
 
   private whereNested(callback: (query: Builder<T>) => void, boolean: "and" | "or" = "and"): this {
@@ -409,6 +536,12 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return this;
   }
 
+  orderByRaw(sql: string): this {
+    this.invalidateSqlCache();
+    this.orders.push({ column: sql, direction: "asc", raw: true });
+    return this;
+  }
+
   latest(column: ModelColumn<T> = "created_at"): this {
     return this.orderBy(column, "desc");
   }
@@ -440,6 +573,12 @@ export class Builder<T = Record<string, any>, TResult = T> {
   groupBy(...columns: ModelColumn<T>[]): this {
     this.invalidateSqlCache();
     this.groups.push(...columns);
+    return this;
+  }
+
+  groupByRaw(sql: string): this {
+    this.invalidateSqlCache();
+    this.groups.push(sql as any);
     return this;
   }
 
@@ -517,6 +656,7 @@ export class Builder<T = Record<string, any>, TResult = T> {
   with<R extends TypedConstraintMap<T> & object>(constraint: R): Builder<T, WithLoadedRelationsFromConstraintMap<TResult, R>>;
   with<R extends string & NestedRelationPath<T>>(relation: R): Builder<T, WithLoadedRelations<TResult, R>>;
   with(relation: LiteralUnion<string & NestedRelationPath<T>>): Builder<T, WithLoadedRelations<TResult, string>>;
+  with<R extends string & MorphToRelationName<T>>(relation: R, callback: MorphToConstraintCallback): Builder<T, WithLoadedRelations<TResult, R>>;
   with<R extends string & NestedRelationPath<T>>(relation: R, callback: RelationConstraint<T, R>): Builder<T, WithLoadedRelations<TResult, R>>;
   with(relation: LiteralUnion<string & NestedRelationPath<T>>, callback: EagerLoadDefinition["constraint"]): Builder<T, WithLoadedRelations<TResult, string>>;
   with<Rs extends ReadonlyArray<TypedEagerLoad<T>>>(relations: Rs): Builder<T, WithLoadedRelations<TResult, ExtractStringPaths<Rs[number]>>>;
@@ -582,6 +722,36 @@ export class Builder<T = Record<string, any>, TResult = T> {
   tap(callback: (query: this) => void | this): this {
     const result = callback(this);
     return (result || this) as this;
+  }
+
+  whereBelongsTo<R extends string & BelongsToRelationName<TResult>>(relationName: R, model: RelationShortcutInput): this {
+    const models = this.normalizeRelationShortcutModels(model);
+    if (models.length === 0) return this.whereRaw("0 = 1");
+    const { relation } = this.resolveRelationShortcut(models[0], relationName, "belongsTo");
+    const foreignKey = relation.getForeignKeyName();
+    const ownerKey = relation.getOwnerKeyName();
+    const values = models.map((item) => item.getAttribute(ownerKey)).filter((value) => value !== undefined && value !== null);
+
+    if (values.length === 0) return this.whereRaw("0 = 1");
+    return values.length === 1
+      ? this.where(foreignKey as any, values[0])
+      : this.whereIn(foreignKey as any, values as any[]);
+  }
+
+  whereAttachedTo<R extends string & AttachedToRelationName<TResult>>(relationName: R, model: RelationShortcutInput): this {
+    const models = this.normalizeRelationShortcutModels(model);
+    if (models.length === 0) return this.whereRaw("0 = 1");
+    const shortcut = this.resolveRelationShortcut(models[0], relationName, "attachedTo");
+    const relatedKey = shortcut.relation.getRelatedKeyName();
+    const values = models.map((item) => item.getAttribute(relatedKey)).filter((value) => value !== undefined && value !== null);
+
+    if (values.length === 0) return this.whereRaw("0 = 1");
+    return this.whereHas(shortcut.name as any, (query: Builder<any>) => {
+      const column = shortcut.relation.qualifyRelatedColumn(relatedKey);
+      values.length === 1
+        ? query.where(column as any, values[0])
+        : query.whereIn(column as any, values as any[]);
+    }) as this;
   }
 
   has<R extends ModelRelationName<TResult>>(relationName: R, operator: string | RelationConstraint<TResult, R> = ">=", count: number = 1, callback?: RelationConstraint<TResult, R>): this {
@@ -650,6 +820,60 @@ export class Builder<T = Record<string, any>, TResult = T> {
 
   whereDoesntHave<R extends ModelRelationName<TResult>>(relationName: R, callback?: RelationConstraint<TResult, R>): this {
     return this.doesntHave(relationName, callback);
+  }
+
+  whereHasMorph<R extends MorphToRelationName<TResult>>(
+    relationName: R,
+    types: string | string[] | ModelConstructor | ModelConstructor[],
+    callback?: EagerLoadDefinition["constraint"],
+    operator: string = ">=",
+    count: number = 1
+  ): this {
+    if (!this.model) {
+      throw new Error(`Cannot query morph relation "${relationName}" without a model`);
+    }
+    const relationMethod = findRelationMethod(this.model, relationName);
+    if (!relationMethod) {
+      throw new Error(`Relation "${relationName}" is not defined on model ${(this.model as any).name}`);
+    }
+    const relation = relationMethod.call(new (this.model as any)()) as any;
+    const typeList = this.normalizeMorphTypes(types);
+    if (typeList.length === 0) return this;
+
+    const shouldNotExist = operator === "<" || (operator === "=" && count <= 0);
+
+    typeList.forEach((type, index) => {
+      const sql = relation.getRelationExistenceSqlForType(this.tableName, type, callback as any);
+      if (shouldNotExist) {
+        this.whereExists(sql, "and", true);
+      } else if (index === 0) {
+        this.whereExists(sql);
+      } else {
+        this.orWhereExists(sql);
+      }
+    });
+
+    return this;
+  }
+
+  whereDoesntHaveMorph<R extends MorphToRelationName<TResult>>(
+    relationName: R,
+    types: string | string[] | ModelConstructor | ModelConstructor[],
+    callback?: EagerLoadDefinition["constraint"]
+  ): this {
+    return this.whereHasMorph(relationName, types, callback, "<", 1);
+  }
+
+  whereMorphedTo<R extends MorphToRelationName<TResult>>(relationName: R, model: Model | ModelConstructor | string): this {
+    return this.applyWhereMorphedTo(relationName, model, "and", false);
+  }
+
+  orWhereMorphedTo<R extends MorphToRelationName<TResult>>(relationName: R, model: Model | ModelConstructor | string): this {
+    return this.applyWhereMorphedTo(relationName, model, "or", false);
+  }
+
+  whereNotMorphedTo<R extends MorphToRelationName<TResult>>(relationName: R, model: Model | ModelConstructor | string): this {
+    return this.applyWhereMorphedTo(relationName, model, "and", true);
   }
 
   withCount<R extends string & ModelRelationName<TResult>, A extends string | undefined = undefined>(relationName: R, alias?: A): Builder<T, WithRelationCount<TResult, R, A>>;
@@ -879,12 +1103,12 @@ export class Builder<T = Record<string, any>, TResult = T> {
       return this.grammar.compileRandomOrder();
     }
     if (this.orders.length === 0) return "";
-    return `ORDER BY ${this.orders.map((o) => `${this.grammar.wrap(o.column)} ${o.direction.toUpperCase()}`).join(", ")}`;
+    return `ORDER BY ${this.orders.map((o) => o.raw ? o.column : `${this.grammar.wrap(o.column)} ${o.direction.toUpperCase()}`).join(", ")}`;
   }
 
   private compileGroups(): string {
     if (this.groups.length === 0) return "";
-    return `GROUP BY ${this.groups.map((c) => this.grammar.wrap(c)).join(", ")}`;
+    return `GROUP BY ${this.groups.map((c) => String(c).includes("(") || String(c).includes(" ") ? c : this.grammar.wrap(c)).join(", ")}`;
   }
 
   private compileHavings(): string {
@@ -951,9 +1175,15 @@ export class Builder<T = Record<string, any>, TResult = T> {
       if (!relationMethod) continue;
 
       const firstModel = models[0];
-      const relation = relationMethod.call(firstModel) as Relation<any>;
+      const relation = relationMethod.call(firstModel) as any;
 
       relation.addEagerConstraints(models);
+      if (relation instanceof MorphTo) {
+        if (eagerLoad.constraint) {
+          (eagerLoad.constraint as any)(relation);
+        }
+        continue;
+      }
       queries.push(relation.getQuery().toSql());
     }
 
@@ -1090,6 +1320,19 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return Array.from(rows).map((row: any) => row[column as string]);
   }
 
+  async findMany(ids: any[], column?: ModelColumn<T>): Promise<Collection<TResult>> {
+    const key = column || this.getModelPrimaryKey();
+    return this.clone().whereIn(key as any, ids as any[]).get() as unknown as Promise<Collection<TResult>>;
+  }
+
+  firstWhere<K extends ModelColumn<T>>(column: K, value: ModelColumnValue<T, K>): Promise<TResult | null>;
+  firstWhere<K extends ModelColumn<T>>(column: K, operator: string, value: ModelColumnValue<T, K>): Promise<TResult | null>;
+  firstWhere(column: any, operator: any, value?: any): Promise<TResult | null> {
+    return value === undefined
+      ? this.clone().where(column, operator).first() as unknown as Promise<TResult | null>
+      : this.clone().where(column, operator, value).first() as unknown as Promise<TResult | null>;
+  }
+
   private async aggregate(sql: string, alias: string): Promise<any> {
     const query = this.clone();
     query.model = undefined;
@@ -1179,6 +1422,64 @@ export class Builder<T = Record<string, any>, TResult = T> {
     });
   }
 
+  async simplePaginate(perPage: number = 15, page: number = 1): Promise<SimplePaginator<TResult>> {
+    const items = await this.clone().forPage(page, perPage + 1).get() as unknown as Collection<TResult>;
+    const hasMore = items.length > perPage;
+    const data = new Collection(items.slice(0, perPage));
+    const from = data.length === 0 ? 0 : (page - 1) * perPage + 1;
+    const to = data.length === 0 ? 0 : from + data.length - 1;
+
+    return new SimplePaginator({
+      data,
+      current_page: page,
+      per_page: perPage,
+      from,
+      to,
+      has_more_pages: hasMore,
+      next_page: hasMore ? page + 1 : null,
+      prev_page: page > 1 ? page - 1 : null,
+    });
+  }
+
+  async cursorPaginate(perPage: number = 15, cursor?: string | null): Promise<CursorPaginator<TResult>> {
+    if (this.randomOrderFlag) {
+      throw new Error("cursorPaginate() does not support inRandomOrder().");
+    }
+
+    const orders = this.getCursorOrders();
+    const cursorValues = cursor ? this.decodeCursor(cursor) : undefined;
+    const builder = this.clone();
+    builder.orders = orders;
+    builder.offsetValue = undefined;
+    builder.limitValue = perPage + 1;
+
+    if (cursorValues !== undefined) {
+      if (builder.wheres.length > 0) {
+        const hasOr = builder.wheres.some((w) => w.boolean === "or");
+        if (hasOr) {
+          builder.wheres = [{ type: "nested", column: "", query: builder.wheres, boolean: "and", scope: undefined }];
+        }
+      }
+      builder.wheres.push({ type: "nested", column: "", query: this.compileCursorWheres(orders, cursorValues), boolean: "and", scope: undefined });
+    }
+
+    const items = await builder.get() as unknown as Collection<TResult>;
+    const hasMore = items.length > perPage;
+    const data = new Collection(items.slice(0, perPage));
+    const lastItem = data[data.length - 1];
+    const nextCursor = hasMore && lastItem
+      ? this.encodeCursor(orders.map((order) => this.getResultValue(lastItem, order.column)))
+      : null;
+
+    return new CursorPaginator({
+      data,
+      per_page: perPage,
+      next_cursor: nextCursor,
+      prev_cursor: cursor || null,
+      has_more_pages: hasMore,
+    });
+  }
+
   async chunk(count: number, callback: (items: Collection<TResult>) => void | Promise<void>): Promise<void> {
     let page = 1;
     while (true) {
@@ -1219,6 +1520,26 @@ export class Builder<T = Record<string, any>, TResult = T> {
     }
   }
 
+  async chunkByIdDesc(count: number, callback: (items: Collection<TResult>) => void | Promise<void>, column?: ModelColumn<T>): Promise<void> {
+    const idColumn = (column ?? this.getModelPrimaryKey()) as ModelColumn<T>;
+    const qualifiedColumn = String(idColumn).includes(".") ? String(idColumn) : `${this.tableName}.${String(idColumn)}`;
+    const accessColumn = this.getResultAccessColumn(String(idColumn));
+    let lastId: any = null;
+
+    while (true) {
+      const builder = this.clone().orderBy(qualifiedColumn as ModelColumn<T>, "desc").limit(count);
+      if (lastId !== null) {
+        builder.where(qualifiedColumn as ModelColumn<T>, "<", lastId);
+      }
+      const items = await builder.get() as unknown as Collection<TResult>;
+      if (items.length === 0) break;
+      await callback(items);
+      const last = items[items.length - 1];
+      lastId = this.getResultValue(last, accessColumn);
+      if (items.length < count || lastId === null || lastId === undefined) break;
+    }
+  }
+
   async eachById(count: number, callback: (item: TResult) => void | Promise<void>, column?: ModelColumn<T>): Promise<void> {
     await this.chunkById(count, async (items) => {
       for (const item of items) {
@@ -1228,27 +1549,16 @@ export class Builder<T = Record<string, any>, TResult = T> {
   }
 
   async *cursor(chunkSize: number = 1000): AsyncGenerator<T> {
-    const model = this.model;
-    const primaryKey = model ? (model as any).primaryKey || "id" : "id";
-
     // Cursor pagination is incompatible with random ordering
     if (this.randomOrderFlag) {
       throw new Error("cursor() does not support inRandomOrder(). Use lazy() instead.");
     }
 
-    const orderColumn = this.orders[0]?.column || primaryKey;
-    const orderDirection = this.orders[0]?.direction || "asc";
-
     let lastValues: any[] | undefined = undefined;
 
     while (true) {
       const builder = this.clone();
-      // Preserve multi-column ORDER BY, appending PK tie-breaker if not present
-      builder.orders = this.orders.length > 0 ? [...this.orders] : [{ column: orderColumn, direction: orderDirection as "asc" | "desc" }];
-      const hasPkOrder = builder.orders.some((o) => o.column === primaryKey);
-      if (!hasPkOrder) {
-        builder.orders.push({ column: primaryKey, direction: orderDirection as "asc" | "desc" });
-      }
+      builder.orders = this.getCursorOrders();
       builder.offsetValue = undefined;
       builder.limitValue = chunkSize;
 
@@ -1274,13 +1584,96 @@ export class Builder<T = Record<string, any>, TResult = T> {
 
       const lastItem = items[items.length - 1];
       lastValues = lastItem && typeof lastItem === "object"
-        ? builder.orders.map((order) => (lastItem as any)[this.getResultAccessColumn(order.column)])
+        ? builder.orders.map((order) => this.getResultValue(lastItem, order.column))
         : undefined;
     }
   }
 
+  private getCursorOrders(): OrderClause[] {
+    const model = this.model;
+    const primaryKey = model ? (model as any).primaryKey || "id" : "id";
+    const firstDirection = this.orders[0]?.direction || "asc";
+    const orders = this.orders.length > 0
+      ? [...this.orders]
+      : [{ column: primaryKey, direction: firstDirection as "asc" | "desc" }];
+    const hasPkOrder = orders.some((o) => this.getResultAccessColumn(o.column) === primaryKey);
+    if (!hasPkOrder) {
+      orders.push({ column: primaryKey, direction: firstDirection as "asc" | "desc" });
+    }
+    return orders;
+  }
+
+  private getModelPrimaryKey(): string {
+    return this.model ? ((this.model as any).primaryKey || "id") : "id";
+  }
+
   private getResultAccessColumn(column: string): string {
     return column.includes(".") ? column.split(".").at(-1)! : column;
+  }
+
+  private getResultValue(item: any, column: string): any {
+    const key = this.getResultAccessColumn(column);
+    if (item && typeof item.getAttribute === "function") {
+      const value = item.getAttribute(key);
+      if (value !== undefined) return value;
+    }
+    return item?.[key];
+  }
+
+  private encodeCursor(values: any[]): string {
+    return Buffer.from(JSON.stringify(values)).toString("base64url");
+  }
+
+  private decodeCursor(cursor: string): any[] {
+    try {
+      const values = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+      if (!Array.isArray(values)) throw new Error("Cursor payload must be an array");
+      return values;
+    } catch {
+      throw new Error("Invalid cursor");
+    }
+  }
+
+  private applyWhereMorphedTo(relationName: string, model: Model | ModelConstructor | string, boolean: "and" | "or", not: boolean): this {
+    if (!this.model) {
+      throw new Error(`Cannot query morph relation "${relationName}" without a model`);
+    }
+    const relationMethod = findRelationMethod(this.model, relationName);
+    if (!relationMethod) {
+      throw new Error(`Relation "${relationName}" is not defined on model ${(this.model as any).name}`);
+    }
+    const relation = relationMethod.call(new (this.model as any)()) as any;
+    if (!(relation instanceof MorphTo)) {
+      throw new Error(`Relation "${relationName}" is not a morphTo relation`);
+    }
+
+    const typeColumn = relation.getTypeColumn();
+    const idColumn = relation.getIdColumn();
+    const type = this.morphTypeFor(model);
+    const id = typeof model === "object" && typeof (model as any).getAttribute === "function"
+      ? (model as Model).getAttribute(((Object.getPrototypeOf(model).constructor as any).primaryKey || "id") as any)
+      : undefined;
+
+    if (!not) {
+      this.where(typeColumn as any, "=", type, boolean);
+      if (id !== undefined && id !== null) this.where(idColumn as any, "=", id);
+      return this;
+    }
+
+    if (id === undefined || id === null) {
+      return this.where(typeColumn as any, "!=", type, boolean);
+    }
+
+    return this.where((query) => {
+      query.where(typeColumn as any, "!=", type).orWhere(idColumn as any, "!=", id);
+    }, undefined, undefined, boolean);
+  }
+
+  private morphTypeFor(model: Model | ModelConstructor | string): string {
+    if (typeof model === "string") return model;
+    if (typeof model === "function") return (model as any).morphName || (model as any).name;
+    const constructor = Object.getPrototypeOf(model).constructor as any;
+    return constructor.morphName || constructor.name;
   }
 
   private compileCursorWheres(orders: OrderClause[], values: any[], index: number = 0): WhereClause[] {
@@ -1328,6 +1721,28 @@ export class Builder<T = Record<string, any>, TResult = T> {
       }
       if (items.length < count) break;
       page++;
+    }
+  }
+
+  async *lazyById(count: number = 1000, column?: ModelColumn<T>): AsyncGenerator<TResult> {
+    const idColumn = (column ?? this.getModelPrimaryKey()) as ModelColumn<T>;
+    const qualifiedColumn = String(idColumn).includes(".") ? String(idColumn) : `${this.tableName}.${String(idColumn)}`;
+    const accessColumn = this.getResultAccessColumn(String(idColumn));
+    let lastId: any = null;
+
+    while (true) {
+      const builder = this.clone().orderBy(qualifiedColumn as ModelColumn<T>, "asc").limit(count);
+      if (lastId !== null) {
+        builder.where(qualifiedColumn as ModelColumn<T>, ">", lastId);
+      }
+      const items = await builder.get() as unknown as Collection<TResult>;
+      if (items.length === 0) break;
+      for (const item of items) {
+        yield item;
+      }
+      const last = items[items.length - 1];
+      lastId = this.getResultValue(last, accessColumn);
+      if (items.length < count || lastId === null || lastId === undefined) break;
     }
   }
 
@@ -1593,6 +2008,80 @@ export class Builder<T = Record<string, any>, TResult = T> {
     this.invalidateSqlCache();
     this.wheres.push({ type: "date", column: column as string, operator, value, boolean, scope: undefined, dateType: type });
     return this;
+  }
+
+  private normalizeRelationShortcutModels(input: RelationShortcutInput): Model[] {
+    return (input instanceof Collection ? input.all() : Array.isArray(input) ? input : [input])
+      .filter((item): item is Model => Boolean(item) && typeof (item as any).getAttribute === "function");
+  }
+
+  private resolveRelationShortcut(target: Model, relationName: string | undefined, kind: "belongsTo" | "attachedTo"): { name: string; relation: any } {
+    if (!this.model) {
+      throw new Error(`Cannot query ${kind} relation without a model`);
+    }
+
+    if (relationName) {
+      const relation = this.getModelRelation(relationName);
+      if (!this.matchesRelationShortcutKind(relation, kind)) {
+        throw new Error(`Relation "${relationName}" is not a ${kind === "belongsTo" ? "belongsTo" : "belongsToMany or morphToMany"} relation`);
+      }
+      return { name: relationName, relation };
+    }
+
+    const candidates = this.getRelationShortcutCandidates(target, kind);
+    if (candidates.length === 0) {
+      const targetName = Object.getPrototypeOf(target).constructor?.name || "model";
+      throw new Error(`No ${kind === "belongsTo" ? "belongsTo" : "belongsToMany or morphToMany"} relation found for ${targetName}; pass the relation name explicitly`);
+    }
+    if (candidates.length > 1) {
+      throw new Error(`Ambiguous ${kind === "belongsTo" ? "belongsTo" : "belongsToMany or morphToMany"} relation; pass the relation name explicitly`);
+    }
+    return candidates[0];
+  }
+
+  private getRelationShortcutCandidates(target: Model, kind: "belongsTo" | "attachedTo"): Array<{ name: string; relation: any }> {
+    const candidates: Array<{ name: string; relation: any }> = [];
+    const instance = new (this.model as any)();
+    const seen = new Set<string>();
+
+    for (let proto = Object.getPrototypeOf(instance); proto && proto !== BaseModel.prototype && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
+      for (const name of Object.getOwnPropertyNames(proto)) {
+        if (name === "constructor" || seen.has(name)) continue;
+        seen.add(name);
+        const descriptor = Object.getOwnPropertyDescriptor(proto, name);
+        if (typeof descriptor?.value !== "function") continue;
+
+        let relation: any;
+        try {
+          relation = descriptor.value.call(instance);
+        } catch {
+          continue;
+        }
+
+        if (!this.matchesRelationShortcutKind(relation, kind)) continue;
+        if (this.relationTargetsModel(relation, target)) candidates.push({ name, relation });
+      }
+    }
+
+    return candidates;
+  }
+
+  private matchesRelationShortcutKind(relation: any, kind: "belongsTo" | "attachedTo"): boolean {
+    if (!relation || typeof relation !== "object") return false;
+    if (kind === "belongsTo") {
+      return typeof relation.getForeignKeyName === "function" && typeof relation.getOwnerKeyName === "function";
+    }
+    return typeof relation.getRelatedKeyName === "function" && typeof relation.getRelatedPivotKeyName === "function";
+  }
+
+  private relationTargetsModel(relation: any, target: Model): boolean {
+    const related = relation.getRelatedModelConstructor?.();
+    if (!related) return false;
+    const targetConstructor = Object.getPrototypeOf(target).constructor as ModelConstructor;
+    if (related === targetConstructor) return true;
+    return typeof related.getTable === "function" &&
+      typeof targetConstructor.getTable === "function" &&
+      related.getTable() === targetConstructor.getTable();
   }
 
   private getModelRelation(relationName: string): any {

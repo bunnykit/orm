@@ -3,7 +3,17 @@ import { Schema } from "../schema/Schema.js";
 import { Collection } from "../support/Collection.js";
 import { snakeCase } from "../utils.js";
 import { MorphMap } from "./MorphMap.js";
-import type { Model, ModelConstructor, MorphRelationInput, PivotQueryBuilder, StripTablePrefix } from "./Model.js";
+import type {
+  Model,
+  ModelAttributeInputWithout,
+  ModelConstructor,
+  EagerLoadInput,
+  MorphCountLoadMap,
+  MorphEagerLoadMap,
+  MorphRelationInput,
+  PivotQueryBuilder,
+  StripTablePrefix,
+} from "./Model.js";
 
 function getModelConstructor(model: Model): typeof Model {
   return Object.getPrototypeOf(model).constructor as typeof Model;
@@ -16,6 +26,8 @@ export class MorphTo<T extends Model = Model> {
   protected idColumn: string;
   protected typeMap?: Record<string, ModelConstructor>;
   protected eagerModels: Model[] = [];
+  protected morphWithLoads: MorphEagerLoadMap = {};
+  protected morphWithCounts: MorphCountLoadMap = {};
 
   constructor(parent: Model, name: string, typeMap?: Record<string, ModelConstructor>) {
     this.parent = parent;
@@ -47,7 +59,19 @@ export class MorphTo<T extends Model = Model> {
 
   get(): Promise<T | null> { return this.getResults(); }
 
-  private resolveRelated(type: string): ModelConstructor | undefined {
+  getTypeColumn(): string {
+    return this.typeColumn;
+  }
+
+  getIdColumn(): string {
+    return this.idColumn;
+  }
+
+  getMorphType(): string {
+    return String(this.parent.getAttribute(this.typeColumn) || "");
+  }
+
+  resolveRelated(type: string): ModelConstructor | undefined {
     let Related: ModelConstructor | undefined;
     if (this.typeMap) {
       Related = this.typeMap[type];
@@ -56,6 +80,49 @@ export class MorphTo<T extends Model = Model> {
       Related = MorphMap.get(type);
     }
     return Related;
+  }
+
+  morphWith(relations: MorphEagerLoadMap): this {
+    this.morphWithLoads = { ...this.morphWithLoads, ...relations };
+    return this;
+  }
+
+  morphWithCount(relations: MorphCountLoadMap): this {
+    this.morphWithCounts = { ...this.morphWithCounts, ...relations };
+    return this;
+  }
+
+  protected getQueryForType(type: string): Builder<T> {
+    const Related = this.resolveRelated(type);
+    if (!Related) this.throwMissingMorph(type);
+    return (Related as any).on(this.parent.getConnection());
+  }
+
+  protected async fetchRelatedForType(type: string, ids: any[]): Promise<Model[]> {
+    const Related = this.resolveRelated(type);
+    if (!Related) this.throwMissingMorph(type);
+    let query = (Related as any).on(this.parent.getConnection());
+    if (this.morphWithCounts[type]) {
+      const counts = Array.isArray(this.morphWithCounts[type]) ? this.morphWithCounts[type] : [this.morphWithCounts[type]];
+      query = query.withCount(...counts);
+    }
+    query = query.whereIn(Related.primaryKey, ids);
+    const relatedModels = await query.get();
+    const nested = this.morphWithLoads[type];
+    if (nested) {
+      await (Related as any).eagerLoadRelations(relatedModels, Array.isArray(nested) ? nested : [nested]);
+    }
+    return relatedModels as Model[];
+  }
+
+  getRelationExistenceSqlForType(parentTable: string, type: string, callback?: (query: Builder<any>) => void | Builder<any>): string {
+    const Related = this.resolveRelated(type);
+    if (!Related) this.throwMissingMorph(type);
+    const query = (Related as any).on(this.parent.getConnection()).select("1");
+    query.whereColumn(`${Related.getTable()}.${Related.primaryKey}`, "=", `${parentTable}.${this.idColumn}`);
+    query.where(`${parentTable}.${this.typeColumn}`, type);
+    if (callback) callback(query);
+    return query.toSql();
   }
 
   private async resolveAndFind(type: string, id: any): Promise<T | null> {
@@ -86,13 +153,10 @@ export class MorphTo<T extends Model = Model> {
     }
 
     for (const [type, models] of Object.entries(groups)) {
-      const Related = this.resolveRelated(type);
-      if (!Related) this.throwMissingMorph(type);
-
       const ids = [...new Set(models.map((model) => model.getAttribute(this.idColumn)).filter((id) => id !== null && id !== undefined))];
       if (ids.length === 0) continue;
 
-      const relatedModels = await (Related as any).on(models[0].getConnection()).whereIn(Related.primaryKey, ids).get();
+      const relatedModels = await this.fetchRelatedForType(type, ids);
       for (const model of relatedModels as Model[]) {
         results.push({ __morphType: type, model });
       }
@@ -421,7 +485,12 @@ export class MorphMany<T extends Model = Model, N extends string = string, Fixed
   }
 }
 
-export class MorphToMany<T extends Model = Model, N extends string = string> {
+export class MorphToMany<
+  T extends Model = Model,
+  N extends string = string,
+  RelatedFixed extends string = never,
+  PivotFixed extends string = never
+> {
   protected builder: Builder<T>;
   protected parent: Model;
   protected related: ModelConstructor;
@@ -435,6 +504,7 @@ export class MorphToMany<T extends Model = Model, N extends string = string> {
   protected pivotColumns: string[] = [];
   protected pivotTimestamps = false;
   protected pivotAccessor = "pivot";
+  protected whereConstraints: Array<{ column: string; operator: string; value: any; boolean: "and" | "or" }> = [];
   protected pivotWheres: Array<{ column: string; operator: string; value: any; boolean: "and" | "or" }> = [];
   protected extraConstraints: Array<(builder: Builder<T>) => void> = [];
 
@@ -465,8 +535,32 @@ export class MorphToMany<T extends Model = Model, N extends string = string> {
       relation.applyPivotWhere(query, column, "IN", values, "and");
       return query;
     });
+    define("wherePivotNotIn", (column: string, values: any[]) => {
+      relation.applyPivotWhere(query, column, "NOT IN", values, "and");
+      return query;
+    });
+    define("orWherePivotIn", (column: string, values: any[]) => {
+      relation.applyPivotWhere(query, column, "IN", values, "or");
+      return query;
+    });
     define("wherePivotNull", (column: string) => {
       relation.applyPivotWhere(query, column, "IS NULL", null, "and");
+      return query;
+    });
+    define("wherePivotNotNull", (column: string) => {
+      relation.applyPivotWhere(query, column, "IS NOT NULL", null, "and");
+      return query;
+    });
+    define("orWherePivotNull", (column: string) => {
+      relation.applyPivotWhere(query, column, "IS NULL", null, "or");
+      return query;
+    });
+    define("wherePivotBetween", (column: string, values: [any, any]) => {
+      relation.applyPivotWhere(query, column, "BETWEEN", values, "and");
+      return query;
+    });
+    define("withPivotValue", (column: string, value: any) => {
+      relation.applyPivotWhere(query, column, "=", value, "and");
       return query;
     });
 
@@ -518,8 +612,14 @@ export class MorphToMany<T extends Model = Model, N extends string = string> {
   protected applyStoredPivotWhere(builder: Builder<any>, where: { column: string; operator: string; value: any; boolean: "and" | "or" }): Builder<any> {
     if (where.operator === "IN") {
       builder.whereIn(where.column as any, where.value, where.boolean);
+    } else if (where.operator === "NOT IN") {
+      builder.whereNotIn(where.column as any, where.value, where.boolean);
+    } else if (where.operator === "BETWEEN") {
+      builder.whereBetween(where.column as any, where.value, where.boolean);
     } else if (where.operator === "IS NULL") {
       builder.whereNull(where.column as any, where.boolean);
+    } else if (where.operator === "IS NOT NULL") {
+      builder.whereNotNull(where.column as any, where.boolean);
     } else if (where.boolean === "or") {
       builder.orWhere(where.column as any, where.operator, where.value);
     } else {
@@ -538,31 +638,69 @@ export class MorphToMany<T extends Model = Model, N extends string = string> {
     return this.applyStoredPivotWhere(builder, entry);
   }
 
-  wherePivot(column: string, operator: string | any, value?: any): this {
+  wherePivot<K extends string>(column: K, operator: string | any, value?: any): MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
     this.applyPivotWhere(this.builder, column, operator, value, "and");
-    return this;
+    return this as MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
   }
 
-  orWherePivot(column: string, operator: string | any, value?: any): this {
+  orWherePivot<K extends string>(column: K, operator: string | any, value?: any): MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
     this.applyPivotWhere(this.builder, column, operator, value, "or");
-    return this;
+    return this as MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
   }
 
-  wherePivotIn(column: string, values: any[]): this {
+  wherePivotIn<K extends string>(column: K, values: any[]): MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
     this.applyPivotWhere(this.builder, column, "IN", values, "and");
-    return this;
+    return this as MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
   }
 
-  wherePivotNull(column: string): this {
+  wherePivotNotIn<K extends string>(column: K, values: any[]): MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
+    this.applyPivotWhere(this.builder, column, "NOT IN", values, "and");
+    return this as MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
+  }
+
+  orWherePivotIn<K extends string>(column: K, values: any[]): MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
+    this.applyPivotWhere(this.builder, column, "IN", values, "or");
+    return this as MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
+  }
+
+  wherePivotNull<K extends string>(column: K): MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
     this.applyPivotWhere(this.builder, column, "IS NULL", null, "and");
-    return this;
+    return this as MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
   }
 
-  where(column: string, operatorOrValue: any, value?: any): this {
+  wherePivotNotNull<K extends string>(column: K): MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
+    this.applyPivotWhere(this.builder, column, "IS NOT NULL", null, "and");
+    return this as MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
+  }
+
+  orWherePivotNull<K extends string>(column: K): MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
+    this.applyPivotWhere(this.builder, column, "IS NULL", null, "or");
+    return this as MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
+  }
+
+  wherePivotBetween<K extends string>(column: K, values: [any, any]): MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
+    this.applyPivotWhere(this.builder, column, "BETWEEN", values, "and");
+    return this as MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
+  }
+
+  withPivotValue<K extends string>(column: K, value: any): MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
+    this.applyPivotWhere(this.builder, column, "=", value, "and");
+    return this as MorphToMany<T, N, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
+  }
+
+  where<K extends string>(column: K, operatorOrValue: any, value?: any): MorphToMany<T, N, RelatedFixed | StripTablePrefix<K>, PivotFixed> {
     const args: any[] = value !== undefined ? [column, operatorOrValue, value] : [column, operatorOrValue];
+    const operator = value !== undefined ? operatorOrValue : "=";
+    const whereValue = value !== undefined ? value : operatorOrValue;
+    this.whereConstraints.push({
+      column: String(column),
+      operator,
+      value: whereValue,
+      boolean: "and",
+    });
     this.extraConstraints.push((b) => (b.where as any)(...args));
     (this.builder.where as any)(...args);
-    return this;
+    return this as MorphToMany<T, N, RelatedFixed | StripTablePrefix<K>, PivotFixed>;
   }
 
   withPivot(...columns: (string | string[])[]): this {
@@ -618,6 +756,30 @@ export class MorphToMany<T extends Model = Model, N extends string = string> {
     }
 
     return defaults;
+  }
+
+  protected getDefaultAttributes(): Record<string, any> {
+    const defaults: Record<string, any> = {};
+
+    for (const where of this.whereConstraints) {
+      if (where.boolean !== "and") continue;
+
+      const column = where.column.includes(".") ? where.column.split(".").pop()! : where.column;
+      if (where.operator === "=") {
+        defaults[column] = where.value;
+      } else if (where.operator === "IS NULL") {
+        defaults[column] = null;
+      }
+    }
+
+    return defaults;
+  }
+
+  protected applyRelatedDefaults(model: T): void {
+    const defaults = this.getDefaultAttributes();
+    for (const [key, value] of Object.entries(defaults)) {
+      model.setAttribute(key as any, value);
+    }
   }
 
   protected applyExtraConstraints(): void {
@@ -736,6 +898,51 @@ export class MorphToMany<T extends Model = Model, N extends string = string> {
 
     await builder.insert(records);
     return;
+  }
+
+  async save(model: T, attributes?: Record<string, any>): Promise<T> {
+    this.applyRelatedDefaults(model);
+    await model.save();
+    await this.attach(model.getAttribute(this.relatedKey), attributes);
+    return model;
+  }
+
+  async saveMany(models: T[], attributes?: Record<string, any>): Promise<T[]> {
+    const saved: T[] = [];
+    for (const model of models) {
+      saved.push(await this.save(model, attributes));
+    }
+    return saved;
+  }
+
+  async create(attributes: ModelAttributeInputWithout<T, RelatedFixed>, pivotAttributes?: Record<string, any>): Promise<T> {
+    const instance = new (this.related as any)({
+      ...attributes,
+      ...this.getDefaultAttributes(),
+    }) as T;
+    await instance.save();
+    await this.attach(instance.getAttribute(this.relatedKey), pivotAttributes);
+    return instance;
+  }
+
+  async createMany(records: ModelAttributeInputWithout<T, RelatedFixed>[], pivotAttributes?: Record<string, any>): Promise<T[]> {
+    const created: T[] = [];
+    for (const record of records) {
+      created.push(await this.create(record, pivotAttributes));
+    }
+    return created;
+  }
+
+  getRelatedModelConstructor(): ModelConstructor {
+    return this.related;
+  }
+
+  getRelatedKeyName(): string {
+    return this.relatedKey;
+  }
+
+  getRelatedPivotKeyName(): string {
+    return this.relatedPivotKey;
   }
 
   qualifyRelatedColumn(column: string): string {

@@ -24,6 +24,8 @@ export type EagerLoadInput =
   | string
   | EagerLoadDefinition
   | Record<string, EagerLoadConstraint | undefined>;
+export type MorphEagerLoadMap = Record<string, EagerLoadInput | EagerLoadInput[]>;
+export type MorphCountLoadMap = Record<string, string | string[]>;
 type BaseModelInstanceKey =
   | "$attributes"
   | "$original"
@@ -53,6 +55,9 @@ type BaseModelInstanceKey =
   | "replicate"
   | "makeHidden"
   | "makeVisible"
+  | "append"
+  | "setAppends"
+  | "getAppends"
   | "save"
   | "update"
   | "updateTimestamps"
@@ -62,6 +67,12 @@ type BaseModelInstanceKey =
   | "is"
   | "isNot"
   | "load"
+  | "loadMorph"
+  | "loadCount"
+  | "loadSum"
+  | "loadAvg"
+  | "loadMin"
+  | "loadMax"
   | "delete"
   | "saveQuietly"
   | "deleteQuietly"
@@ -109,14 +120,23 @@ export type ModelRelationValue =
   | MorphTo<any>
   | MorphOne<any>
   | MorphMany<any>
-  | MorphToMany<any>
-  | BelongsToMany<any>;
+  | MorphToMany<any, any, any, any>
+  | BelongsToMany<any, any, any>;
+export type MorphToRelationName<T> = Extract<{
+  [K in Exclude<keyof T, BaseModelInstanceKey>]-?: T[K] extends (...args: any[]) => MorphTo<any> ? K : never;
+}[Exclude<keyof T, BaseModelInstanceKey>], string>;
+export type BelongsToRelationName<T> = Extract<{
+  [K in Exclude<keyof T, BaseModelInstanceKey>]-?: T[K] extends (...args: any[]) => BelongsTo<any> ? K : never;
+}[Exclude<keyof T, BaseModelInstanceKey>], string>;
+export type AttachedToRelationName<T> = Extract<{
+  [K in Exclude<keyof T, BaseModelInstanceKey>]-?: T[K] extends (...args: any[]) => BelongsToMany<any, any, any> | MorphToMany<any, any, any, any> ? K : never;
+}[Exclude<keyof T, BaseModelInstanceKey>], string>;
 export type ModelRelationName<T> = Extract<{
   [K in Exclude<keyof T, BaseModelInstanceKey>]-?: T[K] extends (...args: any[]) => ModelRelationValue ? K : never;
 }[Exclude<keyof T, BaseModelInstanceKey>], string>;
 type RelationReturnModel<F> =
-  F extends (...args: any[]) => BelongsToMany<infer R> ? R
-  : F extends (...args: any[]) => MorphToMany<infer R> ? R
+  F extends (...args: any[]) => BelongsToMany<infer R, any, any> ? R
+  : F extends (...args: any[]) => MorphToMany<infer R, any, any, any> ? R
   : F extends (...args: any[]) => Relation<infer R> ? R
   : Model;
 export type RelationRelatedModel<T, R extends string> =
@@ -154,7 +174,13 @@ export interface PivotQueryBuilder {
   wherePivot(column: string, operator: string | any, value?: any): any;
   orWherePivot(column: string, operator: string | any, value?: any): any;
   wherePivotIn(column: string, values: any[]): any;
+  wherePivotNotIn(column: string, values: any[]): any;
+  orWherePivotIn(column: string, values: any[]): any;
   wherePivotNull(column: string): any;
+  wherePivotNotNull(column: string): any;
+  orWherePivotNull(column: string): any;
+  wherePivotBetween(column: string, values: [any, any]): any;
+  withPivotValue(column: string, value: any): any;
 }
 type RelationInstanceAtPath<T, Path extends string> =
   Path extends `${infer Head}.${infer Tail}`
@@ -168,16 +194,25 @@ type RelationInstanceAtPath<T, Path extends string> =
         ? RelationReturnType<T[Path]>
         : never
       : never;
-type PivotRelationValue = BelongsToMany<any> | MorphToMany<any>;
+type PivotRelationValue = BelongsToMany<any, any, any> | MorphToMany<any, any, any, any>;
 export type RelationConstraintQuery<T, P extends string> =
   Builder<PathToModel<T, P>> &
   (RelationInstanceAtPath<T, P> extends PivotRelationValue ? PivotQueryBuilder : {});
 export type TypedConstraintCallback<T, P extends string> = (query: RelationConstraintQuery<T, P>) => void | Builder<any> | RelationConstraintQuery<T, P>;
+export type MorphToConstraintCallback = (query: MorphTo<any>) => void | MorphTo<any>;
+type ConstraintCallbackForPath<T, P extends string> =
+  RelationInstanceAtPath<T, P> extends MorphTo<any>
+    ? MorphToConstraintCallback
+    : TypedConstraintCallback<T, P>;
+export type AggregateAlias<RelationName extends string, Alias extends string | undefined, DefaultSuffix extends string> =
+  Alias extends string ? Alias : `${RelationName}_${DefaultSuffix}`;
+export type AggregateLoaded<T, Alias extends string, Value> = T & Record<Alias, Value>;
+export type AggregateValueForRelation<T, R extends string, Column extends string> = ModelColumnValue<RelationRelatedModel<T, R>, Column>;
 export type TypedConstraintMap<T> = Partial<{
-  [P in NestedRelationPath<T>]: TypedConstraintCallback<T, P>;
+  [P in NestedRelationPath<T>]: ConstraintCallbackForPath<T, P>;
 }>;
 export type TypedConstraintSelection<T, K extends string & NestedRelationPath<T>> = {
-  [P in K]: TypedConstraintCallback<T, P>;
+  [P in K]: ConstraintCallbackForPath<T, P>;
 };
 export type ExistsRelationPath<T> = NestedRelationPath<T> | `${NestedRelationPath<T>} as ${string}`;
 type RelationPathFromExistsKey<Key extends string> = Key extends `${infer Relation} as ${string}` ? Relation : Key;
@@ -188,14 +223,18 @@ export type TypedEagerLoad<T> =
   | LiteralUnion<string & NestedRelationPath<T>>
   | { name: LiteralUnion<string & NestedRelationPath<T>>; constraint?: EagerLoadConstraint }
   | TypedConstraintMap<T>;
+export type StrictTypedEagerLoad<T> =
+  | (string & NestedRelationPath<T>)
+  | { name: string & NestedRelationPath<T>; constraint?: EagerLoadConstraint }
+  | TypedConstraintMap<T>;
 type LoadedRelationType<F> =
   F extends (...args: any[]) => HasMany<infer R> ? Collection<R>
   : F extends (...args: any[]) => HasOne<infer R> ? R | null
   : F extends (...args: any[]) => BelongsTo<infer R> ? R | null
-  : F extends (...args: any[]) => BelongsToMany<infer R> ? Collection<R>
+  : F extends (...args: any[]) => BelongsToMany<infer R, any, any> ? Collection<R>
   : F extends (...args: any[]) => MorphMany<infer R> ? Collection<R>
   : F extends (...args: any[]) => MorphOne<infer R> ? R | null
-  : F extends (...args: any[]) => MorphToMany<infer R> ? Collection<R>
+  : F extends (...args: any[]) => MorphToMany<infer R, any, any, any> ? Collection<R>
   : F extends (...args: any[]) => Relation<infer R> ? Collection<R> | R
   : unknown;
 // Like LoadedRelationType but accepts a custom element type (for nested constraint maps)
@@ -203,20 +242,20 @@ type LoadedTypeWithNested<F, ElemType> =
   F extends (...args: any[]) => HasMany<any> ? Collection<ElemType>
   : F extends (...args: any[]) => HasOne<any> ? ElemType | null
   : F extends (...args: any[]) => BelongsTo<any> ? ElemType | null
-  : F extends (...args: any[]) => BelongsToMany<any> ? Collection<ElemType>
+  : F extends (...args: any[]) => BelongsToMany<any, any, any> ? Collection<ElemType>
   : F extends (...args: any[]) => MorphMany<any> ? Collection<ElemType>
   : F extends (...args: any[]) => MorphOne<any> ? ElemType | null
-  : F extends (...args: any[]) => MorphToMany<any> ? Collection<ElemType>
+  : F extends (...args: any[]) => MorphToMany<any, any, any, any> ? Collection<ElemType>
   : unknown;
 // Extract the raw related model from a relation method
 type RelModelOf<F> =
   F extends (...args: any[]) => HasMany<infer R> ? R
   : F extends (...args: any[]) => HasOne<infer R> ? R
   : F extends (...args: any[]) => BelongsTo<infer R> ? R
-  : F extends (...args: any[]) => BelongsToMany<infer R> ? R
+  : F extends (...args: any[]) => BelongsToMany<infer R, any, any> ? R
   : F extends (...args: any[]) => MorphMany<infer R> ? R
   : F extends (...args: any[]) => MorphOne<infer R> ? R
-  : F extends (...args: any[]) => MorphToMany<infer R> ? R
+  : F extends (...args: any[]) => MorphToMany<infer R, any, any, any> ? R
   : unknown;
 // Extract TResult from a constraint callback's Builder return type, or fall back
 type CallbackResultModel<CB, Fallback> =
@@ -251,8 +290,12 @@ export type WithRelationExistsMap<T, R extends object> =
   WithJsonMethods<T & {
     [K in keyof R & string as RelationExistsAlias<K>]: boolean;
   }>;
-type AggregateConstraint<T, R extends string> = TypedConstraintCallback<T, R & NestedRelationPath<T>>;
-type AggregateColumn<T, R extends string> = ModelColumn<RelationRelatedModel<T, R>>;
+export type AggregateConstraint<T, R extends string> = TypedConstraintCallback<T, R & NestedRelationPath<T>>;
+export type AggregateColumn<T, R extends string> = ModelColumn<RelationRelatedModel<T, R>>;
+type AggregateLoadRelationName<T> = [ModelRelationName<T>] extends [never] ? string : string & ModelRelationName<T>;
+type AggregateLoadColumn<T, R extends string> = [ModelRelationName<T>] extends [never] ? string : AggregateColumn<T, R & ModelRelationName<T>>;
+type AggregateLoadConstraint<T, R extends string> = [ModelRelationName<T>] extends [never] ? EagerLoadConstraint : AggregateConstraint<T, R & ModelRelationName<T>>;
+type AggregateLoadValue<T, R extends string, C extends string> = [ModelRelationName<T>] extends [never] ? any : AggregateValueForRelation<T, R & ModelRelationName<T>, C>;
 // Variant of WithLoadedRelations for constraint map form — preserves nested loaded types
 // from each callback's Builder return type instead of using the raw relation model.
 type WithLoadedRelationsFromConstraintMapShape<T, R extends object> =
@@ -276,6 +319,7 @@ type JsonExtraKeys<T> = Extract<{
     : NonNullable<T[K]> extends { $attributes: Record<string, any> } ? never
     : K;
 }[Exclude<keyof T, BaseModelInstanceKey | keyof ModelAttributes<T>>], string>;
+export type LoadMorphRelationName<T> = MorphToRelationName<T> | JsonRelationKeys<T>;
 type JsonRelationValue<T> =
   T extends Collection<infer R> ? ModelJson<R>[]
   : T extends { $attributes: Record<string, any> } ? ModelJson<T>
@@ -311,6 +355,57 @@ export type AccessorMap<TAttributes extends Record<string, any> = Record<string,
 
 function getAccessors(target: Model<any>): AccessorMap {
   return (Object.getPrototypeOf(target).constructor as any).accessors || {};
+}
+
+async function loadAggregateResults(
+  models: Model[],
+  queryFactory: (query: Builder<any>) => Builder<any>,
+  aliases: string[]
+): Promise<void> {
+  const loadedModels = models.filter((model): model is Model => !!model);
+  if (loadedModels.length === 0) return;
+
+  const constructor = Object.getPrototypeOf(loadedModels[0]).constructor as typeof Model;
+  const connection = loadedModels[0].getConnection();
+  const primaryKey = constructor.primaryKey;
+  const keys: any[] = [];
+  const seen = new Set<string>();
+
+  for (const model of loadedModels) {
+    const key = model.getAttribute(primaryKey as any);
+    if (key === null || key === undefined || key === "") continue;
+    const normalized = String(key);
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    keys.push(key);
+  }
+
+  if (keys.length === 0) return;
+
+  let query = constructor.on(connection).whereIn(primaryKey as any, keys as any);
+  query = queryFactory(query);
+  const results = await query.get();
+  const dictionary = new Map<string, any>();
+
+  for (const result of results as any[]) {
+    const key = result.getAttribute(primaryKey as any);
+    if (key === null || key === undefined || key === "") continue;
+    dictionary.set(String(key), result);
+  }
+
+  for (const model of loadedModels) {
+    const key = model.getAttribute(primaryKey as any);
+    if (key === null || key === undefined || key === "") continue;
+    const result = dictionary.get(String(key));
+    if (!result) continue;
+
+    for (const alias of aliases) {
+      const value = typeof result.getAttribute === "function" ? result.getAttribute(alias) : result[alias];
+      (model.$attributes as any)[alias] = value;
+      (model.$original as any)[alias] = value;
+      delete (model.$castCache as any)[alias];
+    }
+  }
 }
 
 const modelProxyHandler: ProxyHandler<Model<any>> = {
@@ -451,6 +546,10 @@ export abstract class Relation<T extends Model = Model> {
 
   getQuery(): Builder<T> {
     return this.builder;
+  }
+
+  getRelatedModelConstructor(): ModelConstructor {
+    return this.related;
   }
 
   qualifyRelatedColumn(column: string): string {
@@ -614,6 +713,14 @@ export class BelongsTo<T extends Model = Model> extends Relation<T> {
   withDefault(attributes: Record<string, any> = {}): this {
     this.defaultAttributes = attributes;
     return this;
+  }
+
+  getForeignKeyName(): string {
+    return this.foreignKey;
+  }
+
+  getOwnerKeyName(): string {
+    return this.localKey;
   }
 
   addConstraints(): void {
@@ -867,6 +974,7 @@ export class Model<T extends Record<string, any> = any> {
   static preventLazyLoading = false;
   static hidden: string[] = [];
   static visible: string[] = [];
+  static appends: string[] = [];
   static accessors: AccessorMap = {};
   static touches: string[] = [];
 
@@ -880,6 +988,7 @@ export class Model<T extends Record<string, any> = any> {
   $connection?: Connection;
   $hidden: string[] = [];
   $visible: string[] = [];
+  $appends: string[] = [];
   $wasRecentlyCreated = false;
 
   constructor(attributes?: Partial<T>) {
@@ -893,7 +1002,7 @@ export class Model<T extends Record<string, any> = any> {
     return new Proxy(this, modelProxyHandler);
   }
 
-  static define<A extends Record<string, any>>(tableName: string, modelName?: string): (new (attributes?: Partial<A>) => Model<A> & A) & Omit<typeof Model, "new"> {
+  static define<A extends Record<string, any>>(tableName: string, modelName?: string): ModelConstructor<Model<A> & A> {
     const name = modelName || tableName
       .split("_")
       .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
@@ -1228,6 +1337,10 @@ export class Model<T extends Record<string, any> = any> {
     return this.query().find(id, this.primaryKey);
   }
 
+  static async findMany<M extends ModelConstructor>(this: M, ids: any[]): Promise<Collection<InstanceType<M>>> {
+    return this.query().findMany(ids, this.primaryKey);
+  }
+
   static async findOrFail<M extends ModelConstructor>(this: M, id: any): Promise<InstanceType<M>> {
     const result = await this.find(id);
     if (!result) {
@@ -1238,6 +1351,12 @@ export class Model<T extends Record<string, any> = any> {
 
   static async first<M extends ModelConstructor>(this: M): Promise<InstanceType<M> | null> {
     return this.query().first();
+  }
+
+  static firstWhere<M extends ModelConstructor, K extends ModelColumn<InstanceType<M>>>(this: M, column: K, value: ModelColumnValue<InstanceType<M>, K>): Promise<InstanceType<M> | null>;
+  static firstWhere<M extends ModelConstructor, K extends ModelColumn<InstanceType<M>>>(this: M, column: K, operator: string, value: ModelColumnValue<InstanceType<M>, K>): Promise<InstanceType<M> | null>;
+  static firstWhere<M extends ModelConstructor>(this: M, column: any, operator: any, value?: any): Promise<InstanceType<M> | null> {
+    return this.query().firstWhere(column, operator, value);
   }
 
   static async firstOrFail<M extends ModelConstructor>(this: M): Promise<InstanceType<M>> {
@@ -1290,8 +1409,24 @@ export class Model<T extends Record<string, any> = any> {
     return this.query().where(column as any, operator, value);
   }
 
+  static whereKey<M extends ModelConstructor>(this: M, value: any | any[]): Builder<InstanceType<M>> {
+    return this.query().whereKey(value);
+  }
+
+  static whereKeyNot<M extends ModelConstructor>(this: M, value: any | any[]): Builder<InstanceType<M>> {
+    return this.query().whereKeyNot(value);
+  }
+
   static orderBy<M extends ModelConstructor>(this: M, column: ModelColumn<InstanceType<M>>, direction?: "asc" | "desc"): Builder<InstanceType<M>> {
     return this.query().orderBy(column, direction);
+  }
+
+  static orderByRaw<M extends ModelConstructor>(this: M, sql: string): Builder<InstanceType<M>> {
+    return this.query().orderByRaw(sql);
+  }
+
+  static groupByRaw<M extends ModelConstructor>(this: M, sql: string): Builder<InstanceType<M>> {
+    return this.query().groupByRaw(sql);
   }
 
   static whereIn<M extends ModelConstructor, K extends ModelColumn<InstanceType<M>>>(this: M, column: K, values: ModelColumnValue<InstanceType<M>, K>[]): Builder<InstanceType<M>> {
@@ -1406,6 +1541,7 @@ export class Model<T extends Record<string, any> = any> {
   static with<M extends ModelConstructor, R extends TypedConstraintMap<InstanceType<M>> & object>(this: M, constraint: R): Builder<InstanceType<M>, WithLoadedRelationsFromConstraintMap<InstanceType<M>, R>>;
   static with<M extends ModelConstructor, R extends string & NestedRelationPath<InstanceType<M>>>(this: M, relation: R): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, R>>;
   static with<M extends ModelConstructor>(this: M, relation: LiteralUnion<string & NestedRelationPath<InstanceType<M>>>): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, string>>;
+  static with<M extends ModelConstructor, R extends string & MorphToRelationName<InstanceType<M>>>(this: M, relation: R, callback: MorphToConstraintCallback): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, R>>;
   static with<M extends ModelConstructor, R extends string & NestedRelationPath<InstanceType<M>>>(this: M, relation: R, callback: TypedConstraintCallback<InstanceType<M>, R>): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, R>>;
   static with<M extends ModelConstructor>(this: M, relation: LiteralUnion<string & NestedRelationPath<InstanceType<M>>>, callback: EagerLoadConstraint): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, string>>;
   static with<M extends ModelConstructor, Rs extends ReadonlyArray<TypedEagerLoad<InstanceType<M>>>>(this: M, relations: Rs): Builder<InstanceType<M>, WithLoadedRelations<InstanceType<M>, ExtractStringPaths<Rs[number]>>>;
@@ -1458,10 +1594,81 @@ export class Model<T extends Record<string, any> = any> {
     return this.query().whereDoesntHave(relationName as any, callback as any);
   }
 
+  static whereHasMorph<M extends ModelConstructor, R extends string & MorphToRelationName<InstanceType<M>>>(
+    this: M,
+    relationName: R,
+    types: string | string[] | ModelConstructor | ModelConstructor[],
+    callback?: EagerLoadConstraint,
+    operator?: string,
+    count?: number
+  ): Builder<InstanceType<M>>;
+  static whereHasMorph<M extends ModelConstructor>(
+    this: M,
+    relationName: string,
+    types: string | string[] | ModelConstructor | ModelConstructor[],
+    callback?: EagerLoadConstraint,
+    operator?: string,
+    count?: number
+  ): Builder<InstanceType<M>>;
+  static whereHasMorph<M extends ModelConstructor>(
+    this: M,
+    relationName: string,
+    types: string | string[] | ModelConstructor | ModelConstructor[],
+    callback?: EagerLoadConstraint,
+    operator?: string,
+    count?: number
+  ): Builder<InstanceType<M>> {
+    return this.query().whereHasMorph(relationName as any, types as any, callback as any, operator as any, count as any);
+  }
+
+  static whereDoesntHaveMorph<M extends ModelConstructor, R extends string & MorphToRelationName<InstanceType<M>>>(
+    this: M,
+    relationName: R,
+    types: string | string[] | ModelConstructor | ModelConstructor[],
+    callback?: EagerLoadConstraint
+  ): Builder<InstanceType<M>>;
+  static whereDoesntHaveMorph<M extends ModelConstructor>(
+    this: M,
+    relationName: string,
+    types: string | string[] | ModelConstructor | ModelConstructor[],
+    callback?: EagerLoadConstraint
+  ): Builder<InstanceType<M>>;
+  static whereDoesntHaveMorph<M extends ModelConstructor>(
+    this: M,
+    relationName: string,
+    types: string | string[] | ModelConstructor | ModelConstructor[],
+    callback?: EagerLoadConstraint
+  ): Builder<InstanceType<M>> {
+    return this.query().whereDoesntHaveMorph(relationName as any, types as any, callback as any);
+  }
+
+  static whereMorphedTo<M extends ModelConstructor, R extends string & MorphToRelationName<InstanceType<M>>>(this: M, relationName: R, model: Model | ModelConstructor | string): Builder<InstanceType<M>>;
+  static whereMorphedTo<M extends ModelConstructor>(this: M, relationName: string, model: Model | ModelConstructor | string): Builder<InstanceType<M>> {
+    return this.query().whereMorphedTo(relationName as any, model as any);
+  }
+
+  static orWhereMorphedTo<M extends ModelConstructor, R extends string & MorphToRelationName<InstanceType<M>>>(this: M, relationName: R, model: Model | ModelConstructor | string): Builder<InstanceType<M>>;
+  static orWhereMorphedTo<M extends ModelConstructor>(this: M, relationName: string, model: Model | ModelConstructor | string): Builder<InstanceType<M>> {
+    return this.query().orWhereMorphedTo(relationName as any, model as any);
+  }
+
+  static whereNotMorphedTo<M extends ModelConstructor, R extends string & MorphToRelationName<InstanceType<M>>>(this: M, relationName: R, model: Model | ModelConstructor | string): Builder<InstanceType<M>>;
+  static whereNotMorphedTo<M extends ModelConstructor>(this: M, relationName: string, model: Model | ModelConstructor | string): Builder<InstanceType<M>> {
+    return this.query().whereNotMorphedTo(relationName as any, model as any);
+  }
+
   static whereRelation<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: ModelColumn<RelationRelatedModel<InstanceType<M>, R>>, operator: string | any, value?: any): Builder<InstanceType<M>>;
   static whereRelation<M extends ModelConstructor>(this: M, relationName: LiteralUnion<string & ModelRelationName<InstanceType<M>>>, column: string, operator: string | any, value?: any): Builder<InstanceType<M>>;
   static whereRelation<M extends ModelConstructor>(this: M, relationName: string, column: any, operator: any, value?: any): Builder<InstanceType<M>> {
     return this.query().whereRelation(relationName, column, operator, value);
+  }
+
+  static whereBelongsTo<M extends ModelConstructor, R extends string & BelongsToRelationName<InstanceType<M>>>(this: M, relationName: R, model: Model | Model[] | Collection<Model>): Builder<InstanceType<M>> {
+    return this.query().whereBelongsTo(relationName as any, model as any);
+  }
+
+  static whereAttachedTo<M extends ModelConstructor, R extends string & AttachedToRelationName<InstanceType<M>>>(this: M, relationName: R, model: Model | Model[] | Collection<Model>): Builder<InstanceType<M>> {
+    return this.query().whereAttachedTo(relationName as any, model as any);
   }
 
   static orWhereRelation<M extends ModelConstructor, R extends string & ModelRelationName<InstanceType<M>>>(this: M, relationName: R, column: ModelColumn<RelationRelatedModel<InstanceType<M>, R>>, operator: string | any, value?: any): Builder<InstanceType<M>>;
@@ -1573,6 +1780,14 @@ export class Model<T extends Record<string, any> = any> {
     return this.query().paginate(perPage, page);
   }
 
+  static async simplePaginate<M extends ModelConstructor>(this: M, perPage?: number, page?: number): Promise<import("../query/Builder.js").SimplePaginator<InstanceType<M>>> {
+    return this.query().simplePaginate(perPage, page);
+  }
+
+  static async cursorPaginate<M extends ModelConstructor>(this: M, perPage?: number, cursor?: string | null): Promise<import("../query/Builder.js").CursorPaginator<InstanceType<M>>> {
+    return this.query().cursorPaginate(perPage, cursor);
+  }
+
   static async chunk<M extends ModelConstructor>(this: M, count: number, callback: (items: Collection<InstanceType<M>>) => void | Promise<void>): Promise<void> {
     return this.query().chunk(count, callback);
   }
@@ -1585,6 +1800,10 @@ export class Model<T extends Record<string, any> = any> {
     return this.query().chunkById(count, callback as any, column as any);
   }
 
+  static async chunkByIdDesc<M extends ModelConstructor>(this: M, count: number, callback: (items: import("../support/Collection.js").Collection<InstanceType<M>>) => void | Promise<void>, column?: string): Promise<void> {
+    return this.query().chunkByIdDesc(count, callback as any, column as any);
+  }
+
   static async eachById<M extends ModelConstructor>(this: M, count: number, callback: (item: InstanceType<M>) => void | Promise<void>, column?: string): Promise<void> {
     return this.query().eachById(count, callback as any, column as any);
   }
@@ -1595,6 +1814,10 @@ export class Model<T extends Record<string, any> = any> {
 
   static lazy<M extends ModelConstructor>(this: M, count?: number): AsyncGenerator<InstanceType<M>> {
     return this.query().lazy(count) as AsyncGenerator<InstanceType<M>>;
+  }
+
+  static lazyById<M extends ModelConstructor>(this: M, count?: number, column?: string): AsyncGenerator<InstanceType<M>> {
+    return this.query().lazyById(count, column as any) as AsyncGenerator<InstanceType<M>>;
   }
 
   static normalizeEagerLoads(relations: (EagerLoadInput | EagerLoadInput[])[]): EagerLoadDefinition[] {
@@ -1649,6 +1872,71 @@ export class Model<T extends Record<string, any> = any> {
     }
   }
 
+  static async loadMorph(models: Model[], relationName: string, relations: MorphEagerLoadMap): Promise<void> {
+    if (models.length === 0) return;
+
+    const grouped: Record<string, Model[]> = {};
+    for (const model of models) {
+      const related = model.getRelation(relationName);
+      if (!related) continue;
+      const type = model.getAttribute(`${relationName}_type`) as string;
+      if (!type) continue;
+      if (!grouped[type]) grouped[type] = [];
+      grouped[type].push(related);
+    }
+
+    for (const [type, relatedModels] of Object.entries(grouped)) {
+      const nested = relations[type];
+      if (!nested) continue;
+      const normalized = this.normalizeEagerLoads((Array.isArray(nested) ? nested : [nested]) as any);
+      await this.eagerLoadRelations(relatedModels, normalized as any);
+    }
+  }
+
+  static async loadCount(models: Model[], relationName: string, alias?: string): Promise<void> {
+    await loadAggregateResults(
+      models,
+      (query) => query.withCount(relationName, alias),
+      [alias || `${relationName}_count`]
+    );
+  }
+
+  static async loadSum(models: Model[], relationName: string, column: string, aliasOrCallback?: string | EagerLoadConstraint, callback?: EagerLoadConstraint): Promise<void> {
+    const alias = typeof aliasOrCallback === "string" ? aliasOrCallback : undefined;
+    await loadAggregateResults(
+      models,
+      (query) => query.withSum(relationName, column, aliasOrCallback as any, callback as any),
+      [alias || `${relationName}_sum_${column.replace(/\W+/g, "_")}`]
+    );
+  }
+
+  static async loadAvg(models: Model[], relationName: string, column: string, aliasOrCallback?: string | EagerLoadConstraint, callback?: EagerLoadConstraint): Promise<void> {
+    const alias = typeof aliasOrCallback === "string" ? aliasOrCallback : undefined;
+    await loadAggregateResults(
+      models,
+      (query) => query.withAvg(relationName, column, aliasOrCallback as any, callback as any),
+      [alias || `${relationName}_avg_${column.replace(/\W+/g, "_")}`]
+    );
+  }
+
+  static async loadMin(models: Model[], relationName: string, column: string, aliasOrCallback?: string | EagerLoadConstraint, callback?: EagerLoadConstraint): Promise<void> {
+    const alias = typeof aliasOrCallback === "string" ? aliasOrCallback : undefined;
+    await loadAggregateResults(
+      models,
+      (query) => query.withMin(relationName, column, aliasOrCallback as any, callback as any),
+      [alias || `${relationName}_min_${column.replace(/\W+/g, "_")}`]
+    );
+  }
+
+  static async loadMax(models: Model[], relationName: string, column: string, aliasOrCallback?: string | EagerLoadConstraint, callback?: EagerLoadConstraint): Promise<void> {
+    const alias = typeof aliasOrCallback === "string" ? aliasOrCallback : undefined;
+    await loadAggregateResults(
+      models,
+      (query) => query.withMax(relationName, column, aliasOrCallback as any, callback as any),
+      [alias || `${relationName}_max_${column.replace(/\W+/g, "_")}`]
+    );
+  }
+
   static async eagerLoadRelation(models: Model[], relationName: string, constraint?: EagerLoadConstraint): Promise<void> {
     if (models.length === 0) return;
     const firstModel = models[0];
@@ -1656,7 +1944,16 @@ export class Model<T extends Record<string, any> = any> {
     if (!relationMethod) {
       throw new Error(`Relation ${relationName} is not defined on ${firstModel.constructor.name}.`);
     }
-    const relation = relationMethod.call(firstModel) as Relation<any>;
+    const relation = relationMethod.call(firstModel) as any;
+    if (relation instanceof MorphTo) {
+      relation.addEagerConstraints(models);
+      if (constraint) {
+        (constraint as any)(relation);
+      }
+      const results = await relation.getEager();
+      relation.match(models, results, relationName);
+      return;
+    }
     relation.addEagerConstraints(models);
     if (constraint) {
       constraint(relation.getQuery());
@@ -1880,6 +2177,22 @@ export class Model<T extends Record<string, any> = any> {
     return this;
   }
 
+  append<K extends string>(...keys: (K | K[])[]): this & Record<K, any> {
+    const flat = keys.flat();
+    this.$appends = [...new Set([...this.$appends, ...flat])];
+    return this as this & Record<K, any>;
+  }
+
+  setAppends<K extends string>(keys: K[]): this & Record<K, any> {
+    this.$appends = [...keys];
+    return this as this & Record<K, any>;
+  }
+
+  getAppends(): string[] {
+    const constructor = this.getModelConstructor();
+    return [...new Set([...(constructor.appends || []), ...this.$appends])];
+  }
+
   is(other: Model | null | undefined): boolean {
     if (!other) return false;
     const ctor = this.getModelConstructor();
@@ -2057,10 +2370,73 @@ export class Model<T extends Record<string, any> = any> {
     return this.increment(column, -amount, extra);
   }
 
+  async load<R extends string & NestedRelationPath<this>>(relation: R, ...relations: R[]): Promise<WithLoadedRelations<this, R>>;
+  async load<Rs extends ReadonlyArray<StrictTypedEagerLoad<this>>>(relations: Rs): Promise<WithLoadedRelations<this, ExtractStringPaths<Rs[number]>>>;
+  async load<Rs extends ReadonlyArray<StrictTypedEagerLoad<this>>>(...relations: Rs): Promise<WithLoadedRelations<this, ExtractStringPaths<Rs[number]>>>;
   async load(...relations: (EagerLoadInput | EagerLoadInput[])[]): Promise<this> {
     const constructor = this.getModelConstructor();
     await constructor.eagerLoadRelations([this], relations as any);
     return this;
+  }
+
+  async loadMorph<R extends LoadMorphRelationName<this>>(relationName: R, relations: MorphEagerLoadMap): Promise<this> {
+    const constructor = this.getModelConstructor();
+    await constructor.loadMorph([this], relationName as string, relations);
+    return this;
+  }
+
+  async loadCount<R extends string & ModelRelationName<this>, A extends string | undefined = undefined>(relationName: R, alias?: A): Promise<AggregateLoaded<this, AggregateAlias<R, A, "count">, number>> {
+    const constructor = this.getModelConstructor();
+    await constructor.loadCount([this], relationName as string, alias as string | undefined);
+    return this as any;
+  }
+
+  async loadSum<R extends AggregateLoadRelationName<this>, C extends AggregateLoadColumn<this, R>>(relationName: R, column: C, callback: AggregateLoadConstraint<this, R>): Promise<this>;
+  async loadSum<R extends AggregateLoadRelationName<this>, C extends AggregateLoadColumn<this, R>, A extends string | undefined = undefined>(relationName: R, column: C, alias?: A): Promise<this>;
+  async loadSum<R extends AggregateLoadRelationName<this>, C extends AggregateLoadColumn<this, R>, A extends string>(relationName: R, column: C, alias: A, callback: AggregateLoadConstraint<this, R>): Promise<this>;
+  async loadSum(relationName: LiteralUnion<string & ModelRelationName<this>>, column: string, callback: EagerLoadConstraint): Promise<this>;
+  async loadSum<A extends string | undefined = undefined>(relationName: LiteralUnion<string & ModelRelationName<this>>, column: string, alias?: A): Promise<this>;
+  async loadSum<A extends string>(relationName: LiteralUnion<string & ModelRelationName<this>>, column: string, alias: A, callback: EagerLoadConstraint): Promise<this>;
+  async loadSum(relationName: string, column: string, aliasOrCallback?: string | AggregateConstraint<this, any>, callback?: AggregateConstraint<this, any>): Promise<any> {
+    const constructor = this.getModelConstructor();
+    await constructor.loadSum([this], relationName as string, column as string, aliasOrCallback as any, callback as any);
+    return this as any;
+  }
+
+  async loadAvg<R extends AggregateLoadRelationName<this>, C extends AggregateLoadColumn<this, R>>(relationName: R, column: C, callback: AggregateLoadConstraint<this, R>): Promise<this>;
+  async loadAvg<R extends AggregateLoadRelationName<this>, C extends AggregateLoadColumn<this, R>, A extends string | undefined = undefined>(relationName: R, column: C, alias?: A): Promise<this>;
+  async loadAvg<R extends AggregateLoadRelationName<this>, C extends AggregateLoadColumn<this, R>, A extends string>(relationName: R, column: C, alias: A, callback: AggregateLoadConstraint<this, R>): Promise<this>;
+  async loadAvg(relationName: LiteralUnion<string & ModelRelationName<this>>, column: string, callback: EagerLoadConstraint): Promise<this>;
+  async loadAvg<A extends string | undefined = undefined>(relationName: LiteralUnion<string & ModelRelationName<this>>, column: string, alias?: A): Promise<this>;
+  async loadAvg<A extends string>(relationName: LiteralUnion<string & ModelRelationName<this>>, column: string, alias: A, callback: EagerLoadConstraint): Promise<this>;
+  async loadAvg(relationName: string, column: string, aliasOrCallback?: string | AggregateConstraint<this, any>, callback?: AggregateConstraint<this, any>): Promise<any> {
+    const constructor = this.getModelConstructor();
+    await constructor.loadAvg([this], relationName as string, column as string, aliasOrCallback as any, callback as any);
+    return this as any;
+  }
+
+  async loadMin<R extends AggregateLoadRelationName<this>, C extends AggregateLoadColumn<this, R>>(relationName: R, column: C, callback: AggregateLoadConstraint<this, R>): Promise<this>;
+  async loadMin<R extends AggregateLoadRelationName<this>, C extends AggregateLoadColumn<this, R>, A extends string | undefined = undefined>(relationName: R, column: C, alias?: A): Promise<this>;
+  async loadMin<R extends AggregateLoadRelationName<this>, C extends AggregateLoadColumn<this, R>, A extends string>(relationName: R, column: C, alias: A, callback: AggregateLoadConstraint<this, R>): Promise<this>;
+  async loadMin(relationName: LiteralUnion<string & ModelRelationName<this>>, column: string, callback: EagerLoadConstraint): Promise<this>;
+  async loadMin<A extends string | undefined = undefined>(relationName: LiteralUnion<string & ModelRelationName<this>>, column: string, alias?: A): Promise<this>;
+  async loadMin<A extends string>(relationName: LiteralUnion<string & ModelRelationName<this>>, column: string, alias: A, callback: EagerLoadConstraint): Promise<this>;
+  async loadMin(relationName: string, column: string, aliasOrCallback?: string | AggregateConstraint<this, any>, callback?: AggregateConstraint<this, any>): Promise<any> {
+    const constructor = this.getModelConstructor();
+    await constructor.loadMin([this], relationName as string, column as string, aliasOrCallback as any, callback as any);
+    return this as any;
+  }
+
+  async loadMax<R extends AggregateLoadRelationName<this>, C extends AggregateLoadColumn<this, R>>(relationName: R, column: C, callback: AggregateLoadConstraint<this, R>): Promise<this>;
+  async loadMax<R extends AggregateLoadRelationName<this>, C extends AggregateLoadColumn<this, R>, A extends string | undefined = undefined>(relationName: R, column: C, alias?: A): Promise<this>;
+  async loadMax<R extends AggregateLoadRelationName<this>, C extends AggregateLoadColumn<this, R>, A extends string>(relationName: R, column: C, alias: A, callback: AggregateLoadConstraint<this, R>): Promise<this>;
+  async loadMax(relationName: LiteralUnion<string & ModelRelationName<this>>, column: string, callback: EagerLoadConstraint): Promise<this>;
+  async loadMax<A extends string | undefined = undefined>(relationName: LiteralUnion<string & ModelRelationName<this>>, column: string, alias?: A): Promise<this>;
+  async loadMax<A extends string>(relationName: LiteralUnion<string & ModelRelationName<this>>, column: string, alias: A, callback: EagerLoadConstraint): Promise<this>;
+  async loadMax(relationName: string, column: string, aliasOrCallback?: string | AggregateConstraint<this, any>, callback?: AggregateConstraint<this, any>): Promise<any> {
+    const constructor = this.getModelConstructor();
+    await constructor.loadMax([this], relationName as string, column as string, aliasOrCallback as any, callback as any);
+    return this as any;
   }
 
   async delete(): Promise<boolean> {
@@ -2194,6 +2570,10 @@ export class Model<T extends Record<string, any> = any> {
     const result: Record<string, any> = {};
     for (const key of Object.keys(this.$attributes)) {
       if (this.isVisible(key)) result[key] = this.getAttribute(key);
+    }
+    for (const key of this.getAppends()) {
+      if (!this.isVisible(key)) continue;
+      result[key] = this.getAttribute(key as any);
     }
     if (includeRelations) {
       for (const key of Object.keys(this.$relations)) {

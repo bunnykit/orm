@@ -257,6 +257,8 @@ describe("model json type", () => {
     const _hasBranchKey: "branch" extends keyof Json ? true : false = true;
     const _adviserName: NonNullable<Json["adviser"]>["name"] extends string ? true : false = true;
     const _branchName: NonNullable<Json["branch"]>["name"] extends string ? true : false = true;
+    // @ts-expect-error Model methods should not be part of serialized JSON keys.
+    type LoadSumMethodShouldNotSerialize = Json["loadSum"];
 
     expect(_hasAdviserKey).toBe(true);
     expect(_hasBranchKey).toBe(true);

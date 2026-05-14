@@ -261,6 +261,60 @@ describe("BelongsToMany wherePivot()", () => {
     expect(nullOnes[0].getAttribute("label")).toBe("nullish");
   });
 
+  test("extended pivot helpers filter belongsToMany relations", async () => {
+    const user = await NfUser.create({ name: "Pivot User 4" });
+    const tag1 = await NfTag.create({ label: "w1" });
+    const tag2 = await NfTag.create({ label: "w2" });
+    const tag3 = await NfTag.create({ label: "w3" });
+    const tag4 = await NfTag.create({ label: "nullish" });
+    await user.tags().attach(tag1.getAttribute("id"), { weight: 101 });
+    await user.tags().attach(tag2.getAttribute("id"), { weight: 102 });
+    await user.tags().attach(tag3.getAttribute("id"), { weight: 103 });
+    await user.tags().attach(tag4.getAttribute("id"));
+
+    const between = await user.tags().wherePivotBetween("weight", [102, 103]).getResults();
+    expect(between.map((tag) => tag.getAttribute("label")).sort()).toEqual(["w2", "w3"]);
+
+    const notIn = await user.tags().wherePivotNotIn("weight", [101, 103]).wherePivotNotNull("weight").getResults();
+    expect(notIn).toHaveLength(1);
+    expect(notIn[0].getAttribute("label")).toBe("w2");
+
+    const orIn = await user.tags().wherePivot("weight", 101).orWherePivotIn("weight", [103]).getResults();
+    expect(orIn.map((tag) => tag.getAttribute("label")).sort()).toEqual(["w1", "w3"]);
+
+    const orNull = await user.tags().wherePivot("weight", 101).orWherePivotNull("weight").getResults();
+    const orNullLabels = orNull.map((tag) => tag.getAttribute("label"));
+    expect(orNullLabels).toContain("nullish");
+    expect(orNullLabels).toContain("w1");
+  });
+
+  test("withPivotValue filters and supplies default pivot attributes", async () => {
+    const user = await NfUser.create({ name: "Pivot User 5" });
+    const included = await NfTag.create({ label: "defaulted" });
+    const excluded = await NfTag.create({ label: "manual" });
+
+    await user.tags().withPivotValue("weight", 7).attach(included.getAttribute("id"));
+    await user.tags().attach(excluded.getAttribute("id"), { weight: 3 });
+
+    const tags = await user.tags().withPivotValue("weight", 7).getResults();
+    expect(tags).toHaveLength(1);
+    expect(tags[0].getAttribute("label")).toBe("defaulted");
+  });
+
+  test("extended pivot helpers are available in eager-load callback IntelliSense", async () => {
+    if (false) {
+      NfUser.with({
+        tags: (query) => query
+          .wherePivotBetween("weight", [1, 10])
+          .wherePivotNotIn("weight", [4])
+          .wherePivotNotNull("weight")
+          .orWherePivotIn("weight", [2])
+          .orWherePivotNull("weight")
+          .withPivotValue("weight", 8),
+      });
+    }
+  });
+
   test("wherePivot applies during eager loading via Builder.where", async () => {
     const user = await NfUser.create({ name: "Pivot Eager" });
     const tag1 = await NfTag.create({ label: "ea" });

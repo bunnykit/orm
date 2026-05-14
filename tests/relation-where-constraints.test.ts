@@ -168,7 +168,7 @@ describe("hasMany + where()", () => {
 
   test("create() applies the relation where() constraint", async () => {
     const user = await RwcUser.find(1) as RwcUser;
-    const post = await user.publishedPosts().create({ title: "Created through relation" });
+    const post = await user.publishedPosts().create({ title: "Created through relation", status: "draft" });
     expect((post as any).status).toBe("published");
 
     const loaded = await user.publishedPosts().get() as Collection<RwcPost>;
@@ -283,7 +283,7 @@ describe("belongsToMany attach() applies wherePivot()", () => {
     const user = await RwcUser.find(1) as RwcUser;
     const role = await RwcRole.create({ name: "featured", level: 9 });
 
-    await user.featuredRoles().attach(role.id);
+    await user.featuredRoles().attach(role.id, { scope: "manual" });
 
     const roles = await user.featuredRoles().get() as Collection<RwcRole>;
     expect(roles.some((item: any) => item.name === "featured")).toBe(true);
@@ -352,7 +352,7 @@ describe("morphToMany attach() applies wherePivot()", () => {
     const post = await RwcPost.find(1) as RwcPost;
     const tag = await RwcTag.create({ name: "announcement" });
 
-    await post.featuredTags().attach(tag.id);
+    await post.featuredTags().attach(tag.id, { kind: "manual" });
 
     const tags = await post.featuredTags().get() as Collection<RwcTag>;
     expect(tags.some((item: any) => item.name === "announcement")).toBe(true);

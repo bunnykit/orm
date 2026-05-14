@@ -67,6 +67,7 @@ export interface WhereClause {
 export interface OrderClause {
   column: string;
   direction: "asc" | "desc";
+  raw?: boolean;
 }
 
 export interface HavingClause {

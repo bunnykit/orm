@@ -640,6 +640,11 @@ await User.eachById(100, (user) => {
 // Custom ID column for chunkById / eachById
 await User.chunkById(100, (users) => { ... }, "uuid");
 
+// Descending keyset chunks
+await User.chunkByIdDesc(100, (users) => {
+  users.pluck("id"); // newest IDs first
+});
+
 // cursor — async generator, yields one row at a time
 for await (const user of User.cursor()) {
   console.log(user.getAttribute("name"));
@@ -648,6 +653,11 @@ for await (const user of User.cursor()) {
 // lazy — chunked async generator (better than cursor for very large tables)
 for await (const user of User.lazy(500)) {
   console.log(user.getAttribute("name"));
+}
+
+// lazyById — keyset chunked async generator
+for await (const user of User.lazyById(500)) {
+  console.log(user.getAttribute("email"));
 }
 ```
 
@@ -661,6 +671,22 @@ page.data;        // Collection<User>
 page.total;       // total row count
 page.lastPage;    // last page number
 page.json();      // plain object for API responses
+
+const simple = await User.orderBy("name").simplePaginate(15, 1);
+simple.data;             // Collection<User>
+simple.has_more_pages;   // boolean
+simple.next_page;        // number | null
+simple.prev_page;        // number | null
+// No total/last_page query is run.
+
+const first = await User.orderBy("id").cursorPaginate(15);
+first.data;        // Collection<User>
+first.next_cursor; // opaque string | null
+
+if (first.next_cursor) {
+  const next = await User.orderBy("id").cursorPaginate(15, first.next_cursor);
+  next.prev_cursor; // cursor used to fetch this page
+}
 ```
 
 ### Conditional Building
@@ -685,6 +711,8 @@ User.addSelect("role")                                // append without replacin
 User.select("name").selectRaw("price * 2 as doubled")
 User.fromSub(User.where("price", ">", 100), "expensive")
 User.select("*").distinct()
+User.orderByRaw("LOWER(name) ASC")
+User.selectRaw("DATE(created_at) as day, COUNT(*) as total").groupByRaw("DATE(created_at)")
 ```
 
 ### Locking (MySQL / PostgreSQL)
@@ -776,13 +804,17 @@ await User.where("name", "Alice").explain() // return query plan
 | `whereFullText(cols, query)` | Full-text search (cross-db) |
 | `whereAll(cols, op, val)` | Multi-column `AND` |
 | `whereAny(cols, op, val)` | Multi-column `OR` |
+| `whereKey(id \| ids)` | Filter by the model primary key |
+| `whereKeyNot(id \| ids)` | Exclude by the model primary key |
 | `orderBy(col, dir)` | Sort ascending or descending |
 | `orderByDesc(col)` | Sort descending shorthand |
+| `orderByRaw(sql)` | Raw `ORDER BY` expression |
 | `latest(col?)` | `orderBy(created_at, desc)` |
 | `oldest(col?)` | `orderBy(created_at, asc)` |
 | `inRandomOrder()` | `ORDER BY RANDOM()` / `RAND()` |
 | `reorder(col?, dir?)` | Clear and optionally replace orders |
 | `groupBy(...cols)` | `GROUP BY` |
+| `groupByRaw(sql)` | Raw `GROUP BY` expression |
 | `having(col, op, val)` | `HAVING` filter |
 | `orHaving(...)` | OR `HAVING` |
 | `havingRaw(sql)` | Raw `HAVING` |
@@ -809,7 +841,9 @@ await User.where("name", "Alice").explain() // return query plan
 | `getArray()` | Fetch all rows as a plain array |
 | `first()` | Fetch first row |
 | `find(id, col?)` | Find by ID |
+| `findMany(ids)` | Fetch many rows by primary key |
 | `findOrFail(id, col?)` | Find or throw |
+| `firstWhere(col, op?, val)` | Apply one where clause and fetch first |
 | `firstOrFail()` | First or throw |
 | `sole()` | Exactly one row or throw |
 | `value(col)` | Single scalar from first row |
@@ -821,13 +855,17 @@ await User.where("name", "Alice").explain() // return query plan
 | `max(col)` | `MAX` |
 | `exists()` | Check any rows exist |
 | `doesntExist()` | Check no rows exist |
-| `paginate(perPage?, page?)` | Paginated result set with collection `data` |
+| `paginate(perPage?, page?)` | Paginated result set with total/last-page metadata |
+| `simplePaginate(perPage?, page?)` | Offset pagination without a total count query |
+| `cursorPaginate(perPage?, cursor?)` | Keyset pagination with opaque next cursor |
 | `chunk(n, fn)` | Batch iterate with collection chunks |
 | `each(n, fn)` | Per-item iterate |
 | `chunkById(n, fn, col?)` | Keyset-paginated chunk (no offset drift) |
+| `chunkByIdDesc(n, fn, col?)` | Descending keyset-paginated chunk |
 | `eachById(n, fn, col?)` | Keyset-paginated per-item iterate |
 | `cursor()` | Lazy async generator |
 | `lazy(n?)` | Chunked lazy generator |
+| `lazyById(n?, col?)` | Keyset chunked lazy generator |
 | `insert(data, options?)` | Insert row(s) with optional chunking |
 | `insertGetId(data, col?)` | Insert and return ID |
 | `insertOrIgnore(data)` | Insert, ignore conflicts |
@@ -844,6 +882,9 @@ await User.where("name", "Alice").explain() // return query plan
 | `doesntHave(rel)` / `whereDoesntHave(...)` | Relation absence |
 | `whereRelation(rel, col, op?, val)` | Filter by related column (shorthand) |
 | `orWhereRelation(...)` | OR variant of `whereRelation` |
+| `whereMorphedTo(rel, model)` | Filter a `morphTo` relation by type/id |
+| `orWhereMorphedTo(rel, model)` | OR variant of `whereMorphedTo` |
+| `whereNotMorphedTo(rel, model)` | Exclude a `morphTo` target |
 | `withWhereHas(rel, fn?)` | Filter + eager load in one call |
 | `withCount(rel)` / `withSum(rel, col, alias?, fn?)` / `withAvg / withMin / withMax` | Relation aggregates |
 | `withExists(rel, alias?, fn?)` | Add a typed boolean relation-exists field |
@@ -1177,6 +1218,11 @@ const count = await User.count();
 const user  = await User.create({ name: "Alice", email: "alice@example.com" });
 const found = await User.find(1);
 const first = await User.first();
+const many  = await User.findMany([1, 2, 3]);
+const admin = await User.firstWhere("role", "admin");
+
+const selected = await User.whereKey([1, 3, 5]).get();
+const others   = await User.whereKeyNot(1).get();
 
 // Find-or-fail (throws if not found)
 const user  = await User.findOrFail(1);
@@ -1412,6 +1458,48 @@ user.json({ relations: false }); // { id: 1, name: "Alice" } — attributes only
 ```
 
 `toJSON()` is the standard JavaScript serialization hook, so `JSON.stringify(user)` will also include loaded relations.
+
+#### Appended Attributes
+
+Use `static appends` for computed attributes that should always appear in serialized output, or `append()` for one model instance. Appended attributes are typed on the returned instance so `json()` and `toJSON()` expose them to IntelliSense.
+
+```ts
+type UserAttrs = {
+  id: number;
+  first_name: string;
+  last_name: string;
+};
+
+class User extends Model.define<UserAttrs>("users") {
+  declare full_name: string;
+  declare initials: string;
+
+  static appends = ["full_name"];
+
+  static accessors = {
+    full_name: {
+      get: (_value: unknown, attrs: UserAttrs) =>
+        `${attrs.first_name} ${attrs.last_name}`.trim(),
+    },
+    initials: {
+      get: (_value: unknown, attrs: UserAttrs) =>
+        `${attrs.first_name[0] ?? ""}${attrs.last_name[0] ?? ""}`.toUpperCase(),
+    },
+  };
+}
+
+const user = await User.firstOrFail();
+
+user.json().full_name; // string, included by static appends
+
+const withInitials = user.append("initials");
+withInitials.json().initials; // string, included for this instance
+
+user.setAppends(["initials"]); // replace instance-level appends
+user.getAppends();             // ["full_name", "initials"]
+```
+
+Visibility still applies to appended fields: `makeHidden("full_name")` removes the computed value from serialized output.
 
 ### Soft Deletes
 
@@ -1839,6 +1927,41 @@ await user.roles().sync([1, 2]);
 await user.roles().syncWithoutDetaching([3, 4]);
 ```
 
+#### Creating and saving through a relation
+
+`belongsToMany()` and `morphToMany()` can also create or save related models directly. Any fixed `where()` constraints are applied to the related model before save, and any fixed `wherePivot()` constraints are injected into the pivot row.
+
+```ts
+class Post extends Model {
+  featuredTags() {
+    return this.belongsToMany(Tag, "post_tag")
+      .withPivot("type")
+      .where("name", "Featured")
+      .wherePivot("type", "featured");
+  }
+}
+
+const post = await Post.first();
+if (!post) return;
+
+await post.featuredTags().create({ name: "Ignored" });
+
+const tag = new Tag({ name: "Ignored" });
+await post.featuredTags().save(tag);
+
+await post.featuredTags().createMany([
+  { name: "Ignored 1" },
+  { name: "Ignored 2" },
+]);
+
+await post.featuredTags().saveMany([
+  new Tag({ name: "Ignored 3" }),
+  new Tag({ name: "Ignored 4" }),
+]);
+```
+
+The constrained fields do not appear in IntelliSense for the create helpers, because Bunny fills them from the relation itself.
+
 #### Updating Existing Pivot Rows
 
 Update pivot columns for a specific related record without detaching and re-attaching:
@@ -1872,14 +1995,37 @@ const mixed   = await user.skills()
   .orWherePivot("featured", true)
   .get();
 const some    = await user.roles().wherePivotIn("priority", [1, 2]).get();
+const others  = await user.roles().wherePivotNotIn("priority", [3, 4]).get();
 const unset   = await user.tags().wherePivotNull("expires_at").get();
+const expiring = await user.tags().wherePivotNotNull("expires_at").get();
+const ranked  = await user.skills().wherePivotBetween("weight", [5, 10]).get();
+const flagged = await user.roles()
+  .wherePivot("priority", 1)
+  .orWherePivotIn("priority", [2, 3])
+  .orWherePivotNull("priority")
+  .get();
 ```
 
-Pivot filters are also preserved in constrained eager loading. For `belongsToMany` and `morphToMany` relations, the eager-load callback receives a pivot-aware builder, so `wherePivot()` works there too:
+Use `withPivotValue()` when a relation should always read and write a fixed pivot value. The value is applied as a pivot filter and is also injected into `attach()`, `sync()`, `save()`, and `create()` pivot rows:
+
+```ts
+class User extends Model {
+  primaryRoles() {
+    return this.belongsToMany(Role).withPivotValue("scope", "primary");
+  }
+}
+
+await user.primaryRoles().attach(role.id); // pivot.scope = "primary"
+const roles = await user.primaryRoles().get(); // only scope = "primary"
+```
+
+Pivot filters are also preserved in constrained eager loading. For `belongsToMany` and `morphToMany` relations, the eager-load callback receives a pivot-aware builder, so pivot helpers work there too:
 
 ```ts
 const users = await User.with({
-  roles: (q) => q.wherePivot("is_active", true),
+  roles: (q) => q
+    .wherePivot("is_active", true)
+    .wherePivotNotNull("approved_at"),
 }).get();
 ```
 
@@ -2071,6 +2217,50 @@ const posts = await Post
   .get();
 ```
 
+#### whereBelongsTo / whereAttachedTo
+
+Use model instances as relation filters without spelling out foreign keys or pivot joins:
+
+```ts
+class Post extends Model {
+  author() {
+    return this.belongsTo(User, "author_id");
+  }
+
+  tags() {
+    return this.belongsToMany(Tag, "post_tag");
+  }
+}
+
+const author = await User.where("email", "ada@example.com").first();
+if (!author) return;
+
+// Posts whose author() belongsTo the given user.
+const posts = await Post.whereBelongsTo("author", author).get();
+```
+
+`whereAttachedTo()` works with `belongsToMany()` and `morphToMany()` relations. Pivot constraints, morph constraints, and related-model constraints defined on the relation still apply because the shortcut uses the relation existence query:
+
+```ts
+const tag = await Tag.where("slug", "release-notes").first();
+if (!tag) return;
+
+const taggedPosts = await Post.whereAttachedTo("tags", tag).get();
+
+// Multiple related models are supported too.
+const selectedTags = await Tag.whereIn("slug", ["release-notes", "guide"]).get();
+const posts = await Post.whereAttachedTo("tags", selectedTags).get();
+
+// It also works in the middle of a query chain.
+const publishedTaggedPosts = await Post.query()
+  .whereAttachedTo("tags", tag)
+  .where("status", "published")
+  .latest()
+  .get();
+```
+
+The first argument is always the relationship name and is typed for IntelliSense: `whereBelongsTo()` suggests only `belongsTo` relations, while `whereAttachedTo()` suggests only `belongsToMany` and `morphToMany` relations. The related model or collection is required as the second argument.
+
 #### withWhereHas
 
 Filter parent models and eager load the filtered relation in one call:
@@ -2148,6 +2338,32 @@ posts[0].setRelation("author", sentinel);
 await posts.loadMissing("author"); // author is already set, skipped
 ```
 
+#### Post-retrieval Aggregate Loaders
+
+Load relation aggregates after you already have a model or collection:
+
+```ts
+const user = await User.first();
+if (!user) return;
+
+await user.loadCount("posts");
+await user.loadSum("posts", "views", "total_views");
+await user.loadAvg("posts", "score");
+await user.loadMin("posts", "created_at");
+await user.loadMax("posts", "created_at", "latest_post_at");
+
+const users = await User.where("active", true).get();
+await users.loadCount("posts");
+```
+
+The loaders mutate the model(s) in place and return the same value with the aggregate fields attached. The relation name and related columns are typed, so IntelliSense follows the model relation and the related model columns.
+
+Assumptions for IntelliSense:
+
+- Use the awaited return value if you want the aggregate fields available on a local variable type.
+- Guard nullable lookups like `await User.first()` before calling the loaders.
+- The generated field names follow the same default aliases as `withCount()`, `withSum()`, `withAvg()`, `withMin()`, and `withMax()`.
+
 ### Polymorphic Relations
 
 ```ts
@@ -2212,6 +2428,66 @@ await student.profilePicture().attach({
 
 For `profilePicture()`, `collection` is injected from the relation constraint, so it does not appear in IntelliSense. Also avoid optional chaining on the relation call itself if you want method autocomplete; guard the model first, as above.
 
+#### Morph-to query helpers
+
+`whereHasMorph()` and `whereDoesntHaveMorph()` let you filter a `morphTo` relation by the concrete types it can point to. The callback receives the related model query for each type. For eager loading, the `with()` callback receives the `MorphTo` relation itself, so `morphWith()` and `morphWithCount()` are available in IntelliSense.
+
+```ts
+const comments = await Comment.whereHasMorph(
+  "commentable",
+  [Post, Video],
+  (query) => {
+    query.where("title", "Morph target");
+  },
+).get();
+
+const missingVideos = await Comment.whereDoesntHaveMorph("commentable", [Video]).get();
+
+const post = await Post.firstOrFail();
+
+const onThisPost = await Comment
+  .whereMorphedTo("commentable", post)
+  .get();
+
+const onAnyPost = await Comment
+  .whereMorphedTo("commentable", Post)
+  .get();
+
+const notThisPost = await Comment
+  .whereNotMorphedTo("commentable", post)
+  .get();
+
+const postOrVideo = await Comment
+  .whereMorphedTo("commentable", post)
+  .orWhereMorphedTo("commentable", "Video")
+  .get();
+
+const loaded = await Comment.with({
+  commentable: (relation) =>
+    relation
+      .morphWith({
+        Post: ["comments"],
+        Video: ["thumbnail"],
+      })
+      .morphWithCount({
+        Post: ["comments"],
+      }),
+}).get();
+
+await loaded.loadMorph("commentable", {
+  Post: ["comments"],
+  Video: ["thumbnail"],
+});
+```
+
+Assumptions for IntelliSense:
+
+- `morphWith()` and `morphWithCount()` are only available inside the `with({ commentable: (relation) => ... })` callback, because that callback is typed as the `MorphTo` relation.
+- `whereHasMorph()` and `whereDoesntHaveMorph()` callbacks are typed to the related model query, so builder methods are available there instead.
+- `whereMorphedTo()`, `orWhereMorphedTo()`, and `whereNotMorphedTo()` only accept typed `morphTo` relation names. Passing an instance filters by both morph type and ID; passing a model class or morph type string filters by type.
+- `loadMorph()` is available on `Model` instances and collections, and the morph relation name should be one of the model's typed morph relations.
+- Fixed relation fields stay out of write-input IntelliSense when Bunny injects them from the relation itself.
+
 ### Customizing Morph Type
 
 ```ts
@@ -2238,6 +2514,13 @@ await Schema.create("taggables", (t) => {
 // Models
 class Post extends Model {
   tags() { return this.morphToMany(Tag, "taggable"); }
+
+  importantTags() {
+    return this.morphToMany(Tag, "taggable")
+      .withPivot("scope")
+      .where("name", "Important")
+      .wherePivot("scope", "important");
+  }
 }
 
 class Tag extends Model {
@@ -2248,7 +2531,15 @@ class Tag extends Model {
 // Usage
 const tags = await post.tags().get();       // Collection<Tag>
 const posts = await tag.posts().get();      // Collection<Post>
+
+const post = await Post.first();
+if (!post) return;
+
+await post.importantTags().create({ name: "Ignored" });
+await post.importantTags().save(new Tag({ name: "Ignored" }));
 ```
+
+`morphToMany()` supports the same `create`, `createMany`, `save`, and `saveMany` helpers as `belongsToMany()`. Relation constraints are applied automatically, and constrained fields stay out of IntelliSense for the write input.
 
 ---
 
@@ -2814,7 +3105,7 @@ Bunny includes a full test suite built with `bun:test`.
 bun test
 ```
 
-393 tests covering connection management, schema grammars, query builder, collections, model CRUD, casts, scopes, soft deletes, relations, observers, migrations, type generation, lazy eager loading, find-or-fail, first-or-create, increment/decrement, touch, chunk/cursor/lazy/chunkById streaming, date where clauses, conditional query building, whereNot, latest/oldest, or\* where variants, having/orHaving, orderByDesc/reorder, crossJoin, union, insertOrIgnore, upsert, delete with limit, skipLocked/noWait, JSON where clauses, like/regexp/fulltext, whereAll/whereAny, sole/value, selectRaw/fromSub, updateFrom, dump/dd, explain, attribute accessors/mutators, is()/isNot(), wasRecentlyCreated, toggle(), wherePivot(), replicate(), wasChanged(), saveQuietly(), deleteQuietly(), firstOrNew(), forceCreate(), truncate(), withoutTimestamps(), updateExistingPivot(), syncWithoutDetaching(), as(), withDefault(), whereRelation(), withWhereHas(), touches, database transactions, Collection.loadMissing(), HasMany.saveMany(), and HasMany.createMany().
+471 tests covering connection management, schema grammars, query builder, collections, model CRUD, casts, scopes, soft deletes, relations, observers, migrations, type generation, lazy eager loading, find-or-fail, first-or-create, increment/decrement, touch, chunk/cursor/lazy/chunkById/lazyById streaming, pagination variants, date where clauses, conditional query building, whereKey/whereKeyNot/findMany/firstWhere, whereNot, latest/oldest, or\* where variants, having/orHaving, orderByDesc/reorder/orderByRaw/groupByRaw, crossJoin, union, insertOrIgnore, upsert, delete with limit, skipLocked/noWait, JSON where clauses, like/regexp/fulltext, whereAll/whereAny, sole/value, selectRaw/fromSub, updateFrom, dump/dd, explain, attribute accessors/mutators, appends/append serialization, is()/isNot(), wasRecentlyCreated, toggle(), pivot query helpers, replicate(), wasChanged(), saveQuietly(), deleteQuietly(), firstOrNew(), forceCreate(), truncate(), withoutTimestamps(), updateExistingPivot(), syncWithoutDetaching(), as(), withDefault(), whereRelation(), whereBelongsTo(), whereAttachedTo(), whereMorphedTo(), withWhereHas(), touches, database transactions, Collection.loadMissing(), post-retrieval aggregate loaders, HasMany.saveMany(), and HasMany.createMany().
 
 ---
 

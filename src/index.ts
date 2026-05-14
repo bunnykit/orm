@@ -14,7 +14,8 @@ export { SQLiteGrammar } from "./schema/grammars/SQLiteGrammar.js";
 export { MySqlGrammar } from "./schema/grammars/MySqlGrammar.js";
 export { PostgresGrammar } from "./schema/grammars/PostgresGrammar.js";
 
-export { Builder, Paginator } from "./query/Builder.js";
+export { Builder, CursorPaginator, Paginator, SimplePaginator } from "./query/Builder.js";
+export type { CursorPaginatorJson, PaginatorJson, SimplePaginatorJson } from "./query/Builder.js";
 export { Collection, collect } from "./support/Collection.js";
 
 export { Model, HasMany, BelongsTo, HasOne, HasManyThrough, HasOneThrough } from "./model/Model.js";

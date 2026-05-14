@@ -22,6 +22,10 @@ class BPost extends Model {
     return this.belongsToMany(BTag, "b_post_tags").withPivot("created_at", "id", "category");
   }
 
+  featuredTags() {
+    return this.belongsToMany(BTag, "b_post_tags").withPivot("type").where("name", "Featured").wherePivot("type", "featured");
+  }
+
   prerequisiteTags() {
     return this.belongsToMany(BTag, "b_post_tags", "b_post_id", "b_tag_id")
       .withPivot("type")
@@ -300,6 +304,67 @@ describe("BelongsToMany", () => {
     expect(tags[0].pivot.category).toBe("programming");
   });
 
+  test("whereAttachedTo filters by belongsToMany attachments", async () => {
+    const tagged = await BPost.create({ title: "Attached Shortcut" });
+    const other = await BPost.create({ title: "Unmatched Shortcut" });
+    const tag = await BTag.create({ name: "Shortcut Tag" });
+    const otherTag = await BTag.create({ name: "Other Shortcut Tag" });
+
+    await tagged.tags().attach(tag.getAttribute("id"));
+    await other.tags().attach(otherTag.getAttribute("id"));
+
+    const explicit = await BPost.whereAttachedTo("tags", tag).get();
+
+    expect(explicit).toHaveLength(1);
+    expect(explicit[0].getAttribute("title")).toBe("Attached Shortcut");
+
+    const user = await BUser.create({ name: "Attached Shortcut User" });
+    const otherUser = await BUser.create({ name: "Other Attached Shortcut User" });
+    const role = await BRole.create({ title: "Attached Shortcut Role" });
+    const otherRole = await BRole.create({ title: "Other Attached Shortcut Role" });
+    await user.roles().attach(role.getAttribute("id"));
+    await otherUser.roles().attach(otherRole.getAttribute("id"));
+
+    const relationFirst = await BUser.query().whereAttachedTo("roles", role).get();
+    expect(relationFirst).toHaveLength(1);
+    expect(relationFirst[0].getAttribute("name")).toBe("Attached Shortcut User");
+  });
+
+  test("whereAttachedTo accepts multiple related models", async () => {
+    const first = await BPost.create({ title: "First Attached Shortcut" });
+    const second = await BPost.create({ title: "Second Attached Shortcut" });
+    const third = await BPost.create({ title: "Third Attached Shortcut" });
+    const firstTag = await BTag.create({ name: "First Shortcut Tag" });
+    const secondTag = await BTag.create({ name: "Second Shortcut Tag" });
+    const thirdTag = await BTag.create({ name: "Third Shortcut Tag" });
+
+    await first.tags().attach(firstTag.getAttribute("id"));
+    await second.tags().attach(secondTag.getAttribute("id"));
+    await third.tags().attach(thirdTag.getAttribute("id"));
+
+    const posts = await BPost.whereAttachedTo("tags", new Collection([firstTag, secondTag]))
+      .orderBy("title")
+      .get();
+
+    expect(posts.map((post) => post.getAttribute("title"))).toEqual(["First Attached Shortcut", "Second Attached Shortcut"]);
+  });
+
+  test("whereAttachedTo relation IntelliSense is limited to many-to-many relations", () => {
+    if (false) {
+      BPost.whereAttachedTo("tags", new BTag());
+      BPost.query().whereAttachedTo("featuredTags", new BTag());
+
+      // @ts-expect-error Relation-first calls require the related model as the second argument.
+      BPost.whereAttachedTo("tags");
+      // @ts-expect-error Explicit relation calls use relation name first, then model.
+      BPost.whereAttachedTo(new BTag(), "tags");
+      // @ts-expect-error Unknown relation names should not be suggested for whereAttachedTo.
+      BPost.whereAttachedTo("missingTags", new BTag());
+      // @ts-expect-error Empty strings should not be accepted as typed attachable relation names.
+      BPost.query().whereAttachedTo("", new BTag());
+    }
+  });
+
   test("attach generates UUID for pivot table with UUID primary key", async () => {
     const item = await BItem.create({ name: "Item 1" });
     const tag = await BTag.create({ name: "Tag 1" });
@@ -316,5 +381,46 @@ describe("BelongsToMany", () => {
     expect(tags[0].getAttribute("name")).toBe("Tag 1");
     expect(tags[0].pivot.notes).toBe("test note");
     expect(tags[0].pivot.id).toBe(pivotId);
+  });
+
+  test("belongsToMany create/save helpers fill constrained fields", async () => {
+    const post = await BPost.create({ title: "Helpers" });
+    const relation = post.featuredTags();
+
+    const created = await relation.create({ name: "Wrong" }, { type: "manual" });
+    expect(created.getAttribute("name")).toBe("Featured");
+
+    const saved = await relation.save(await BTag.create({ name: "Manual" }), { type: "manual" });
+    expect(saved.getAttribute("name")).toBe("Featured");
+
+    const tags = await relation.getResults();
+    expect(tags).toHaveLength(2);
+    expect(tags[0].getAttribute("name")).toBe("Featured");
+    expect(tags[0].pivot.type).toBe("featured");
+    expect(tags[1].getAttribute("name")).toBe("Featured");
+    expect(tags[1].pivot.type).toBe("featured");
+
+    if (false) {
+      // @ts-expect-error name is fixed by the relation constraint and should not be suggested.
+      relation.create({ name: "Manual" });
+    }
+  });
+
+  test("belongsToMany createMany/saveMany helpers fill constrained fields", async () => {
+    const post = await BPost.create({ title: "Bulk Helpers" });
+
+    const created = await post.featuredTags().createMany([{ name: "Wrong 1" }, { name: "Wrong 2" }], { type: "manual" });
+    expect(created).toHaveLength(2);
+    expect(created.every((tag) => tag.getAttribute("name") === "Featured")).toBe(true);
+
+    const saved = await post.featuredTags().saveMany([await BTag.create({ name: "Wrong 3" }), await BTag.create({ name: "Wrong 4" })], {
+      type: "manual",
+    });
+    expect(saved).toHaveLength(2);
+    expect(saved.every((tag) => tag.getAttribute("name") === "Featured")).toBe(true);
+
+    const tags = await post.featuredTags().getResults();
+    expect(tags).toHaveLength(4);
+    expect(tags.every((tag) => tag.pivot.type === "featured")).toBe(true);
   });
 });

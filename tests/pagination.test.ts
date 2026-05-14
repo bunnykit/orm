@@ -116,6 +116,99 @@ describe("Pagination", () => {
     expect(result.to).toBe(0);
   });
 
+  test("simplePaginate returns one page without total count metadata", async () => {
+    const result = await PUser.orderBy("id").simplePaginate(10, 1);
+
+    expect(result.data).toBeInstanceOf(Collection);
+    expect(result.data).toHaveLength(10);
+    expect(result.current_page).toBe(1);
+    expect(result.per_page).toBe(10);
+    expect(result.from).toBe(1);
+    expect(result.to).toBe(10);
+    expect(result.has_more_pages).toBe(true);
+    expect(result.next_page).toBe(2);
+    expect(result.prev_page).toBeNull();
+    expect((result as any).total).toBeUndefined();
+    expect((result as any).last_page).toBeUndefined();
+  });
+
+  test("simplePaginate handles later and empty pages", async () => {
+    const last = await PUser.orderBy("id").simplePaginate(10, 3);
+    expect(last.from).toBe(21);
+    expect(last.to).toBe(20 + last.data.length);
+    expect(last.data.length).toBeGreaterThan(0);
+    expect(last.data.length).toBeLessThanOrEqual(10);
+    expect(last.has_more_pages).toBe(false);
+    expect(last.next_page).toBeNull();
+    expect(last.prev_page).toBe(2);
+
+    const empty = await PUser.where("name", "NonExistent").simplePaginate(10, 2);
+    expect(empty.data).toHaveLength(0);
+    expect(empty.from).toBe(0);
+    expect(empty.to).toBe(0);
+    expect(empty.has_more_pages).toBe(false);
+  });
+
+  test("cursorPaginate returns cursor links and fetches the next page", async () => {
+    const first = await PUser.orderBy("id").cursorPaginate(7);
+
+    expect(first.data).toHaveLength(7);
+    expect(first.data[0].getAttribute("name")).toBe("User 1");
+    expect(first.data[6].getAttribute("name")).toBe("User 7");
+    expect(first.per_page).toBe(7);
+    expect(first.has_more_pages).toBe(true);
+    expect(first.next_cursor).toBeTruthy();
+    expect(first.prev_cursor).toBeNull();
+
+    const second = await PUser.orderBy("id").cursorPaginate(7, first.next_cursor);
+    expect(second.data).toHaveLength(7);
+    expect(second.data[0].getAttribute("name")).toBe("User 8");
+    expect(second.data[6].getAttribute("name")).toBe("User 14");
+    expect(second.prev_cursor).toBe(first.next_cursor);
+  });
+
+  test("cursorPaginate supports non-unique order columns with primary key tie-breaker", async () => {
+    const first = await PUser.orderBy("name").cursorPaginate(5);
+    const second = await PUser.orderBy("name").cursorPaginate(5, first.next_cursor);
+
+    expect(first.data.map((user) => user.getAttribute("id"))).not.toEqual(second.data.map((user) => user.getAttribute("id")));
+    expect(new Set([...first.data, ...second.data].map((user) => user.getAttribute("id"))).size).toBe(10);
+  });
+
+  test("simple and cursor paginator json infers model attributes", async () => {
+    const simple = await PSubject.orderBy("id").simplePaginate(10, 1);
+    const cursor = await PSubject.orderBy("id").cursorPaginate(10);
+
+    const simpleRow = simple.data[0];
+    const cursorRow = cursor.data[0];
+    const _simpleModelTitle: string | undefined = simpleRow?.title;
+    const _cursorModelParentId: number | null | undefined = cursorRow?.parent_id;
+    const _simpleHasMore: boolean = simple.has_more_pages;
+    const _cursorNext: string | null = cursor.next_cursor;
+
+    const simpleJson = simple.json();
+    const cursorJson = cursor.json();
+
+    type SimpleRow = (typeof simpleJson.data)[number];
+    type CursorRow = (typeof cursorJson.data)[number];
+    const _simpleTitle: SimpleRow["title"] extends string ? true : false = true;
+    const _cursorParentId: CursorRow["parent_id"] extends number | null ? true : false = true;
+    simpleJson.has_more_pages;
+    cursorJson.next_cursor;
+    expect(simpleJson.data).toBeArray();
+    expect(cursorJson.data).toBeArray();
+    expect(typeof simpleJson.has_more_pages).toBe("boolean");
+    expect(cursorJson.next_cursor === null || typeof cursorJson.next_cursor === "string").toBe(true);
+    // @ts-expect-error paginator data rows should not admit unknown model fields.
+    simple.data[0]?.missing_field;
+    // @ts-expect-error cursor paginator JSON rows should not admit unknown model fields.
+    cursorJson.data[0]?.missing_field;
+    // @ts-expect-error simple paginator does not expose total count metadata.
+    simpleJson.total;
+    // @ts-expect-error cursor paginator does not expose page numbers.
+    cursorJson.current_page;
+  });
+
   test("paginate json infers model attributes", async () => {
     const pageResult = await PSubject.whereNull("parent_id")
       .orderBy("title")

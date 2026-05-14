@@ -1,5 +1,5 @@
 import { expect, test, describe, beforeAll } from "bun:test";
-import { Collection, Model, Schema } from "../src/index.js";
+import { Builder, Collection, Model, Schema } from "../src/index.js";
 import { setupTestDb } from "./helpers.js";
 
 // ─── Models ──────────────────────────────────────────────────────────────────
@@ -110,6 +110,54 @@ describe("BelongsTo withDefault()", () => {
   });
 });
 
+describe("whereBelongsTo()", () => {
+  beforeAll(setup);
+
+  test("filters by an explicit belongsTo relation", async () => {
+    const ada = await Lf3User.create({ name: "Shortcut Ada" });
+    const grace = await Lf3User.create({ name: "Shortcut Grace" });
+    await Lf3Post.create({ title: "Ada Notes", lf3_user_id: ada.getAttribute("id") });
+    await Lf3Post.create({ title: "Grace Notes", lf3_user_id: grace.getAttribute("id") });
+
+    const posts = await Lf3Post.whereBelongsTo("author", ada).get();
+
+    expect(posts).toHaveLength(1);
+    expect(posts[0].getAttribute("title")).toBe("Ada Notes");
+  });
+
+  test("filters an explicit belongsTo relation and accepts multiple models", async () => {
+    const one = await Lf3Post.create({ title: "One Parent", lf3_user_id: null });
+    const two = await Lf3Post.create({ title: "Two Parent", lf3_user_id: null });
+    const three = await Lf3Post.create({ title: "Three Parent", lf3_user_id: null });
+    await Lf3Comment.create({ body: "One Belongs", lf3_post_id: one.getAttribute("id") });
+    await Lf3Comment.create({ body: "Two Belongs", lf3_post_id: two.getAttribute("id") });
+    await Lf3Comment.create({ body: "Three Belongs", lf3_post_id: three.getAttribute("id") });
+
+    const comments = await Lf3Comment.query()
+      .whereBelongsTo("post", new Collection([one, two]))
+      .orderBy("body")
+      .get();
+
+    expect(comments.map((comment) => comment.getAttribute("body"))).toEqual(["One Belongs", "Two Belongs"]);
+  });
+
+  test("relation name IntelliSense is limited to belongsTo relations", () => {
+    if (false) {
+      Lf3Post.whereBelongsTo("author", new Lf3User());
+      Lf3Post.query().whereBelongsTo("author", new Lf3User());
+
+      // @ts-expect-error Relation-first calls require the related model as the second argument.
+      Lf3Post.whereBelongsTo("author");
+      // @ts-expect-error Explicit relation calls use relation name first, then model.
+      Lf3Post.whereBelongsTo(new Lf3User(), "author");
+      // @ts-expect-error hasMany relations should not be suggested for whereBelongsTo.
+      Lf3Post.whereBelongsTo("comments", new Lf3User());
+      // @ts-expect-error Empty strings should not be accepted as typed belongsTo relation names.
+      Lf3Post.query().whereBelongsTo("", new Lf3User());
+    }
+  });
+});
+
 // ─── withDefault() on HasOne ──────────────────────────────────────────────────
 
 describe("HasOne withDefault()", () => {
@@ -215,6 +263,95 @@ describe("touches", () => {
 
     const refreshedPost = await Lf3Post.find(post.getAttribute("id"));
     expect(refreshedPost!.getAttribute("updated_at")).not.toBe(originalUpdatedAt);
+  });
+});
+
+// ─── post-retrieval aggregates ───────────────────────────────────────────────
+
+describe("post-retrieval aggregate loaders", () => {
+  beforeAll(setup);
+
+  test("loadCount/loadSum/loadAvg/loadMin/loadMax populate aggregate fields on models and collections", async () => {
+    const user = await Lf3User.create({ name: "Aggregate User" });
+    const post1 = await Lf3Post.create({ title: "First", lf3_user_id: user.getAttribute("id") });
+    const post2 = await Lf3Post.create({ title: "Second", lf3_user_id: user.getAttribute("id") });
+    const post3 = await Lf3Post.create({ title: "Third", lf3_user_id: user.getAttribute("id") });
+
+    const loadedUser = await Lf3User.find(user.getAttribute("id"));
+    expect(loadedUser).not.toBeNull();
+
+    await loadedUser!.loadCount("posts");
+    expect(loadedUser!.posts_count).toBe(3);
+
+    await loadedUser!.loadSum("posts", "id", "total_post_ids");
+    expect(loadedUser!.total_post_ids).toBe(
+      post1.getAttribute("id") + post2.getAttribute("id") + post3.getAttribute("id")
+    );
+
+    await loadedUser!.loadAvg("posts", "id");
+    expect(loadedUser!.posts_avg_id).toBe(
+      (post1.getAttribute("id") + post2.getAttribute("id") + post3.getAttribute("id")) / 3
+    );
+
+    await loadedUser!.loadMin("posts", "id");
+    expect(loadedUser!.posts_min_id).toBe(post1.getAttribute("id"));
+
+    await loadedUser!.loadMax("posts", "id");
+    expect(loadedUser!.posts_max_id).toBe(post3.getAttribute("id"));
+
+    const users = await Lf3User.where("id", user.getAttribute("id")).get();
+    await users.loadCount("posts");
+    expect(users[0].posts_count).toBe(3);
+  });
+
+  test("aggregate loaders expose IntelliSense for relation names, columns, and result keys", async () => {
+    if (false) {
+      const user = (await Lf3User.first())!;
+      const countLoaded = await user.loadCount("posts");
+      countLoaded.posts_count;
+      // @ts-expect-error The default count alias is posts_count, not posts_total.
+      countLoaded.posts_total;
+
+      const sumLoaded = await user.loadSum("posts", "id");
+      sumLoaded.posts_sum_id;
+
+      const avgLoaded = await user.loadAvg("posts", "id", "average_post_id");
+      avgLoaded.average_post_id;
+      await user.loadAvg("posts", "id", (post) => {
+        const _typedPostQuery: Builder<Lf3Post> = post;
+        return _typedPostQuery.where("title", "typed");
+      });
+      await user.loadSum("posts", "id", (post) => {
+        const _typedPostQuery: Builder<Lf3Post> = post;
+        return _typedPostQuery.where("title", "typed");
+      });
+      await user.loadMin("posts", "id", "first_post_id", (post) => {
+        const _typedPostQuery: Builder<Lf3Post> = post;
+        return _typedPostQuery.where("title", "typed");
+      });
+      await user.loadMax("posts", "id", "last_post_id", (post) => {
+        const _typedPostQuery: Builder<Lf3Post> = post;
+        return _typedPostQuery.where("title", "typed");
+      });
+
+      const minLoaded = await user.loadMin("posts", "id");
+      minLoaded.posts_min_id;
+
+      const maxLoaded = await user.loadMax("posts", "id", "latest_post_id");
+      maxLoaded.latest_post_id;
+
+      const collection = [] as unknown as Collection<Lf3User>;
+      const countedUsers = await collection.loadCount("posts");
+      countedUsers[0]?.posts_count;
+      const summedUsers = await collection.loadSum("posts", "id");
+      summedUsers[0]?.posts_sum_id;
+      await collection.loadAvg("posts", "id", (post) => {
+        const _typedPostQuery: Builder<Lf3Post> = post;
+        return _typedPostQuery.where("title", "typed");
+      });
+      // @ts-expect-error "title" is not a numeric aggregate column on Post.
+      await user.loadSum("posts", "title");
+    }
   });
 });
 

@@ -2,7 +2,7 @@ import { Builder } from "../query/Builder.js";
 import { Schema } from "../schema/Schema.js";
 import { Collection } from "../support/Collection.js";
 import { snakeCase } from "../utils.js";
-import type { Model, ModelConstructor, PivotQueryBuilder } from "./Model.js";
+import type { Model, ModelAttributeInputWithout, ModelConstructor, PivotQueryBuilder, StripTablePrefix } from "./Model.js";
 
 function getModelConstructor(model: Model): typeof Model {
   return Object.getPrototypeOf(model).constructor as typeof Model;
@@ -13,7 +13,7 @@ function defaultPivotTable(parent: Model, related: ModelConstructor): string {
   return `${names[0]}_${names[1]}`;
 }
 
-export class BelongsToMany<T extends Model = Model> {
+export class BelongsToMany<T extends Model = Model, RelatedFixed extends string = never, PivotFixed extends string = never> {
   protected parent: Model;
   protected related: ModelConstructor;
   protected table: string;
@@ -24,6 +24,7 @@ export class BelongsToMany<T extends Model = Model> {
   protected pivotColumns: string[] = [];
   protected pivotTimestamps = false;
   protected builder: Builder<T>;
+  protected whereConstraints: Array<{ column: string; operator: string; value: any; boolean: "and" | "or" }> = [];
   protected pivotWheres: Array<{ column: string; operator: string; value: any; boolean: "and" | "or" }> = [];
   protected extraConstraints: Array<(builder: Builder<T>) => void> = [];
   protected pivotAccessor = "pivot";
@@ -55,8 +56,32 @@ export class BelongsToMany<T extends Model = Model> {
       relation.applyPivotWhere(query, column, "IN", values, "and");
       return query;
     });
+    define("wherePivotNotIn", (column: string, values: any[]) => {
+      relation.applyPivotWhere(query, column, "NOT IN", values, "and");
+      return query;
+    });
+    define("orWherePivotIn", (column: string, values: any[]) => {
+      relation.applyPivotWhere(query, column, "IN", values, "or");
+      return query;
+    });
     define("wherePivotNull", (column: string) => {
       relation.applyPivotWhere(query, column, "IS NULL", null, "and");
+      return query;
+    });
+    define("wherePivotNotNull", (column: string) => {
+      relation.applyPivotWhere(query, column, "IS NOT NULL", null, "and");
+      return query;
+    });
+    define("orWherePivotNull", (column: string) => {
+      relation.applyPivotWhere(query, column, "IS NULL", null, "or");
+      return query;
+    });
+    define("wherePivotBetween", (column: string, values: [any, any]) => {
+      relation.applyPivotWhere(query, column, "BETWEEN", values, "and");
+      return query;
+    });
+    define("withPivotValue", (column: string, value: any) => {
+      relation.applyPivotWhere(query, column, "=", value, "and");
       return query;
     });
 
@@ -94,8 +119,14 @@ export class BelongsToMany<T extends Model = Model> {
   protected applyStoredPivotWhere(builder: Builder<any>, where: { column: string; operator: string; value: any; boolean: "and" | "or" }): Builder<any> {
     if (where.operator === "IN") {
       builder.whereIn(where.column as any, where.value, where.boolean);
+    } else if (where.operator === "NOT IN") {
+      builder.whereNotIn(where.column as any, where.value, where.boolean);
+    } else if (where.operator === "BETWEEN") {
+      builder.whereBetween(where.column as any, where.value, where.boolean);
     } else if (where.operator === "IS NULL") {
       builder.whereNull(where.column as any, where.boolean);
+    } else if (where.operator === "IS NOT NULL") {
+      builder.whereNotNull(where.column as any, where.boolean);
     } else if (where.boolean === "or") {
       builder.orWhere(where.column as any, where.operator, where.value);
     } else {
@@ -104,31 +135,69 @@ export class BelongsToMany<T extends Model = Model> {
     return builder;
   }
 
-  wherePivot(column: string, operator: string | any, value?: any): this {
+  wherePivot<K extends string>(column: K, operator: string | any, value?: any): BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
     this.applyPivotWhere(this.builder, column, operator, value, "and");
-    return this;
+    return this as BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
   }
 
-  orWherePivot(column: string, operator: string | any, value?: any): this {
+  orWherePivot<K extends string>(column: K, operator: string | any, value?: any): BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
     this.applyPivotWhere(this.builder, column, operator, value, "or");
-    return this;
+    return this as BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
   }
 
-  wherePivotIn(column: string, values: any[]): this {
+  wherePivotIn<K extends string>(column: K, values: any[]): BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
     this.applyPivotWhere(this.builder, column, "IN", values, "and");
-    return this;
+    return this as BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
   }
 
-  wherePivotNull(column: string): this {
+  wherePivotNotIn<K extends string>(column: K, values: any[]): BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
+    this.applyPivotWhere(this.builder, column, "NOT IN", values, "and");
+    return this as BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
+  }
+
+  orWherePivotIn<K extends string>(column: K, values: any[]): BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
+    this.applyPivotWhere(this.builder, column, "IN", values, "or");
+    return this as BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
+  }
+
+  wherePivotNull<K extends string>(column: K): BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
     this.applyPivotWhere(this.builder, column, "IS NULL", null, "and");
-    return this;
+    return this as BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
   }
 
-  where(column: string, operatorOrValue: any, value?: any): this {
+  wherePivotNotNull<K extends string>(column: K): BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
+    this.applyPivotWhere(this.builder, column, "IS NOT NULL", null, "and");
+    return this as BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
+  }
+
+  orWherePivotNull<K extends string>(column: K): BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
+    this.applyPivotWhere(this.builder, column, "IS NULL", null, "or");
+    return this as BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
+  }
+
+  wherePivotBetween<K extends string>(column: K, values: [any, any]): BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
+    this.applyPivotWhere(this.builder, column, "BETWEEN", values, "and");
+    return this as BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
+  }
+
+  withPivotValue<K extends string>(column: K, value: any): BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>> {
+    this.applyPivotWhere(this.builder, column, "=", value, "and");
+    return this as BelongsToMany<T, RelatedFixed, PivotFixed | StripTablePrefix<K>>;
+  }
+
+  where<K extends string>(column: K, operatorOrValue: any, value?: any): BelongsToMany<T, RelatedFixed | StripTablePrefix<K>, PivotFixed> {
     const args: any[] = value !== undefined ? [column, operatorOrValue, value] : [column, operatorOrValue];
+    const operator = value !== undefined ? operatorOrValue : "=";
+    const whereValue = value !== undefined ? value : operatorOrValue;
+    this.whereConstraints.push({
+      column: String(column),
+      operator,
+      value: whereValue,
+      boolean: "and",
+    });
     this.extraConstraints.push((b) => (b.where as any)(...args));
     (this.builder.where as any)(...args);
-    return this;
+    return this as BelongsToMany<T, RelatedFixed | StripTablePrefix<K>, PivotFixed>;
   }
 
   protected applyExtraConstraints(): void {
@@ -166,6 +235,30 @@ export class BelongsToMany<T extends Model = Model> {
     }
 
     return defaults;
+  }
+
+  protected getDefaultAttributes(): Record<string, any> {
+    const defaults: Record<string, any> = {};
+
+    for (const where of this.whereConstraints) {
+      if (where.boolean !== "and") continue;
+
+      const column = where.column.includes(".") ? where.column.split(".").pop()! : where.column;
+      if (where.operator === "=") {
+        defaults[column] = where.value;
+      } else if (where.operator === "IS NULL") {
+        defaults[column] = null;
+      }
+    }
+
+    return defaults;
+  }
+
+  protected applyRelatedDefaults(model: T): void {
+    const defaults = this.getDefaultAttributes();
+    for (const [key, value] of Object.entries(defaults)) {
+      model.setAttribute(key as any, value);
+    }
   }
 
   protected applyPivotWheres(builder: Builder<any>): Builder<any> {
@@ -252,6 +345,18 @@ export class BelongsToMany<T extends Model = Model> {
 
   getQuery(): Builder<T> {
     return this.decoratePivotQuery(this.builder);
+  }
+
+  getRelatedModelConstructor(): ModelConstructor {
+    return this.related;
+  }
+
+  getRelatedKeyName(): string {
+    return this.relatedKey;
+  }
+
+  getRelatedPivotKeyName(): string {
+    return this.relatedPivotKey;
   }
 
   addEagerConstraints(models: Model[]): void {
@@ -371,6 +476,39 @@ export class BelongsToMany<T extends Model = Model> {
 
     await builder.insert(records);
     return;
+  }
+
+  async save(model: T, attributes?: Record<string, any>): Promise<T> {
+    this.applyRelatedDefaults(model);
+    await model.save();
+    await this.attach(model.getAttribute(this.relatedKey), attributes);
+    return model;
+  }
+
+  async saveMany(models: T[], attributes?: Record<string, any>): Promise<T[]> {
+    const saved: T[] = [];
+    for (const model of models) {
+      saved.push(await this.save(model, attributes));
+    }
+    return saved;
+  }
+
+  async create(attributes: ModelAttributeInputWithout<T, RelatedFixed>, pivotAttributes?: Record<string, any>): Promise<T> {
+    const instance = new (this.related as any)({
+      ...attributes,
+      ...this.getDefaultAttributes(),
+    }) as T;
+    await instance.save();
+    await this.attach(instance.getAttribute(this.relatedKey), pivotAttributes);
+    return instance;
+  }
+
+  async createMany(records: ModelAttributeInputWithout<T, RelatedFixed>[], pivotAttributes?: Record<string, any>): Promise<T[]> {
+    const created: T[] = [];
+    for (const record of records) {
+      created.push(await this.create(record, pivotAttributes));
+    }
+    return created;
   }
 
   async detach(ids?: any | any[]): Promise<void> {
