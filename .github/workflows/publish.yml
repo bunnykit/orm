@@ -43,22 +43,9 @@ jobs:
         run: |
           node <<'NODE' >> "$GITHUB_OUTPUT"
           const { readFileSync } = require("fs");
-          const { execSync } = require("child_process");
 
           const current = JSON.parse(readFileSync("package.json", "utf8")).version;
-          let latest = current;
-
-          try {
-            const output = execSync("npm view @bunnykit/orm version --json", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-            if (output) {
-              latest = JSON.parse(output);
-            }
-          } catch {
-            latest = current;
-          }
-
-          const source = latest || current;
-          const parts = String(source).split(".").map((part) => Number(part));
+          const parts = String(current).split(".").map((part) => Number(part));
           const major = Number.isFinite(parts[0]) ? parts[0] : 0;
           const minor = Number.isFinite(parts[1]) ? parts[1] : 0;
           const patch = Number.isFinite(parts[2]) ? parts[2] : 0;
