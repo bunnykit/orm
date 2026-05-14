@@ -1,6 +1,6 @@
 {
   "name": "@bunnykit/orm",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "An Eloquent-inspired ORM for Bun's native SQL client supporting SQLite, MySQL, and PostgreSQL.",
   "license": "MIT",
   "packageManager": "bun@1.3.12",
