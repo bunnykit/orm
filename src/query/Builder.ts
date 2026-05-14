@@ -439,6 +439,10 @@ export class Builder<T = Record<string, any>, TResult = T> {
     return this;
   }
 
+  whereNotExists(sql: string): this {
+    return this.whereExists(sql, "and", true);
+  }
+
   orWhereNull(column: ModelColumn<T>, scope?: string): this {
     return this.whereNull(column, "or", scope);
   }

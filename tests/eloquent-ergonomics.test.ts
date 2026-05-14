@@ -91,6 +91,55 @@ describe("Eloquent-style ergonomics", () => {
     }
   });
 
+  test("model static query helper proxies expose the builder where family", async () => {
+    const exists = await ErgUser.whereExists("SELECT 1")
+      .whereBetween("score", [2, 4])
+      .orWhereNotExists("SELECT 1 WHERE 0")
+      .orderByDesc("score")
+      .get();
+
+    expect(exists[0].score).toBe(6);
+
+    const filtered = await ErgUser
+      .whereNotIn("score", [1, 6])
+      .whereNotNull("group_name")
+      .whereColumn("erg_users.id", "=", "erg_users.id")
+      .whereRaw("score >= 2")
+      .reorder("id")
+      .get();
+
+    expect(filtered.map((user) => user.score)).toEqual([2, 3, 4, 5]);
+
+    const grouped = await ErgUser
+      .select("group_name")
+      .selectRaw("COUNT(*) as total")
+      .groupBy("group_name")
+      .havingRaw("COUNT(*) >= 3")
+      .get();
+
+    expect(grouped).toHaveLength(2);
+
+    if (false) {
+      ErgUser.whereExists("SELECT 1").get();
+      ErgUser.whereNotExists("SELECT 1 WHERE 0").get();
+      ErgUser.orWhereExists("SELECT 1").get();
+      ErgUser.whereRaw("score > 0").get();
+      ErgUser.whereColumn("erg_users.id", "=", "erg_users.id").get();
+      ErgUser.whereNotIn("score", [1, 2]).get();
+      ErgUser.whereBetween("score", [1, 4]).get();
+      ErgUser.whereNotBetween("score", [1, 4]).get();
+      ErgUser.orWhereNull("group_name").get();
+      ErgUser.whereLike("name", "User%").get();
+      ErgUser.whereAll(["name", "group_name"], "!=", "").get();
+      ErgUser.select("name").addSelect("score").distinct().get();
+
+      // @ts-expect-error Static where helpers should keep model column IntelliSense.
+      ErgUser.whereBetween("missing", [1, 2]);
+      // @ts-expect-error Static select helpers should keep model column IntelliSense.
+      ErgUser.select("missing");
+    }
+  });
+
   test("chunkByIdDesc and lazyById iterate by primary key without offsets", async () => {
     const descIds: number[] = [];
     await ErgUser.chunkByIdDesc(2, (users) => {

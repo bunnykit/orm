@@ -766,6 +766,13 @@ await User.where("name", "Alice").explain() // return query plan
 
 ### Query Builder Reference
 
+Most query builder helpers can be called either from `Model.query()` or directly on the model class:
+
+```ts
+await Room.whereExists("SELECT 1 FROM bookings WHERE bookings.room_id = rooms.id").get();
+await Room.whereBetween("capacity", [2, 8]).orderByDesc("capacity").get();
+```
+
 | Method | Description |
 | ---------------------------------------------------------- | ----------------------------------- |
 | `where(col, op, val)` | Basic equality or operator filter |
@@ -3105,7 +3112,7 @@ Bunny includes a full test suite built with `bun:test`.
 bun test
 ```
 
-471 tests covering connection management, schema grammars, query builder, collections, model CRUD, casts, scopes, soft deletes, relations, observers, migrations, type generation, lazy eager loading, find-or-fail, first-or-create, increment/decrement, touch, chunk/cursor/lazy/chunkById/lazyById streaming, pagination variants, date where clauses, conditional query building, whereKey/whereKeyNot/findMany/firstWhere, whereNot, latest/oldest, or\* where variants, having/orHaving, orderByDesc/reorder/orderByRaw/groupByRaw, crossJoin, union, insertOrIgnore, upsert, delete with limit, skipLocked/noWait, JSON where clauses, like/regexp/fulltext, whereAll/whereAny, sole/value, selectRaw/fromSub, updateFrom, dump/dd, explain, attribute accessors/mutators, appends/append serialization, is()/isNot(), wasRecentlyCreated, toggle(), pivot query helpers, replicate(), wasChanged(), saveQuietly(), deleteQuietly(), firstOrNew(), forceCreate(), truncate(), withoutTimestamps(), updateExistingPivot(), syncWithoutDetaching(), as(), withDefault(), whereRelation(), whereBelongsTo(), whereAttachedTo(), whereMorphedTo(), withWhereHas(), touches, database transactions, Collection.loadMissing(), post-retrieval aggregate loaders, HasMany.saveMany(), and HasMany.createMany().
+472 tests covering connection management, schema grammars, query builder, collections, model CRUD, casts, scopes, soft deletes, relations, observers, migrations, type generation, lazy eager loading, find-or-fail, first-or-create, increment/decrement, touch, chunk/cursor/lazy/chunkById/lazyById streaming, pagination variants, date where clauses, conditional query building, whereKey/whereKeyNot/findMany/firstWhere, static model query helper proxies, whereNot, latest/oldest, or\* where variants, having/orHaving, orderByDesc/reorder/orderByRaw/groupByRaw, crossJoin, union, insertOrIgnore, upsert, delete with limit, skipLocked/noWait, JSON where clauses, like/regexp/fulltext, whereAll/whereAny, sole/value, selectRaw/fromSub, updateFrom, dump/dd, explain, attribute accessors/mutators, appends/append serialization, is()/isNot(), wasRecentlyCreated, toggle(), pivot query helpers, replicate(), wasChanged(), saveQuietly(), deleteQuietly(), firstOrNew(), forceCreate(), truncate(), withoutTimestamps(), updateExistingPivot(), syncWithoutDetaching(), as(), withDefault(), whereRelation(), whereBelongsTo(), whereAttachedTo(), whereMorphedTo(), withWhereHas(), touches, database transactions, Collection.loadMissing(), post-retrieval aggregate loaders, HasMany.saveMany(), and HasMany.createMany().
 
 ---
 
