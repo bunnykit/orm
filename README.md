@@ -481,6 +481,32 @@ await Schema.create("activity", (table) => {
 
 Every model exposes a chainable query builder via static methods.
 
+### Standalone (without a Model)
+
+Use `Builder` directly when you need raw table access — ad-hoc queries, pivot tables, reporting views, or tables that don't warrant a model.
+
+```ts
+import { Builder, Connection } from "@bunnykit/orm";
+
+const conn = Connection.getDefault();
+
+const rows = await new Builder(conn, "users")
+  .where("active", true)
+  .orderBy("created_at", "desc")
+  .select("id", "name", "email")
+  .get(); // Record<string, any>[]
+
+const count = await new Builder(conn, "audit_logs")
+  .where("event", "login")
+  .count();
+
+await new Builder(conn, "settings")
+  .where("key", "theme")
+  .update({ value: "dark" });
+```
+
+No model class required. Returns plain row objects. All chainable helpers (`where`, `join`, `groupBy`, `having`, `limit`, `offset`, etc.) available.
+
 ### Basic Queries
 
 ```ts

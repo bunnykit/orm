@@ -346,12 +346,18 @@ type BivariantCallback<TArgs extends any[], TResult> = {
   bivarianceHack(...args: TArgs): TResult;
 }["bivarianceHack"];
 
-export interface AttributeDefinition<TAttributes extends Record<string, any> = Record<string, any>> {
-  get?: BivariantCallback<[value: any, attributes: TAttributes, model: Model<any>], any>;
-  set?: BivariantCallback<[value: any, attributes: TAttributes, model: Model<any>], any>;
+export interface AttributeDefinition<
+  TAttributes extends Record<string, any> = Record<string, any>,
+  TModel = Model<any>
+> {
+  get?: BivariantCallback<[value: any, attributes: TAttributes, model: TModel], any>;
+  set?: BivariantCallback<[value: any, attributes: TAttributes, model: TModel], any>;
 }
 
-export type AccessorMap<TAttributes extends Record<string, any> = Record<string, any>> = Record<string, AttributeDefinition<TAttributes>>;
+export type AccessorMap<
+  TAttributes extends Record<string, any> = Record<string, any>,
+  TModel = Model<any>
+> = Record<string, AttributeDefinition<TAttributes, TModel>>;
 
 function getAccessors(target: Model<any>): AccessorMap {
   return (Object.getPrototypeOf(target).constructor as any).accessors || {};
@@ -975,7 +981,7 @@ export class Model<T extends Record<string, any> = any> {
   static hidden: string[] = [];
   static visible: string[] = [];
   static appends: string[] = [];
-  static accessors: AccessorMap = {};
+  static accessors: AccessorMap<any, any> = {};
   static touches: string[] = [];
 
   $attributes = {} as T;
