@@ -439,6 +439,47 @@ describe("Validator — sync rules", () => {
     }
   });
 
+  test("Validator.schema supports custom messages", async () => {
+    const schema = Validator.schema({
+      name: rule().required().string(),
+    }).messages({
+      name: "Name is required.",
+      "name.required": "Name is required.",
+    });
+
+    const bad = await schema.safeParse({});
+    expect(bad.success).toBe(false);
+    if (!bad.success) {
+      expect(bad.issues[0].message).toBe("Name is required.");
+    }
+  });
+
+  test("Validator.schema accepts FormData and Request input", async () => {
+    const schema = Validator.schema({
+      name: rule().required().string(),
+      email: rule().required().email(),
+    });
+
+    const formData = new FormData();
+    formData.set("name", "Ada");
+    formData.set("email", "ada@example.com");
+
+    const formResult = await schema.safeParse(formData);
+    expect(formResult.success).toBe(true);
+    if (formResult.success) {
+      expect(formResult.output.name).toBe("Ada");
+    }
+
+    const request = new Request("http://localhost/test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Ada", email: "ada@example.com" }),
+    });
+
+    const requestResult = await schema.parse(request);
+    expect(requestResult.email).toBe("ada@example.com");
+  });
+
   test("infers validated output types", async () => {
     const validated = await Validator.make(
       { email: "a@b.com", age: "18", password: "password", password_confirmation: "password" },

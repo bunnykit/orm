@@ -158,12 +158,78 @@ function bagToIssues(bag: ErrorBag): readonly StandardSchemaIssue[] {
   return issues;
 }
 
-function isObjectInput(value: unknown): value is Record<string, any> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isPlainObjectInput(value: unknown): value is Record<string, any> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 function objectInputError(): ValidationError {
   return new ValidationError({ "": ["The value must be an object."] });
+}
+
+function appendInputValue(target: Record<string, any>, key: string, value: unknown): void {
+  if (Object.prototype.hasOwnProperty.call(target, key)) {
+    const existing = target[key];
+    target[key] = Array.isArray(existing) ? [...existing, value] : [existing, value];
+    return;
+  }
+  target[key] = value;
+}
+
+function formDataToObject(formData: { entries(): IterableIterator<[string, unknown]> }): Record<string, any> {
+  const output: Record<string, any> = {};
+  for (const [key, value] of formData.entries()) {
+    appendInputValue(output, key, value);
+  }
+  return output;
+}
+
+async function requestToObject(request: Request): Promise<Record<string, any>> {
+  const contentType = request.headers.get("content-type") ?? "";
+  const cloned = request.clone();
+
+  if (contentType.includes("application/json") || contentType.includes("+json")) {
+    const json = await cloned.json();
+    if (!isPlainObjectInput(json)) {
+      throw objectInputError();
+    }
+    return json;
+  }
+
+  if (contentType.includes("multipart/form-data") || contentType.includes("application/x-www-form-urlencoded")) {
+    return formDataToObject(await cloned.formData());
+  }
+
+  try {
+    return formDataToObject(await cloned.formData());
+  } catch {
+      const text = await cloned.text();
+      try {
+        const json = JSON.parse(text);
+        if (isPlainObjectInput(json)) {
+          return json;
+        }
+    } catch {
+      // fall through
+    }
+  }
+
+  throw objectInputError();
+}
+
+async function normalizeObjectInput(value: unknown): Promise<Record<string, any>> {
+  if (isPlainObjectInput(value)) return value;
+  if (typeof Request !== "undefined" && value instanceof Request) {
+    return await requestToObject(value);
+  }
+  if (typeof FormData !== "undefined" && value instanceof FormData) {
+    return formDataToObject(value);
+  }
+  if (typeof URLSearchParams !== "undefined" && value instanceof URLSearchParams) {
+    return formDataToObject(value);
+  }
+  throw objectInputError();
 }
 
 type SafeParseResult<T> =
@@ -178,6 +244,7 @@ type SchemaSafeParseResult<T> =
 export interface ValidationObjectSchema<S extends ValidationSchema> {
   readonly entries: S;
   readonly "~standard": StandardSchemaV1<any, InferOutput<S>>["~standard"];
+  messages(overrides: MessageOverrides): this;
   parse(data: unknown): Promise<InferOutput<S>>;
   validate(data: unknown): Promise<SchemaSafeParseResult<InferOutput<S>>>;
   safeParse(data: unknown): Promise<SchemaSafeParseResult<InferOutput<S>>>;
@@ -222,13 +289,13 @@ export class Validator<S extends ValidationSchema> {
   private output: Record<string, any> = {};
 
   private constructor(
-    private data: Record<string, any>,
+    private rawData: unknown,
     private schema: S,
     private explicitConnection?: Connection,
   ) {}
 
   static make<S extends ValidationSchema>(
-    data: Record<string, any>,
+    data: unknown,
     schema: S,
     connection?: Connection,
   ): Validator<S> {
@@ -244,11 +311,10 @@ export class Validator<S extends ValidationSchema> {
   }
 
   static schema<S extends ValidationSchema>(schema: S): ValidationObjectSchema<S> {
+    let customMessages: MessageOverrides = {};
+
     const validate = async (data: unknown): Promise<InferOutput<S>> => {
-      if (!isObjectInput(data)) {
-        throw objectInputError();
-      }
-      return await Validator.make(data, schema).validate();
+      return await Validator.make(data, schema).messages(customMessages).validate();
     };
 
     const safeParse = async (data: unknown): Promise<SchemaSafeParseResult<InferOutput<S>>> => {
@@ -264,6 +330,10 @@ export class Validator<S extends ValidationSchema> {
 
     return {
       entries: schema,
+      messages(overrides: MessageOverrides) {
+        customMessages = { ...customMessages, ...overrides };
+        return this;
+      },
       async parse(data: unknown) {
         return await validate(data);
       },
@@ -314,9 +384,6 @@ export class Validator<S extends ValidationSchema> {
     }
     if (isValidationObjectSchema(schema)) {
       return await schema.parse(data);
-    }
-    if (!isObjectInput(data)) {
-      throw objectInputError();
     }
     return await Validator.make(data, schema as ValidationSchema, connection).validate();
   }
@@ -397,17 +464,18 @@ export class Validator<S extends ValidationSchema> {
   private async run(): Promise<void> {
     if (this.ran) return;
     this.ran = true;
+    const data = await normalizeObjectInput(this.rawData);
 
     for (const pattern of Object.keys(this.schema)) {
       const builder = this.schema[pattern] as RuleBuilder<any, any>;
-      const attributes = wildcardValues(this.data, pattern);
+      const attributes = wildcardValues(data, pattern);
       for (const field of attributes) {
-      const ctx = makeContext(field, pattern, this.data, this.explicitConnection);
+        const ctx = makeContext(field, pattern, data, this.explicitConnection);
 
-      let value = getPath(this.data, field);
-      let excluded = false;
-      const wasSupplied = hasPath(this.data, field);
-      const shouldValidateMissing = builder.specs.some((ruleObj) => IMPLICIT_RULES.has(ruleObj.name));
+        let value = getPath(data, field);
+        let excluded = false;
+        const wasSupplied = hasPath(data, field);
+        const shouldValidateMissing = builder.specs.some((ruleObj) => IMPLICIT_RULES.has(ruleObj.name));
 
       if (!wasSupplied && !shouldValidateMissing) {
         continue;
@@ -450,9 +518,9 @@ export class Validator<S extends ValidationSchema> {
       // Include the (possibly coerced/defaulted) value when the field passed
       // and either was supplied in the input or produced by a default/coerce.
       const hadError = !!this.bag[field];
-      if (!excluded && !hadError && (wasSupplied || value !== undefined)) {
-        setPath(this.output, field, value);
-      }
+        if (!excluded && !hadError && (wasSupplied || value !== undefined)) {
+          setPath(this.output, field, value);
+        }
       }
     }
   }

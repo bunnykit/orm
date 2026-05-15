@@ -69,6 +69,8 @@ validator.stopOnFirstFailure(); // stop after the first failed field
 validator.collectAllErrors();   // collect every failed rule per field
 ```
 
+The instance/object schema path accepts plain objects, `FormData`, `URLSearchParams`, and `Request` bodies. `Request` values are parsed as JSON when the content type is JSON, otherwise as form data.
+
 Root schema:
 
 ```ts
@@ -98,8 +100,21 @@ if (!result.success) {
 }
 ```
 
-`Validator.schema(...)` returns a Standard Schema-compatible object with `~standard`, plus `parse()` / `validate()` / `safeParse()` methods. `parse()` returns raw validated output. `validate()` and `safeParse()` return the Valibot-style `{ success, output, issues }` result, which is convenient for SvelteKit wrappers and other Standard Schema consumers.
+`Validator.schema(...)` returns a Standard Schema-compatible object with `~standard`, plus `parse()` / `validate()` / `safeParse()` / `messages()` methods. `parse()` returns raw validated output. `validate()` and `safeParse()` return the Valibot-style `{ success, output, issues }` result, which is convenient for SvelteKit wrappers and other Standard Schema consumers.
 `Validator.validate(...)` and `schema.validate(...)` are aliases of `safeParse()`.
+
+Like the instance validator, `Validator.schema(...)` accepts plain objects, `FormData`, `URLSearchParams`, and `Request` inputs.
+
+Schema-level `messages()` works the same way as the instance validator:
+
+```ts
+const schema = Validator.schema({
+  name: rule().required().string(),
+}).messages({
+  name: "Name is required.",
+  "name.required": "Name is required.",
+});
+```
 
 ## SvelteKit Integration
 
@@ -144,6 +159,63 @@ export const updateBranch = form(
   },
 );
 ```
+
+SvelteKit `actions` example:
+
+```ts
+import * as db from "$lib/server/db";
+import { fail, type Actions, type PageServerLoad } from "@sveltejs/kit";
+import { Validator, rule } from "@bunnykit/orm";
+
+const loginSchema = Validator.schema({
+  email: rule().required().string().email(),
+  password: rule().required().string().min(8),
+});
+
+const profileSchema = Validator.schema({
+  id: rule().required().string(),
+  display_name: rule().required().string().min(2),
+  email: rule().required().string().email().unique("users", "email").ignoreField("id"),
+});
+
+export const load: PageServerLoad = async ({ cookies }) => {
+  const user = await db.getUserFromSession(cookies.get("sessionid"));
+  return { user };
+};
+
+export const actions = {
+  login: async ({ cookies, request }) => {
+    const result = await loginSchema.safeParse(await request.formData());
+    if (!result.success) {
+      return fail(400, { errors: result.issues });
+    }
+
+    const user = await db.getUser(result.output.email);
+    if (!user) {
+      return fail(401, { errors: { email: [{ message: "Invalid credentials." }] } });
+    }
+
+    cookies.set("sessionid", await db.createSession(user), { path: "/" });
+    return { success: true };
+  },
+
+  updateProfile: async ({ request }) => {
+    const result = await profileSchema.safeParse(await request.formData());
+    if (!result.success) {
+      return fail(400, { errors: result.issues });
+    }
+
+    await db.updateUser(result.output.id, {
+      display_name: result.output.display_name,
+      email: result.output.email,
+    });
+
+    return { success: true };
+  },
+} satisfies Actions;
+```
+
+In SvelteKit actions, `safeParse()` is the most direct fit because it gives you a success flag plus collected issues without throwing. Use `parse()` when you want the validated payload and are happy to let failures throw.
 
 To inspect errors without throwing, keep the validator instance and call `fails()` / `errors()`:
 
