@@ -62,7 +62,7 @@ export async function discoverModelDeclarations(root: string, outDir: string, ex
   const files = await walkFiles(resolvedRoot, exclude);
   for (const file of files.sort()) {
     try {
-      const mod = await import(pathToFileURL(file).href);
+      const mod = await import(/* @vite-ignore */ pathToFileURL(file).href);
       const relativePath = relative(resolve(process.cwd(), outDir), file).replace(/\.[^/.]+$/, "");
       const relativeToRoot = relative(resolvedRoot, file).replace(/\.[^/.]+$/, "");
 
@@ -98,7 +98,7 @@ export async function discoverModelTables(roots: string[], exclude?: string[]): 
     const files = await walkFiles(resolvedRoot, exclude);
     for (const file of files.sort()) {
       try {
-        const mod = await import(pathToFileURL(file).href);
+        const mod = await import(/* @vite-ignore */ pathToFileURL(file).href);
         for (const [, exported] of Object.entries(mod)) {
           if (isModelSubclass(exported)) {
             const table = (exported as any).table || snakeCase((exported as any).name) + "s";

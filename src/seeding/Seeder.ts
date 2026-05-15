@@ -96,7 +96,7 @@ export class SeederRunner {
     const seeders: SeederClass[] = [];
     for (const file of files) {
       const resolved = resolve(file);
-      const module = await import(pathToFileURL(resolved).href);
+      const module = await import(/* @vite-ignore */ pathToFileURL(resolved).href);
       const SeederClass = module.default || Object.values(module)[0];
       if (!SeederClass) {
         throw new Error(`Seeder ${file} does not export a class.`);
@@ -108,7 +108,7 @@ export class SeederRunner {
 
   async runFile(file: string): Promise<void> {
     const resolved = resolve(file);
-    const module = await import(pathToFileURL(resolved).href);
+    const module = await import(/* @vite-ignore */ pathToFileURL(resolved).href);
     const SeederClass = module.default || Object.values(module)[0];
     if (!SeederClass) {
       throw new Error(`Seeder ${file} does not export a class.`);

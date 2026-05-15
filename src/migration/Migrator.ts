@@ -650,7 +650,7 @@ export class Migrator {
       throw new Error(`Migration ${file} is ambiguous across multiple migration paths.`);
     }
 
-    const module = await import(matches[0]);
+    const module = await import(/* @vite-ignore */ matches[0]);
     const MigrationClass = module.default || Object.values(module)[0];
     if (!MigrationClass) {
       throw new Error(`Migration ${file} does not export a class.`);

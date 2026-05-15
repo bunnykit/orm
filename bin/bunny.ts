@@ -166,6 +166,22 @@ function createMigrationOptions(config: BunnyConfig) {
   };
 }
 
+function buildMigrator(
+  config: BunnyConfig,
+  connection: Connection,
+  path: string | string[],
+  scope: "landlord" | "tenant",
+  extraOptions: Record<string, any> = {}
+): Migrator {
+  return new Migrator(
+    connection,
+    path,
+    config.typesOutDir,
+    createTypeGeneratorOptions(config, getModelPaths(config)[scope]),
+    { ...createMigrationOptions(config), ...extraOptions }
+  );
+}
+
 async function runMigratorCommand(
   command: MigrationCommand,
   migrator: Migrator,
@@ -219,10 +235,13 @@ async function runTenantMigrator(
       throw new Error(`Tenant "${tenantId}" did not resolve to an active context.`);
     }
     console.log(`Tenant: ${tenantId}`);
-    const migrator = new Migrator(context.connection, connectionPath, typesOutDir, createTypeGeneratorOptions(config, getModelPaths(config).tenant), {
-      tenantId,
-      ...createMigrationOptions(config),
-    });
+    const migrator = buildMigrator(
+      typesOutDir ? { ...config, typesOutDir } : config,
+      context.connection,
+      connectionPath,
+      "tenant",
+      { tenantId }
+    );
     await runMigratorCommand(command, migrator);
   });
 }
@@ -306,7 +325,7 @@ async function runConfiguredMigrationCommand(
       }
       return;
     }
-    const migrator = new Migrator(connection, defaultPath, config.typesOutDir, createTypeGeneratorOptions(config, getModelPaths(config).landlord));
+    const migrator = buildMigrator(config, connection, defaultPath, "landlord");
     await runMigratorCommand(command, migrator);
     return;
   }
@@ -316,7 +335,7 @@ async function runConfiguredMigrationCommand(
   const runLandlord = async () => {
     if (!landlordPath) return;
     console.log("Landlord migrations");
-    const migrator = new Migrator(connection, landlordPath, config.typesOutDir, createTypeGeneratorOptions(config, getModelPaths(config).landlord), createMigrationOptions(config));
+    const migrator = buildMigrator(config, connection, landlordPath, "landlord");
     await runMigratorCommand(command, migrator);
   };
   const runAllTenants = async () => {
@@ -380,6 +399,7 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
       Collection,
       Connection,
       ConnectionManager,
+      DB,
       Grammar,
       HasMany,
       HasManyThrough,
@@ -505,6 +525,7 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
       Builder,
       Collection,
       ConnectionManager,
+      DB,
       Blueprint,
       Grammar,
       SQLiteGrammar,
@@ -563,7 +584,10 @@ async function runRepl(config: BunnyConfig, replArgs: string[]): Promise<number>
       cols: process.stdout.columns || 80,
       rows: process.stdout.rows || 24,
       data(_terminal, data) {
-        process.stdout.write(data);
+        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        const text = buf.toString("binary");
+        const rewritten = text.replace(/\x1b\[2K> /g, "\x1b[2Kbunny> ");
+        process.stdout.write(Buffer.from(rewritten, "binary"));
       },
     },
   });
@@ -803,7 +827,7 @@ async function main() {
   try {
     if (command === "schema:dump" || command === "schema:squash") {
       const outputPath = args[1] || "./database/schema.sql";
-      const migrator = new Migrator(connection, getDefaultMigrationsPath(config), config.typesOutDir, createTypeGeneratorOptions(config, getModelPaths(config).landlord), createMigrationOptions(config));
+      const migrator = buildMigrator(config, connection, getDefaultMigrationsPath(config), "landlord");
       if (command === "schema:dump") {
         await migrator.dumpSchema(outputPath);
         console.log(`Schema dumped to ${outputPath}`);

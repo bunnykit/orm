@@ -175,6 +175,62 @@ import { configureBunny } from "@bunnykit/orm";
 const { connection } = configureBunny(config);
 ```
 
+### Programmatic Migrations and Seeders
+
+`configureBunny()` returns helpers that run migrations and seeders using the paths already defined in your config — no need to wire up `Migrator` or `SeederRunner` manually.
+
+```ts
+import config from "../bunny.config";
+import { configureBunny, DB } from "@bunnykit/orm";
+
+const bunny = configureBunny(config);
+
+// One-liners
+await bunny.migrate();                                     // landlord migrations
+await bunny.migrate("tenant");                             // tenant migrations
+await bunny.migrate("landlord", { createIfMissing: true }); // override options
+await bunny.rollback(2);                                   // rollback N batches
+await bunny.fresh();                                       // drop all + re-run
+await bunny.seed();                                        // run config.seedersPath
+
+// Or grab the underlying instance for the full API
+const migrator = bunny.migrator("tenant");
+await migrator.status();
+await migrator.refresh();
+
+const seeder = bunny.seeder();
+await seeder.runFile("./database/seeders/UserSeeder.ts");
+```
+
+### Auto-create database and schema
+
+Set `migrations.createIfMissing` in your config (or pass per call) so the migrator provisions a missing database or schema before running:
+
+```ts
+// bunny.config.ts
+export default {
+  connection: { url: process.env.DATABASE_URL! },
+  migrations: {
+    landlord: "./database/migrations",
+    tenant: "./database/tenant-migrations",
+    createIfMissing: { database: true, schema: true },
+  },
+};
+```
+
+- **Postgres** — connects to the `postgres` admin DB to `CREATE DATABASE`; creates schemas via `CREATE SCHEMA IF NOT EXISTS`.
+- **MySQL** — `CREATE DATABASE IF NOT EXISTS` via the `mysql` admin DB. No schemas.
+- **SQLite** — skipped (the file is created on open).
+
+Inside `DB.tenant()`, the facade picks up the tenant's qualified connection automatically, so a missing tenant schema is created before tenant migrations run:
+
+```ts
+await DB.tenant("acme", () => bunny.migrate("tenant"));
+// → creates schema "tenant_acme" if absent, then runs tenant migrations under it
+```
+
+This is idempotent — existing databases or schemas are left alone.
+
 ### Dynamic Tenant Connections
 
 Use `ConnectionManager` and `TenantContext` when tenants are discovered at runtime instead of listed in config:
