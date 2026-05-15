@@ -483,29 +483,104 @@ Every model exposes a chainable query builder via static methods.
 
 ### Standalone (without a Model)
 
-Use `Builder` directly when you need raw table access — ad-hoc queries, pivot tables, reporting views, or tables that don't warrant a model.
+Use the `DB` facade for raw table access — ad-hoc queries, pivot tables, reporting views, or tables that don't warrant a model.
 
 ```ts
-import { Builder, Connection } from "@bunnykit/orm";
+import { DB } from "@bunnykit/orm";
 
-const conn = Connection.getDefault();
-
-const rows = await new Builder(conn, "users")
+const rows = await DB.table("users")
   .where("active", true)
   .orderBy("created_at", "desc")
   .select("id", "name", "email")
   .get(); // Record<string, any>[]
 
-const count = await new Builder(conn, "audit_logs")
-  .where("event", "login")
-  .count();
+const count = await DB.table("audit_logs").where("event", "login").count();
 
-await new Builder(conn, "settings")
-  .where("key", "theme")
-  .update({ value: "dark" });
+await DB.table("settings").where("key", "theme").update({ value: "dark" });
+
+// Raw SQL
+const rows = await DB.raw("SELECT * FROM users WHERE id = ?", [1]);
 ```
 
-No model class required. Returns plain row objects. All chainable helpers (`where`, `join`, `groupBy`, `having`, `limit`, `offset`, etc.) available.
+#### Typed columns (intellisense)
+
+Pass a row-shape generic to get column autocomplete on `where`, `select`, `update`, and typed result rows:
+
+```ts
+interface UserRow {
+  id: number;
+  name: string;
+  email: string;
+  active: boolean;
+}
+
+const rows = await DB.table<UserRow>("users")
+  .where("active", true)    // "active" autocompletes
+  .select("id", "name")     // column names autocomplete
+  .get();                   // rows: UserRow[]
+
+// Reuse model attribute interfaces
+import type { UserAttributes } from "./models/user";
+await DB.table<UserAttributes>("users").where("email", "a@b.com").first();
+
+// Typed raw SQL
+const stats = await DB.raw<{ total: number }>("SELECT COUNT(*) as total FROM users");
+stats[0].total; // number
+```
+
+Untyped fallback still works — omit the generic for `Record<string, any>` rows.
+
+#### Named connections
+
+```ts
+import { Connection, ConnectionManager } from "@bunnykit/orm";
+
+ConnectionManager.add("analytics", new Connection({ url: "postgres://analytics-db" }));
+
+await DB.connection("analytics").table("events").where("type", "view").count();
+```
+
+#### Multi-tenant scope
+
+`DB.tenant()` wraps `TenantContext.run` — all queries inside (both Models and `DB.table()`) resolve against the tenant's connection/schema.
+
+```ts
+await DB.tenant("acme", async () => {
+  const users = await User.all();                         // tenant_acme scope
+  const orders = await DB.table("orders").get();          // tenant_acme scope
+  await DB.table("audit_logs").insert({ event: "login" }); // tenant_acme scope
+});
+```
+
+Works with all three tenancy strategies (database-per-tenant, schema-per-tenant, RLS) configured via `ConnectionManager.setTenantResolver()`.
+
+**Context switching.** Tenant scope is tracked with `AsyncLocalStorage`, so it propagates across `await` boundaries and behaves predictably under nesting and concurrency:
+
+```ts
+import { TenantContext } from "@bunnykit/orm";
+
+// Nested contexts override the outer scope and restore on unwind.
+await DB.tenant("acme", async () => {
+  TenantContext.current()?.tenantId; // "acme"
+
+  await DB.tenant("globex", async () => {
+    TenantContext.current()?.tenantId; // "globex"
+  });
+
+  TenantContext.current()?.tenantId; // "acme" — restored
+});
+
+TenantContext.current(); // undefined — fully unwound
+
+// Parallel tenants do not bleed into one another.
+await Promise.all([
+  DB.tenant("a", async () => User.all()),
+  DB.tenant("b", async () => User.all()),
+  DB.tenant("c", async () => User.all()),
+]);
+```
+
+Each concurrent `DB.tenant()` runs in its own async storage frame — queries inside resolve against that tenant only, even when interleaved.
 
 ### Basic Queries
 
