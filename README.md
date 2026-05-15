@@ -131,6 +131,7 @@ See the [Quickstart guide](./docs/quickstart.md) for the full walkthrough.
 | [Collections](./docs/collections.md) | `map`, `filter`, `groupBy`, and other helpers returned by `get()`. |
 | [Models](./docs/models.md) | Defining models, casts, accessors, soft deletes, persistence. |
 | [Relationships](./docs/relationships.md) | `hasMany`, `belongsTo`, `belongsToMany`, polymorphic, eager loading. |
+| [Validation](./docs/validation.md) | Typed Laravel-style validator with fluent rules and tenant-aware database checks. |
 
 ### TypeScript
 

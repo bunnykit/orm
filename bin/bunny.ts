@@ -422,8 +422,12 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
       TypeGenerator,
       TypeMapper,
       Model,
+      RuleBuilder,
+      ValidationError,
+      Validator,
       collect,
-      configureBunny
+      configureBunny,
+      rule
     } from "@bunnykit/orm";
     import { existsSync } from "fs";
     import { readdir } from "fs/promises";
@@ -549,6 +553,10 @@ async function createReplBootstrap(config: BunnyConfig): Promise<string> {
       MigrationCreator,
       TypeGenerator,
       TypeMapper,
+      RuleBuilder,
+      Validator,
+      ValidationError,
+      rule,
       Schema,
       TenantContext,
       collect,

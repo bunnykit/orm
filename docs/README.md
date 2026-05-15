@@ -29,6 +29,7 @@ If you are new here, start with [Installation](./installation.md), then walk thr
 | [Collections](./collections.md) | `map`, `filter`, `groupBy`, `keyBy`, and other helpers returned by `get()`. |
 | [Models](./models.md) | Defining models, casts, accessors / mutators, soft deletes, persistence, JSON serialization. |
 | [Relationships](./relationships.md) | `hasMany`, `belongsTo`, `belongsToMany`, polymorphic relations, eager loading, pivot helpers. |
+| [Validation](./validation.md) | Typed Laravel-style validator, fluent rules, transforms, and tenant-aware `unique` / `exists`. |
 
 ## TypeScript
 

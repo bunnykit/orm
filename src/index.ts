@@ -61,3 +61,6 @@ export type { ModelDeclarationInfo } from "./typegen/discoverModelTables.js";
 export { Seeder, SeederRunner } from "./seeding/Seeder.js";
 export { Factory, factory } from "./seeding/Factory.js";
 export type { FactoryDefinition, FactoryState } from "./seeding/Factory.js";
+
+export { rule, RuleBuilder, Validator, ValidationError } from "./validation/index.js";
+export type { ValidationSchema, InferOutput, RuleContract, ValidationContext, ErrorBag, RuleResult } from "./validation/index.js";
