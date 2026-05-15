@@ -25,7 +25,7 @@ await Validator.make({}, {
 }).passes();
 ```
 
-`validate()` returns the coerced, typed output or throws `ValidationError` with an error bag:
+`Validator.make(...).validate()` returns the coerced, typed output or throws `ValidationError` with an error bag:
 
 ```ts
 try {
@@ -41,17 +41,108 @@ try {
 
 ## API
 
+There are two validation shapes:
+
+```ts
+// instance validator for object payloads
+const validator = Validator.make(data, schema);
+
+// Standard Schema-style object or root schema
+const schema = Validator.schema({...});
+const root = Validator.required().string();
+```
+
+Instance validator:
+
 ```ts
 const validator = Validator.make(data, schema);
 
 await validator.validate();  // throws ValidationError on failure
 await validator.validated(); // alias
+await validator.parse();      // alias of validate()
+await validator.safeParse();  // { success, output? , issues? }
 await validator.passes();    // boolean
 await validator.fails();     // boolean
 await validator.errors();    // Record<string, string[]>
 
 validator.stopOnFirstFailure(); // stop after the first failed field
 validator.collectAllErrors();   // collect every failed rule per field
+```
+
+Root schema:
+
+```ts
+const username = await Validator.parse(Validator.required().string().min(3), input);
+
+const result = await Validator.safeParse(Validator.required().string().min(3), input);
+if (!result.success) {
+  console.log(result.issues.value);
+}
+```
+
+`Validator.required()` starts a root schema with presence required. `Validator.rule()` starts the same builder without pre-applying `required()`.
+
+Standard Schema object schema:
+
+```ts
+const schema = Validator.schema({
+  name: rule().required().string(),
+  role: rule().in(["admin", "member"] as const).default("member"),
+});
+
+const validated = await Validator.parse(schema, { name: "Ada" }); // raw output
+
+const result = await schema.safeParse({ name: "Ada" }); // { success, output?, issues? }
+if (!result.success) {
+  console.log(result.issues);
+}
+```
+
+`Validator.schema(...)` returns a Standard Schema-compatible object with `~standard`, plus `parse()` / `validate()` / `safeParse()` methods. `parse()` returns raw validated output. `validate()` and `safeParse()` return the Valibot-style `{ success, output, issues }` result, which is convenient for SvelteKit wrappers and other Standard Schema consumers.
+`Validator.validate(...)` and `schema.validate(...)` are aliases of `safeParse()`.
+
+## SvelteKit Integration
+
+Use the root schema helpers for single-argument `command()` / `query()` handlers, and `Validator.schema(...)` for `form()` handlers:
+
+```ts
+import { command, query, form } from "$app/server";
+import { Validator, rule } from "@bunnykit/orm";
+
+export const updateLikes = command(Validator.required().string(), async (id) => {
+  // id: string
+});
+
+export const getBranch = query(Validator.required().string(), async (id) => {
+  // id: string
+});
+
+export const createBranch = form(
+  Validator.schema({
+    name: rule().required().string(),
+    code: rule().required().string().unique("branches"),
+    is_active: rule().boolean(),
+  }),
+  async (data, issue) => {
+    // data is validated and typed
+    // issue is SvelteKit's form issue helper
+  },
+);
+```
+
+For update forms, read the current id from the payload and use `ignoreField()`:
+
+```ts
+export const updateBranch = form(
+  Validator.schema({
+    id: rule().required().string(),
+    name: rule().required().string(),
+    code: rule().required().string().unique("branches").ignoreField("id"),
+  }),
+  async (data) => {
+    // code uniqueness ignores the id field from the same payload
+  },
+);
 ```
 
 To inspect errors without throwing, keep the validator instance and call `fails()` / `errors()`:
@@ -428,6 +519,7 @@ Database-aware rules:
 ```ts
 rule().unique("users", "email")
 rule().unique("users", "email").ignore(user.id)
+rule().unique("users", "email").ignoreField("id")
 rule().unique("users", "email").ignore(user.uuid, "uuid")
 rule().exists("roles", "id")
 rule().unique("users", "email").where("tenant_id", tenantId)
@@ -445,12 +537,14 @@ await Validator.make(input, {
     .required()
     .email()
     .unique("users", "email")
-    .ignore(user.id)
+    .ignoreField("id")
     .where("tenant_id", tenantId)
     .withoutTrashed(),
   role_id: rule().exists("roles", "id").whereNull("deleted_at"),
 }).validate();
 ```
+
+Use `ignore(id)` when the current row id is already available in scope. Use `ignoreField("id")` when the ignore value should come from another field in the same input payload, which is common for update forms.
 
 Transforms:
 

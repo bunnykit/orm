@@ -1197,6 +1197,7 @@ export class UniqueRule implements RuleContract {
   name = "unique";
   private wheres: Array<{ column: string; op: "=" | "<>" | "IS NULL" | "IS NOT NULL"; value?: unknown }> = [];
   private ignoreId?: unknown;
+  private ignoreFieldName?: string;
   private ignoreColumn = "id";
 
   constructor(
@@ -1230,6 +1231,12 @@ export class UniqueRule implements RuleContract {
     return this;
   }
 
+  ignoreField(field: string, column = "id"): this {
+    this.ignoreFieldName = field;
+    this.ignoreColumn = column;
+    return this;
+  }
+
   withoutTrashed(column = "deleted_at"): this {
     return this.whereNull(column);
   }
@@ -1244,9 +1251,10 @@ export class UniqueRule implements RuleContract {
       `SELECT 1 FROM ${quoteQualified(conn, table)} ` +
       `WHERE ${conn.quoteIdentifier(col)} = ${g.placeholder(1)}`;
     const bindings: unknown[] = [v];
-    if (this.ignoreId !== undefined) {
+    const ignoreId = this.ignoreFieldName ? c.get(this.ignoreFieldName) : this.ignoreId;
+    if (ignoreId !== undefined) {
       sql += ` AND ${conn.quoteIdentifier(this.ignoreColumn)} <> ${g.placeholder(2)}`;
-      bindings.push(this.ignoreId);
+      bindings.push(ignoreId);
     }
     for (const where of this.wheres) {
       if (where.op === "IS NULL" || where.op === "IS NOT NULL") {

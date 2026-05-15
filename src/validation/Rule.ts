@@ -1,4 +1,7 @@
 import type { RuleContract } from "./types.js";
+import { Connection } from "../connection/Connection.js";
+import { ConnectionManager } from "../connection/ConnectionManager.js";
+import { TenantContext } from "../connection/TenantContext.js";
 import {
   RequiredRule,
   NullableRule,
@@ -111,6 +114,79 @@ type Defaulted<TValue, TDefault> = unknown extends TValue
   ? TDefault
   : Exclude<TValue, undefined>;
 
+export interface StandardSchemaIssue {
+  message: string;
+  path?: readonly { key: PropertyKey }[];
+}
+
+export interface StandardSchemaResult<T> {
+  value: T;
+  issues?: undefined;
+}
+
+export interface StandardSchemaFailure {
+  issues: readonly StandardSchemaIssue[];
+}
+
+export interface StandardSchemaV1<Input = unknown, Output = Input> {
+  readonly "~standard": {
+    readonly version: 1;
+    readonly vendor: string;
+    readonly types?: {
+      readonly input: Input;
+      readonly output: Output;
+    };
+    validate(value: unknown): Promise<StandardSchemaResult<Output> | StandardSchemaFailure> | StandardSchemaResult<Output> | StandardSchemaFailure;
+  };
+}
+
+function resolveConnection(explicit?: Connection): Connection {
+  if (explicit) return explicit;
+  const tenant = TenantContext.current()?.connection;
+  if (tenant) return tenant;
+  const def = ConnectionManager.getDefault();
+  if (!def) {
+    throw new Error(
+      "No connection available for validation. Pass one to Validator.make(data, schema, connection) or set a default.",
+    );
+  }
+  return def;
+}
+
+function isAbsent(v: unknown): boolean {
+  return v === undefined || v === null || v === "";
+}
+
+const ROOT_IMPLICIT_RULES = new Set([
+  "accepted",
+  "accepted_if",
+  "default",
+  "declined",
+  "declined_if",
+  "filled",
+  "missing",
+  "missing_if",
+  "missing_unless",
+  "missing_with",
+  "missing_with_all",
+  "present",
+  "present_if",
+  "present_unless",
+  "present_with",
+  "present_with_all",
+  "prohibited",
+  "prohibited_if",
+  "prohibited_unless",
+  "prohibits",
+  "required",
+  "required_if",
+  "required_unless",
+  "required_with",
+  "required_with_all",
+  "required_without",
+  "required_without_all",
+]);
+
 /**
  * Fluent rule builder. The two type parameters thread the eventual output
  * type (`TValue`) and whether the field is optional (`TPresence`) so the
@@ -128,6 +204,71 @@ export class RuleBuilder<TValue = unknown, TPresence extends Presence = "require
   private push(rule: RuleContract): this {
     this.specs.push(rule);
     return this;
+  }
+
+  private async validateRootValue(input: unknown): Promise<StandardSchemaResult<TValue> | StandardSchemaFailure> {
+    let value = input;
+    const absent = isAbsent(value);
+    const shouldValidateMissing = this.specs.some((ruleObj) => ROOT_IMPLICIT_RULES.has(ruleObj.name));
+
+    if (absent && !shouldValidateMissing) {
+      return { value: value as TValue };
+    }
+
+    const ctx = {
+      attribute: "value",
+      pattern: "value",
+      data: { value },
+      get: (path: string) => (path === "value" ? value : undefined),
+      has: (path: string) => path === "value" && !isAbsent(value),
+    } as any;
+
+    Object.defineProperty(ctx, "connection", {
+      enumerable: true,
+      get: () => resolveConnection(),
+    });
+
+    const issues: StandardSchemaIssue[] = [];
+
+    for (const ruleObj of this.specs) {
+      if (ruleObj.name === "default" && ruleObj.coerce) {
+        value = ruleObj.coerce(value);
+      }
+    }
+
+    for (const ruleObj of this.specs) {
+      if (ruleObj.name === "default") continue;
+      if (ruleObj.coerce) {
+        value = ruleObj.coerce(value);
+      }
+      const result = await ruleObj.validate(value, ctx);
+      const pass = typeof result === "boolean" ? result : result.pass;
+      const skip = typeof result === "boolean" ? false : !!result.skip;
+      const exclude = typeof result === "boolean" ? false : !!result.exclude;
+
+      if (exclude) {
+        return { value: undefined as TValue };
+      }
+      if (!pass) {
+        issues.push({ message: ruleObj.message(ctx) });
+      }
+      if (skip) {
+        break;
+      }
+    }
+
+    if (issues.length > 0) {
+      return { issues };
+    }
+    return { value: value as TValue };
+  }
+
+  get "~standard"(): StandardSchemaV1<unknown, TValue>["~standard"] {
+    return {
+      version: 1,
+      vendor: "bunnykit",
+      validate: (value: unknown) => this.validateRootValue(value),
+    };
   }
 
   private last<T extends Record<string, unknown>>(method: keyof T): T | undefined {
@@ -483,6 +624,10 @@ export class RuleBuilder<TValue = unknown, TPresence extends Presence = "require
   }
   ignore(id: unknown, column?: string): this {
     this.last<any>("ignore")?.ignore(id, column);
+    return this;
+  }
+  ignoreField(field: string, column?: string): this {
+    this.last<any>("ignoreField")?.ignoreField(field, column);
     return this;
   }
   withoutTrashed(column?: string): this {

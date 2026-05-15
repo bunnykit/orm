@@ -371,6 +371,74 @@ describe("Validator — sync rules", () => {
     expect(errs.count[0]).toBe("The count field must be even.");
   });
 
+  test("Validator.parse and safeParse support root values and objects", async () => {
+    const rootSchema = Validator.required().string().min(3);
+    const standardSchema: { "~standard": { validate: (value: unknown) => unknown } } = rootSchema;
+    expect(standardSchema).toBeDefined();
+    const ok = await Validator.safeParse(rootSchema, "abc");
+    expect(ok.success).toBe(true);
+    if (ok.success) {
+      expect(ok.output).toBe("abc");
+    }
+
+    const bad = await Validator.safeParse(rootSchema, "");
+    expect(bad.success).toBe(false);
+    if (!bad.success) {
+      expect(bad.issues.value[0]).toContain("required");
+    }
+
+    const objectSchema = {
+      email: rule().required().email(),
+      role: rule().in(["admin", "member"] as const).default("member"),
+    };
+    const objectOk = await Validator.parse(objectSchema, { email: "a@b.com" });
+    expect(objectOk.role).toBe("member");
+  });
+
+  test("Validator.schema returns a Standard Schema-compatible object schema", async () => {
+    const schema = Validator.schema({
+      name: rule().required().string(),
+      role: rule().in(["admin", "member"] as const).default("member"),
+    });
+
+    const standardSchema: { "~standard": { validate: (value: unknown) => unknown } } = schema;
+    expect(standardSchema).toBeDefined();
+
+    const parsed = await Validator.parse(schema, { name: "Ada" });
+    expectType<string>(parsed.name);
+    expect(parsed.role).toBe("member");
+
+    const ok = await schema.safeParse({ name: "Ada" });
+    expect(ok.success).toBe(true);
+    if (ok.success) {
+      expect(ok.output.role).toBe("member");
+    }
+
+    const bad = await schema.safeParse({});
+    expect(bad.success).toBe(false);
+    if (!bad.success) {
+      expect(bad.issues[0].message).toContain("required");
+    }
+  });
+
+  test("Validator.validate and schema.validate alias safeParse", async () => {
+    const schema = Validator.schema({
+      name: rule().required().string(),
+    });
+
+    const ok = await Validator.validate(schema, { name: "Ada" });
+    expect(ok.success).toBe(true);
+    if (ok.success) {
+      expect(ok.output.name).toBe("Ada");
+    }
+
+    const bad = await schema.validate({});
+    expect(bad.success).toBe(false);
+    if (!bad.success) {
+      expect(bad.issues[0].message).toContain("required");
+    }
+  });
+
   test("infers validated output types", async () => {
     const validated = await Validator.make(
       { email: "a@b.com", age: "18", password: "password", password_confirmation: "password" },
@@ -540,6 +608,19 @@ describe("Validator — DB-aware async rules", () => {
       await Validator.make(
         { email: "taken@example.com" },
         { email: rule().unique("val_users", "email").ignore(row.id).where("name", "Existing") },
+      ).passes(),
+    ).toBe(true);
+  });
+
+  test("unique ignoreField resolves from another input field", async () => {
+    const row = (await DB.table("val_users").where("email", "taken@example.com").first())!;
+    expect(
+      await Validator.make(
+        { id: row.id, email: "taken@example.com" },
+        {
+          id: rule().required().integer(),
+          email: rule().unique("val_users", "email").ignoreField("id"),
+        },
       ).passes(),
     ).toBe(true);
   });

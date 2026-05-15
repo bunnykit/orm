@@ -1,7 +1,13 @@
 import type { Connection } from "../connection/Connection.js";
 import { ConnectionManager } from "../connection/ConnectionManager.js";
 import { TenantContext } from "../connection/TenantContext.js";
-import { RuleBuilder, type InferOutput, type ValidationSchema } from "./Rule.js";
+import {
+  RuleBuilder,
+  type InferOutput,
+  type StandardSchemaIssue,
+  type StandardSchemaV1,
+  type ValidationSchema,
+} from "./Rule.js";
 import { ValidationError } from "./ValidationError.js";
 import { resolveMessage, type MessageOverrides } from "./messages.js";
 import type { ErrorBag, ValidationContext } from "./types.js";
@@ -120,6 +126,63 @@ function makeContext(
   return context;
 }
 
+function isRuleBuilder(value: unknown): value is RuleBuilder<any, any> {
+  return value instanceof RuleBuilder;
+}
+
+function isValidationObjectSchema<S extends ValidationSchema>(
+  value: unknown,
+): value is ValidationObjectSchema<S> {
+  return !!value
+    && typeof value === "object"
+    && "entries" in value
+    && "~standard" in value
+    && typeof (value as ValidationObjectSchema<S>).parse === "function"
+    && typeof (value as ValidationObjectSchema<S>).safeParse === "function";
+}
+
+function toIssuePath(field: string): readonly { key: PropertyKey }[] | undefined {
+  const parts = field.split(".").filter(Boolean);
+  if (parts.length === 0) return undefined;
+  return parts.map((part) => ({ key: /^\d+$/.test(part) ? Number(part) : part }));
+}
+
+function bagToIssues(bag: ErrorBag): readonly StandardSchemaIssue[] {
+  const issues: StandardSchemaIssue[] = [];
+  for (const [field, messages] of Object.entries(bag)) {
+    const path = toIssuePath(field);
+    for (const message of messages) {
+      issues.push(path ? { message, path } : { message });
+    }
+  }
+  return issues;
+}
+
+function isObjectInput(value: unknown): value is Record<string, any> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function objectInputError(): ValidationError {
+  return new ValidationError({ "": ["The value must be an object."] });
+}
+
+type SafeParseResult<T> =
+  | { success: true; output: T }
+  | { success: false; issues: ErrorBag };
+
+type RootValue<B> = B extends RuleBuilder<infer V, any> ? V : never;
+type SchemaSafeParseResult<T> =
+  | { success: true; output: T }
+  | { success: false; issues: readonly StandardSchemaIssue[] };
+
+export interface ValidationObjectSchema<S extends ValidationSchema> {
+  readonly entries: S;
+  readonly "~standard": StandardSchemaV1<any, InferOutput<S>>["~standard"];
+  parse(data: unknown): Promise<InferOutput<S>>;
+  validate(data: unknown): Promise<SchemaSafeParseResult<InferOutput<S>>>;
+  safeParse(data: unknown): Promise<SchemaSafeParseResult<InferOutput<S>>>;
+}
+
 const IMPLICIT_RULES = new Set([
   "accepted",
   "accepted_if",
@@ -170,6 +233,149 @@ export class Validator<S extends ValidationSchema> {
     connection?: Connection,
   ): Validator<S> {
     return new Validator(data ?? {}, schema, connection);
+  }
+
+  static rule(): RuleBuilder {
+    return new RuleBuilder();
+  }
+
+  static required(): RuleBuilder {
+    return new RuleBuilder().required();
+  }
+
+  static schema<S extends ValidationSchema>(schema: S): ValidationObjectSchema<S> {
+    const validate = async (data: unknown): Promise<InferOutput<S>> => {
+      if (!isObjectInput(data)) {
+        throw objectInputError();
+      }
+      return await Validator.make(data, schema).validate();
+    };
+
+    const safeParse = async (data: unknown): Promise<SchemaSafeParseResult<InferOutput<S>>> => {
+      try {
+        return { success: true, output: await validate(data) };
+      } catch (error) {
+        if (error instanceof ValidationError) {
+          return { success: false, issues: bagToIssues(error.errors) };
+        }
+        throw error;
+      }
+    };
+
+    return {
+      entries: schema,
+      async parse(data: unknown) {
+        return await validate(data);
+      },
+      async validate(data: unknown) {
+        return await safeParse(data);
+      },
+      async safeParse(data: unknown) {
+        return await safeParse(data);
+      },
+      get "~standard"() {
+        return {
+          version: 1,
+          vendor: "bunnykit",
+          validate: async (value: unknown) => {
+            const result = await safeParse(value);
+            if (result.success) {
+              return { value: result.output };
+            }
+            return { issues: result.issues };
+          },
+        } as StandardSchemaV1<any, InferOutput<S>>["~standard"];
+      },
+    };
+  }
+
+  static async parse<S extends ValidationSchema>(
+    schema: S,
+    data: Record<string, any>,
+    connection?: Connection,
+  ): Promise<InferOutput<S>>;
+  static async parse<B extends RuleBuilder<any, any>>(
+    schema: B,
+    data: unknown,
+    connection?: Connection,
+  ): Promise<RootValue<B>>;
+  static async parse<S extends ValidationSchema>(
+    schema: ValidationObjectSchema<S>,
+    data: unknown,
+    connection?: Connection,
+  ): Promise<InferOutput<S>>;
+  static async parse(
+    schema: ValidationSchema | RuleBuilder<any, any> | ValidationObjectSchema<any>,
+    data: unknown,
+    connection?: Connection,
+  ): Promise<unknown> {
+    if (isRuleBuilder(schema)) {
+      return await Validator.make({ value: data }, { value: schema }, connection).validate().then((result) => result.value);
+    }
+    if (isValidationObjectSchema(schema)) {
+      return await schema.parse(data);
+    }
+    if (!isObjectInput(data)) {
+      throw objectInputError();
+    }
+    return await Validator.make(data, schema as ValidationSchema, connection).validate();
+  }
+
+  static async safeParse<S extends ValidationSchema>(
+    schema: S,
+    data: Record<string, any>,
+    connection?: Connection,
+  ): Promise<SafeParseResult<InferOutput<S>>>;
+  static async safeParse<B extends RuleBuilder<any, any>>(
+    schema: B,
+    data: unknown,
+    connection?: Connection,
+  ): Promise<SafeParseResult<RootValue<B>>>;
+  static async safeParse<S extends ValidationSchema>(
+    schema: ValidationObjectSchema<S>,
+    data: unknown,
+    connection?: Connection,
+  ): Promise<SchemaSafeParseResult<InferOutput<S>>>;
+  static async safeParse(
+    schema: ValidationSchema | RuleBuilder<any, any> | ValidationObjectSchema<any>,
+    data: unknown,
+    connection?: Connection,
+  ): Promise<SafeParseResult<unknown> | SchemaSafeParseResult<unknown>> {
+    if (isValidationObjectSchema(schema)) {
+      return await schema.safeParse(data);
+    }
+    try {
+      const output = await Validator.parse(schema as any, data as any, connection);
+      return { success: true, output };
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        return { success: false, issues: error.errors };
+      }
+      throw error;
+    }
+  }
+
+  static async validate<S extends ValidationSchema>(
+    schema: S,
+    data: Record<string, any>,
+    connection?: Connection,
+  ): Promise<SafeParseResult<InferOutput<S>>>;
+  static async validate<B extends RuleBuilder<any, any>>(
+    schema: B,
+    data: unknown,
+    connection?: Connection,
+  ): Promise<SafeParseResult<RootValue<B>>>;
+  static async validate<S extends ValidationSchema>(
+    schema: ValidationObjectSchema<S>,
+    data: unknown,
+    connection?: Connection,
+  ): Promise<SchemaSafeParseResult<InferOutput<S>>>;
+  static async validate(
+    schema: ValidationSchema | RuleBuilder<any, any> | ValidationObjectSchema<any>,
+    data: unknown,
+    connection?: Connection,
+  ): Promise<SafeParseResult<unknown> | SchemaSafeParseResult<unknown>> {
+    return await Validator.safeParse(schema as any, data as any, connection);
   }
 
   /** Override default messages, keyed by "field" or "field.rule". */
@@ -277,5 +483,20 @@ export class Validator<S extends ValidationSchema> {
   /** Alias of validate(). */
   validated(): Promise<InferOutput<S>> {
     return this.validate();
+  }
+
+  parse(): Promise<InferOutput<S>> {
+    return this.validate();
+  }
+
+  async safeParse(): Promise<SafeParseResult<InferOutput<S>>> {
+    try {
+      return { success: true, output: await this.validate() };
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        return { success: false, issues: error.errors };
+      }
+      throw error;
+    }
   }
 }
