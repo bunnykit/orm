@@ -11,6 +11,36 @@ describe("Validator — sync rules", () => {
     expect((await v.errors()).name?.[0]).toContain("required");
   });
 
+  test("fields are optional unless an implicit presence rule requires them", async () => {
+    expect(
+      await Validator.make(
+        {},
+        {
+          email: rule().email(),
+          age: rule().integer().min(18),
+        },
+      ).passes(),
+    ).toBe(true);
+
+    expect(
+      await Validator.make(
+        {},
+        {
+          email: rule().required().email(),
+        },
+      ).fails(),
+    ).toBe(true);
+
+    expect(
+      await Validator.make(
+        { type: "business" },
+        {
+          company: rule().requiredIf("type", "business").string(),
+        },
+      ).fails(),
+    ).toBe(true);
+  });
+
   test("passes and returns coerced output", async () => {
     const out = await Validator.make(
       { age: "42", name: "  Alice  " },
@@ -101,6 +131,34 @@ describe("Validator — sync rules", () => {
     expect(
       await Validator.make({ type: "personal", company: 123 }, schema).fails(),
     ).toBe(true);
+  });
+
+  test("conditional rules accept multiple expected values", async () => {
+    expect(
+      await Validator.make(
+        { type: "test2" },
+        { name: rule().requiredIf("type", ["test", "test2"]).string() },
+      ).fails(),
+    ).toBe(true);
+
+    expect(
+      await Validator.make(
+        { type: "draft" },
+        { name: rule().requiredUnless("type", ["draft", "archived"]).string() },
+      ).passes(),
+    ).toBe(true);
+
+    const out = await Validator.make(
+      { type: "private", debug: "remove" },
+      { debug: rule().excludeIf("type", ["private", "internal"]).string() },
+    ).validate();
+    expect("debug" in out).toBe(false);
+
+    const errs = await Validator.make(
+      { role: "member", admin: "nope" },
+      { admin: rule().prohibitedUnless("role", ["admin", "owner"]) },
+    ).errors();
+    expect(errs.admin).toBeDefined();
   });
 
   test("remaining type, size, and format rules", async () => {

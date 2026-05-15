@@ -13,6 +13,18 @@ const validated = await Validator.make(input, {
 }).validate();
 ```
 
+Fields are optional by default. Non-presence rules only run when the field is present:
+
+```ts
+await Validator.make({}, {
+  email: rule().email(), // passes when missing
+}).passes();
+
+await Validator.make({}, {
+  email: rule().required().email(), // fails when missing
+}).passes();
+```
+
 `validate()` returns the coerced, typed output or throws `ValidationError` with an error bag:
 
 ```ts
@@ -125,7 +137,9 @@ rule().required()
 rule().nullable()
 rule().sometimes()
 rule().requiredIf("type", "business")
+rule().requiredIf("type", ["test", "test2"])
 rule().requiredUnless("type", "personal")
+rule().requiredUnless("type", ["draft", "archived"])
 rule().requiredWith("email")
 rule().requiredWithAll("first", "last")
 rule().requiredWithout("email")
@@ -133,25 +147,35 @@ rule().requiredWithoutAll("email", "phone")
 rule().filled()
 rule().accepted()
 rule().acceptedIf("type", "terms")
+rule().acceptedIf("type", ["terms", "checkout"])
 rule().declined()
 rule().declinedIf("type", "opt_out")
+rule().declinedIf("type", ["opt_out", "unsubscribe"])
 rule().present()
 rule().presentIf("type", "business")
+rule().presentIf("type", ["business", "enterprise"])
 rule().presentUnless("type", "personal")
+rule().presentUnless("type", ["personal", "guest"])
 rule().presentWith("name")
 rule().presentWithAll("first", "last")
 rule().missing()
 rule().missingIf("type", "person")
+rule().missingIf("type", ["person", "guest"])
 rule().missingUnless("type", "admin")
+rule().missingUnless("type", ["admin", "owner"])
 rule().missingWith("token")
 rule().missingWithAll("token", "secret")
 rule().prohibited()
 rule().prohibitedIf("role", "member")
+rule().prohibitedIf("role", ["member", "guest"])
 rule().prohibitedUnless("role", "admin")
+rule().prohibitedUnless("role", ["admin", "owner"])
 rule().prohibits("password")
 rule().exclude()
 rule().excludeIf("type", "person")
+rule().excludeIf("type", ["person", "guest"])
 rule().excludeUnless("type", "business")
+rule().excludeUnless("type", ["business", "enterprise"])
 rule().excludeWith("token")
 rule().excludeWithout("token")
 ```
@@ -164,33 +188,33 @@ Presence rules decide whether a field must exist, may be omitted, or should be r
 | `nullable()` | `null` / `undefined` is allowed and skips the rest of this field's rules. |
 | `sometimes()` | If the field is missing, skip validation for it. If present, validate normally. |
 | `filled()` | If the field is present, it must not be empty. Missing is allowed. |
-| `requiredIf(field, value)` | Required when another field equals the given value. |
-| `requiredUnless(field, value)` | Required unless another field equals the given value. |
+| `requiredIf(field, valueOrValues)` | Required when another field equals the given value, or any value in the given array. |
+| `requiredUnless(field, valueOrValues)` | Required unless another field equals the given value, or any value in the given array. |
 | `requiredWith(field)` | Required when another field is present and not empty. |
 | `requiredWithAll(...fields)` | Required when all listed fields are present and not empty. |
 | `requiredWithout(...fields)` | Required when any listed field is missing or empty. |
 | `requiredWithoutAll(...fields)` | Required when all listed fields are missing or empty. |
 | `accepted()` | Value must be an accepted truthy consent value: `true`, `"yes"`, `"on"`, `1`, or `"1"`. |
-| `acceptedIf(field, value)` | Must be accepted only when another field equals the given value. |
+| `acceptedIf(field, valueOrValues)` | Must be accepted only when another field equals the given value, or any value in the given array. |
 | `declined()` | Value must be a declined consent value: `false`, `"no"`, `"off"`, `0`, or `"0"`. |
-| `declinedIf(field, value)` | Must be declined only when another field equals the given value. |
+| `declinedIf(field, valueOrValues)` | Must be declined only when another field equals the given value, or any value in the given array. |
 | `present()` | Key must exist in the input, but the value may be empty. |
-| `presentIf(field, value)` | Key must exist when another field equals the given value. |
-| `presentUnless(field, value)` | Key must exist unless another field equals the given value. |
+| `presentIf(field, valueOrValues)` | Key must exist when another field equals the given value, or any value in the given array. |
+| `presentUnless(field, valueOrValues)` | Key must exist unless another field equals the given value, or any value in the given array. |
 | `presentWith(...fields)` | Key must exist when any listed field is present. |
 | `presentWithAll(...fields)` | Key must exist when all listed fields are present. |
 | `missing()` | Key must not exist in the input. |
-| `missingIf(field, value)` | Key must be missing when another field equals the given value. |
-| `missingUnless(field, value)` | Key must be missing unless another field equals the given value. |
+| `missingIf(field, valueOrValues)` | Key must be missing when another field equals the given value, or any value in the given array. |
+| `missingUnless(field, valueOrValues)` | Key must be missing unless another field equals the given value, or any value in the given array. |
 | `missingWith(...fields)` | Key must be missing when any listed field is present. |
 | `missingWithAll(...fields)` | Key must be missing when all listed fields are present. |
 | `prohibited()` | Field must be missing or empty. Unlike `missing()`, an empty value is allowed. |
-| `prohibitedIf(field, value)` | Field must be missing or empty when another field equals the given value. |
-| `prohibitedUnless(field, value)` | Field must be missing or empty unless another field equals the given value. |
+| `prohibitedIf(field, valueOrValues)` | Field must be missing or empty when another field equals the given value, or any value in the given array. |
+| `prohibitedUnless(field, valueOrValues)` | Field must be missing or empty unless another field equals the given value, or any value in the given array. |
 | `prohibits(...fields)` | If this field is present and not empty, the listed fields must be missing or empty. |
 | `exclude()` | Remove this field from validated output. |
-| `excludeIf(field, value)` | Remove this field from output when another field equals the given value. |
-| `excludeUnless(field, value)` | Remove this field from output unless another field equals the given value. |
+| `excludeIf(field, valueOrValues)` | Remove this field from output when another field equals the given value, or any value in the given array. |
+| `excludeUnless(field, valueOrValues)` | Remove this field from output unless another field equals the given value, or any value in the given array. |
 | `excludeWith(...fields)` | Remove this field when any listed field is present. |
 | `excludeWithout(...fields)` | Remove this field when any listed field is missing or empty. |
 
@@ -204,6 +228,16 @@ const validated = await Validator.make(input, {
   nickname: rule().excludeIf("account_type", "company").string(),
   admin_notes: rule().prohibitedUnless("role", "admin"),
   terms: rule().accepted(),
+}).validate();
+```
+
+Conditional rules accept either a single expected value or an array of expected values:
+
+```ts
+await Validator.make(input, {
+  name: rule().requiredIf("type", ["test", "test2"]).string(),
+  notes: rule().requiredUnless("status", ["draft", "archived"]).string(),
+  debug: rule().excludeIf("visibility", ["private", "internal"]),
 }).validate();
 ```
 

@@ -12,6 +12,12 @@ function valuesEqual(a: unknown, b: unknown): boolean {
   return a === b || String(a) === String(b);
 }
 
+function valueMatches(actual: unknown, expected: unknown): boolean {
+  return Array.isArray(expected)
+    ? expected.some((value) => valuesEqual(actual, value))
+    : valuesEqual(actual, expected);
+}
+
 function anyPresent(c: ValidationContext, fields: readonly string[]): boolean {
   return fields.some((field) => !isAbsent(c.get(field)));
 }
@@ -116,7 +122,7 @@ export class RequiredIfRule implements RuleContract {
   name = "required_if";
   constructor(private field: string, private value: unknown) {}
   validate(v: unknown, c: ValidationContext): RuleResult {
-    if (valuesEqual(c.get(this.field), this.value)) return !isAbsent(v);
+    if (valueMatches(c.get(this.field), this.value)) return !isAbsent(v);
     if (isAbsent(v)) return SKIP;
     return PASS;
   }
@@ -152,7 +158,7 @@ export class AcceptedIfRule extends AcceptedRule {
   name = "accepted_if";
   constructor(private field: string, private value: unknown) { super(); }
   validate(v: unknown, c: ValidationContext): RuleResult {
-    return valuesEqual(c.get(this.field), this.value) ? super.validate(v) : PASS;
+    return valueMatches(c.get(this.field), this.value) ? super.validate(v) : PASS;
   }
   message(c: ValidationContext) {
     return `The ${c.attribute} field must be accepted when ${this.field} is ${String(this.value)}.`;
@@ -173,7 +179,7 @@ export class DeclinedIfRule extends DeclinedRule {
   name = "declined_if";
   constructor(private field: string, private value: unknown) { super(); }
   validate(v: unknown, c: ValidationContext): RuleResult {
-    return valuesEqual(c.get(this.field), this.value) ? super.validate(v) : PASS;
+    return valueMatches(c.get(this.field), this.value) ? super.validate(v) : PASS;
   }
   message(c: ValidationContext) {
     return `The ${c.attribute} field must be declined when ${this.field} is ${String(this.value)}.`;
@@ -184,7 +190,7 @@ export class RequiredUnlessRule implements RuleContract {
   name = "required_unless";
   constructor(private field: string, private value: unknown) {}
   validate(v: unknown, c: ValidationContext): RuleResult {
-    if (!valuesEqual(c.get(this.field), this.value)) return !isAbsent(v);
+    if (!valueMatches(c.get(this.field), this.value)) return !isAbsent(v);
     if (isAbsent(v)) return SKIP;
     return PASS;
   }
@@ -246,7 +252,7 @@ export class PresentIfRule extends PresentRule {
   name = "present_if";
   constructor(private field: string, private value: unknown) { super(); }
   validate(v: unknown, c: ValidationContext): RuleResult {
-    return valuesEqual(c.get(this.field), this.value) ? super.validate(v, c) : PASS;
+    return valueMatches(c.get(this.field), this.value) ? super.validate(v, c) : PASS;
   }
 }
 
@@ -254,7 +260,7 @@ export class PresentUnlessRule extends PresentRule {
   name = "present_unless";
   constructor(private field: string, private value: unknown) { super(); }
   validate(v: unknown, c: ValidationContext): RuleResult {
-    return !valuesEqual(c.get(this.field), this.value) ? super.validate(v, c) : PASS;
+    return !valueMatches(c.get(this.field), this.value) ? super.validate(v, c) : PASS;
   }
 }
 
@@ -288,7 +294,7 @@ export class MissingIfRule extends MissingRule {
   name = "missing_if";
   constructor(private field: string, private value: unknown) { super(); }
   validate(v: unknown, c: ValidationContext): RuleResult {
-    return valuesEqual(c.get(this.field), this.value) ? super.validate(v, c) : PASS;
+    return valueMatches(c.get(this.field), this.value) ? super.validate(v, c) : PASS;
   }
 }
 
@@ -296,7 +302,7 @@ export class MissingUnlessRule extends MissingRule {
   name = "missing_unless";
   constructor(private field: string, private value: unknown) { super(); }
   validate(v: unknown, c: ValidationContext): RuleResult {
-    return !valuesEqual(c.get(this.field), this.value) ? super.validate(v, c) : PASS;
+    return !valueMatches(c.get(this.field), this.value) ? super.validate(v, c) : PASS;
   }
 }
 
@@ -330,7 +336,7 @@ export class ProhibitedIfRule extends ProhibitedRule {
   name = "prohibited_if";
   constructor(private field: string, private value: unknown) { super(); }
   validate(v: unknown, c: ValidationContext): RuleResult {
-    return valuesEqual(c.get(this.field), this.value) ? super.validate(v, c) : PASS;
+    return valueMatches(c.get(this.field), this.value) ? super.validate(v, c) : PASS;
   }
 }
 
@@ -338,7 +344,7 @@ export class ProhibitedUnlessRule extends ProhibitedRule {
   name = "prohibited_unless";
   constructor(private field: string, private value: unknown) { super(); }
   validate(v: unknown, c: ValidationContext): RuleResult {
-    return !valuesEqual(c.get(this.field), this.value) ? super.validate(v, c) : PASS;
+    return !valueMatches(c.get(this.field), this.value) ? super.validate(v, c) : PASS;
   }
 }
 
@@ -368,7 +374,7 @@ export class ExcludeIfRule extends ExcludeRule {
   name = "exclude_if";
   constructor(private field: string, private value: unknown) { super(); }
   validate(_v: unknown, c: ValidationContext): RuleResult {
-    return valuesEqual(c.get(this.field), this.value) ? EXCLUDE : PASS;
+    return valueMatches(c.get(this.field), this.value) ? EXCLUDE : PASS;
   }
 }
 
@@ -376,7 +382,7 @@ export class ExcludeUnlessRule extends ExcludeRule {
   name = "exclude_unless";
   constructor(private field: string, private value: unknown) { super(); }
   validate(_v: unknown, c: ValidationContext): RuleResult {
-    return !valuesEqual(c.get(this.field), this.value) ? EXCLUDE : PASS;
+    return !valueMatches(c.get(this.field), this.value) ? EXCLUDE : PASS;
   }
 }
 

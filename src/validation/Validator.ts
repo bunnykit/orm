@@ -120,6 +120,36 @@ function makeContext(
   return context;
 }
 
+const IMPLICIT_RULES = new Set([
+  "accepted",
+  "accepted_if",
+  "default",
+  "declined",
+  "declined_if",
+  "filled",
+  "missing",
+  "missing_if",
+  "missing_unless",
+  "missing_with",
+  "missing_with_all",
+  "present",
+  "present_if",
+  "present_unless",
+  "present_with",
+  "present_with_all",
+  "prohibited",
+  "prohibited_if",
+  "prohibited_unless",
+  "prohibits",
+  "required",
+  "required_if",
+  "required_unless",
+  "required_with",
+  "required_with_all",
+  "required_without",
+  "required_without_all",
+]);
+
 export class Validator<S extends ValidationSchema> {
   private customMessages: MessageOverrides = {};
   private stopOnFirst = false;
@@ -170,6 +200,12 @@ export class Validator<S extends ValidationSchema> {
 
       let value = getPath(this.data, field);
       let excluded = false;
+      const wasSupplied = hasPath(this.data, field);
+      const shouldValidateMissing = builder.specs.some((ruleObj) => IMPLICIT_RULES.has(ruleObj.name));
+
+      if (!wasSupplied && !shouldValidateMissing) {
+        continue;
+      }
 
       // Defaults are ergonomic when declared last in a chain, e.g.
       // rule().in(["admin", "member"]).default("member").
@@ -208,7 +244,6 @@ export class Validator<S extends ValidationSchema> {
       // Include the (possibly coerced/defaulted) value when the field passed
       // and either was supplied in the input or produced by a default/coerce.
       const hadError = !!this.bag[field];
-      const wasSupplied = hasPath(this.data, field);
       if (!excluded && !hadError && (wasSupplied || value !== undefined)) {
         setPath(this.output, field, value);
       }
