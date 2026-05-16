@@ -756,6 +756,29 @@ export class EmailRule implements RuleContract {
   }
 }
 
+function normalizePhMobile(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const compact = v.trim().replace(/[\s()-]/g, "");
+  if (compact.startsWith("+63")) return compact;
+  if (compact.startsWith("63") && /^\d+$/.test(compact)) return `+${compact}`;
+  if (compact.startsWith("0") && /^\d+$/.test(compact)) return `+63${compact.slice(1)}`;
+  if (/^\d+$/.test(compact)) return `+63${compact}`;
+  return compact;
+}
+
+export class PhMobileRule implements RuleContract {
+  name = "ph_mobile";
+  coerce(v: unknown) {
+    return normalizePhMobile(v) ?? v;
+  }
+  validate(v: unknown) {
+    return typeof v === "string" && /^\+639\d{9}$/.test(v);
+  }
+  message(c: ValidationContext) {
+    return `The ${c.attribute} field must be a valid Philippine mobile number.`;
+  }
+}
+
 export class UrlRule implements RuleContract {
   name = "url";
   validate(v: unknown) {

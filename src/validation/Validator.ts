@@ -168,7 +168,32 @@ function objectInputError(): ValidationError {
   return new ValidationError({ "": ["The value must be an object."] });
 }
 
+function normalizeEmptyStringValues(value: unknown): unknown {
+  if (value === "") return undefined;
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((item) => {
+      const normalized = normalizeEmptyStringValues(item);
+      if (normalized !== item) changed = true;
+      return normalized;
+    });
+    return changed ? next : value;
+  }
+  if (isPlainObjectInput(value)) {
+    let changed = false;
+    const output: Record<string, any> = {};
+    for (const [key, item] of Object.entries(value)) {
+      const normalized = normalizeEmptyStringValues(item);
+      output[key] = normalized;
+      if (normalized !== item) changed = true;
+    }
+    return changed ? output : value;
+  }
+  return value;
+}
+
 function appendInputValue(target: Record<string, any>, key: string, value: unknown): void {
+  if (value === "") return;
   if (Object.prototype.hasOwnProperty.call(target, key)) {
     const existing = target[key];
     target[key] = Array.isArray(existing) ? [...existing, value] : [existing, value];
@@ -194,7 +219,7 @@ async function requestToObject(request: Request): Promise<Record<string, any>> {
     if (!isPlainObjectInput(json)) {
       throw objectInputError();
     }
-    return json;
+    return normalizeEmptyStringValues(json) as Record<string, any>;
   }
 
   if (contentType.includes("multipart/form-data") || contentType.includes("application/x-www-form-urlencoded")) {
@@ -208,7 +233,7 @@ async function requestToObject(request: Request): Promise<Record<string, any>> {
       try {
         const json = JSON.parse(text);
         if (isPlainObjectInput(json)) {
-          return json;
+          return normalizeEmptyStringValues(json) as Record<string, any>;
         }
     } catch {
       // fall through
@@ -219,15 +244,15 @@ async function requestToObject(request: Request): Promise<Record<string, any>> {
 }
 
 async function normalizeObjectInput(value: unknown): Promise<Record<string, any>> {
-  if (isPlainObjectInput(value)) return value;
+  if (isPlainObjectInput(value)) return normalizeEmptyStringValues(value) as Record<string, any>;
   if (typeof Request !== "undefined" && value instanceof Request) {
     return await requestToObject(value);
   }
   if (typeof FormData !== "undefined" && value instanceof FormData) {
-    return formDataToObject(value);
+    return normalizeEmptyStringValues(formDataToObject(value)) as Record<string, any>;
   }
   if (typeof URLSearchParams !== "undefined" && value instanceof URLSearchParams) {
-    return formDataToObject(value);
+    return normalizeEmptyStringValues(formDataToObject(value)) as Record<string, any>;
   }
   throw objectInputError();
 }
@@ -257,6 +282,7 @@ const IMPLICIT_RULES = new Set([
   "declined",
   "declined_if",
   "filled",
+  "nullable",
   "missing",
   "missing_if",
   "missing_unless",
@@ -476,8 +502,10 @@ export class Validator<S extends ValidationSchema> {
         let excluded = false;
         const wasSupplied = hasPath(data, field);
         const shouldValidateMissing = builder.specs.some((ruleObj) => IMPLICIT_RULES.has(ruleObj.name));
+        const isNullable = builder.specs.some((ruleObj) => ruleObj.name === "nullable");
+        const isMissing = !wasSupplied || value === undefined || value === "" || (value === null && !isNullable);
 
-      if (!wasSupplied && !shouldValidateMissing) {
+      if (isMissing && !shouldValidateMissing) {
         continue;
       }
 
@@ -518,7 +546,7 @@ export class Validator<S extends ValidationSchema> {
       // Include the (possibly coerced/defaulted) value when the field passed
       // and either was supplied in the input or produced by a default/coerce.
       const hadError = !!this.bag[field];
-        if (!excluded && !hadError && (wasSupplied || value !== undefined)) {
+      if (!excluded && !hadError && (value !== undefined || (isNullable && value === null))) {
           setPath(this.output, field, value);
         }
       }

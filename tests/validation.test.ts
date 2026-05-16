@@ -1,5 +1,5 @@
 import { expect, test, describe, beforeAll } from "bun:test";
-import { rule, Validator, ValidationError, DB, Schema, ConnectionManager, type RuleContract, type ValidationContext } from "../src/index.js";
+import { rule, Validator, ValidationError, DB, Schema, ConnectionManager, type RuleContract, type ValidationContext, type ValidationFile } from "../src/index.js";
 import { setupTestDb } from "./helpers.js";
 
 function expectType<T>(_value: T): void {}
@@ -225,6 +225,21 @@ describe("Validator — sync rules", () => {
     expect(out.enabled).toBe(false);
     expect(out.starts_at).toBeInstanceOf(Date);
     expect(out.score).toBe(9.5);
+  });
+
+  test("phMobile normalizes local PH numbers before validation", async () => {
+    const schema = {
+      mobile: rule().required().phMobile(),
+    };
+
+    const a = await Validator.make({ mobile: "9171234567" }, schema).validate();
+    expect(a.mobile).toBe("+639171234567");
+
+    const b = await Validator.make({ mobile: "09171234567" }, schema).validate();
+    expect(b.mobile).toBe("+639171234567");
+
+    const c = await Validator.make({ mobile: "+639171234567" }, schema).validate();
+    expect(c.mobile).toBe("+639171234567");
   });
 
   test("ValidationError carries a bag", async () => {
@@ -480,9 +495,49 @@ describe("Validator — sync rules", () => {
     expect(requestResult.email).toBe("ada@example.com");
   });
 
+  test("Validator.schema treats empty FormData strings as omitted", async () => {
+    const schema = Validator.schema({
+      email: rule().string().email().unique("val_users", "email"),
+    });
+
+    const formData = new FormData();
+    formData.set("email", "");
+
+    const result = await schema.safeParse(formData);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.output.email).toBeUndefined();
+    }
+  });
+
+  test("Validator.schema treats empty string values in plain objects as omitted", async () => {
+    const schema = Validator.schema({
+      email: rule().string().email().unique("val_users", "email"),
+    });
+
+    const result = await schema.safeParse({ email: "" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.output.email).toBeUndefined();
+    }
+  });
+
   test("infers validated output types", async () => {
+    const Visibility = {
+      open: false,
+      closed: true,
+    } as const;
+
     const validated = await Validator.make(
-      { email: "a@b.com", age: "18", password: "password", password_confirmation: "password" },
+      {
+        email: "a@b.com",
+        age: "18",
+        password: "password",
+        password_confirmation: "password",
+        visibility: false,
+        choice: true,
+        profile: { name: "Ada", role: "admin" },
+      },
       {
         email: rule().required().string().email(),
         age: rule().required().integer().min(18),
@@ -490,6 +545,9 @@ describe("Validator — sync rules", () => {
         role: rule().in(["admin", "member"] as const).default("member"),
         nickname: rule().sometimes().string(),
         deleted_at: rule().nullable().date(),
+        visibility: rule().enum(Visibility),
+        choice: rule().anyOf(rule().boolean(), rule().string()),
+        profile: rule().required().array(["name", "role"]),
       },
     ).validate();
 
@@ -498,6 +556,9 @@ describe("Validator — sync rules", () => {
     expectType<"admin" | "member">(validated.role);
     expectType<string | undefined>(validated.nickname);
     expectType<Date | null>(validated.deleted_at);
+    expectType<false | true>(validated.visibility);
+    expectType<boolean | string>(validated.choice);
+    expectType<unknown | undefined>(validated.profile.name);
     expect(validated.role).toBe("member");
   });
 
@@ -601,6 +662,73 @@ describe("Validator — sync rules", () => {
     expect(out.profile.name).toBe("Ada");
     expect(out.items[1].email).toBe("b@example.com");
     expect(out.avatar).toBe(file);
+    expectType<ValidationFile>(out.avatar);
+    expectType<string>(out.avatar.name);
+  });
+
+  test("enum narrows const object values and validates runtime membership", async () => {
+    const Visibility = {
+      open: false,
+      closed: true,
+    } as const;
+
+    const ok = await Validator.make(
+      { visibility: false },
+      { visibility: rule().required().enum(Visibility) },
+    ).validate();
+
+    expect(ok.visibility).toBe(false);
+    expectType<false | true>(ok.visibility);
+
+    const errs = await Validator.make(
+      { visibility: "maybe" },
+      { visibility: rule().required().enum(Visibility) },
+    ).errors();
+
+    expect(errs.visibility).toBeDefined();
+  });
+
+  test("anyOf narrows to a union of the matching rule outputs", async () => {
+    const okEmail = await Validator.make(
+      { contact: "ada@example.com" },
+      { contact: rule().anyOf(rule().email(), rule().uuid()) },
+    ).validate();
+    expect(okEmail.contact).toBe("ada@example.com");
+
+    const okUuid = await Validator.make(
+      { contact: "550e8400-e29b-41d4-a716-446655440000" },
+      { contact: rule().anyOf(rule().email(), rule().uuid()) },
+    ).validate();
+    expect(okUuid.contact).toBe("550e8400-e29b-41d4-a716-446655440000");
+
+    expectType<string>(okEmail.contact);
+    expectType<string>(okUuid.contact);
+
+    const errs = await Validator.make(
+      { contact: "not-a-contact" },
+      { contact: rule().anyOf(rule().email(), rule().uuid()) },
+    ).errors();
+
+    expect(errs.contact).toBeDefined();
+  });
+
+  test("array(keys) validates allowed keys and preserves an object-like output shape", async () => {
+    const ok = await Validator.make(
+      { profile: { name: "Ada", role: "admin" } },
+      { profile: rule().required().array(["name", "role"]) },
+    ).validate();
+
+    expect(ok.profile.name).toBe("Ada");
+    expect(ok.profile.role).toBe("admin");
+    expectType<unknown>(ok.profile.name);
+    expectType<unknown>(ok.profile.role);
+
+    const errs = await Validator.make(
+      { profile: { name: "Ada", role: "admin", extra: true } },
+      { profile: rule().required().array(["name", "role"]) },
+    ).errors();
+
+    expect(errs.profile).toBeDefined();
   });
 });
 

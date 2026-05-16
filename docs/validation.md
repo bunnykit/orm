@@ -3,7 +3,7 @@
 Bunny includes an async, typed validator with Laravel-style rule chains and no string DSL.
 
 ```ts
-import { Validator, rule } from "@bunnykit/orm";
+import { Validator, rule } from "@bunnykit/orm/validation";
 
 const validated = await Validator.make(input, {
   email: rule().required().string().email().unique("users", "email"),
@@ -70,6 +70,7 @@ validator.collectAllErrors();   // collect every failed rule per field
 ```
 
 The instance/object schema path accepts plain objects, `FormData`, `URLSearchParams`, and `Request` bodies. `Request` values are parsed as JSON when the content type is JSON, otherwise as form data.
+Empty string values from plain objects, `FormData`, and `URLSearchParams` are treated as omitted fields, which keeps optional form inputs from failing format rules like `email()`.
 
 Root schema:
 
@@ -122,7 +123,7 @@ Use the root schema helpers for single-argument `command()` / `query()` handlers
 
 ```ts
 import { command, query, form } from "$app/server";
-import { Validator, rule } from "@bunnykit/orm";
+import { Validator, rule } from "@bunnykit/orm/validation";
 
 export const updateLikes = command(Validator.required().string(), async (id) => {
   // id: string
@@ -165,7 +166,7 @@ SvelteKit `actions` example:
 ```ts
 import * as db from "$lib/server/db";
 import { fail, type Actions, type PageServerLoad } from "@sveltejs/kit";
-import { Validator, rule } from "@bunnykit/orm";
+import { Validator, rule } from "@bunnykit/orm/validation";
 
 const loginSchema = Validator.schema({
   email: rule().required().string().email(),
@@ -470,7 +471,12 @@ rule().lt(100)
 rule().lte("max_age")
 ```
 
-Size rules work on numbers directly, string length, and array length. `gt`, `gte`, `lt`, and `lte` can compare to a literal number or to the size/value of another field.
+`min()`, `max()`, `between()`, and `size()` are type-sensitive:
+- on `string` they check character length
+- on `array` they check item count
+- on `number` / `integer` they check numeric value
+
+`gt`, `gte`, `lt`, and `lte` can compare to a literal number or to the size/value of another field.
 
 Format and membership:
 
@@ -496,11 +502,13 @@ rule().ipv6()
 rule().activeUrl()
 rule().ulid()
 rule().hexColor()
+rule().phMobile()
 rule().in(["admin", "member"] as const)
 rule().notIn(["root"])
 ```
 
 Format rules are usually self-contained string checks. `lowercaseOnly()` validates that a string is already lowercase; `lowercase()` in the transform section converts the value to lowercase.
+`phMobile()` normalizes Philippine mobile input first. It accepts local forms like `9171234567` and `09171234567`, converts them to `+639171234567`, then validates the final shape.
 
 Cross-field:
 
@@ -567,7 +575,7 @@ await Validator.make(input, {
 Reusable custom rules implement `RuleContract`:
 
 ```ts
-import type { RuleContract, ValidationContext } from "@bunnykit/orm";
+import type { RuleContract, ValidationContext } from "@bunnykit/orm/validation";
 
 class EvenRule implements RuleContract {
   name = "even";

@@ -28,6 +28,10 @@
     ".": {
       "types": "./dist/src/index.d.ts",
       "import": "./dist/src/index.js"
+    },
+    "./validation": {
+      "types": "./dist/src/validation/index.d.ts",
+      "import": "./dist/src/validation/index.js"
     }
   },
   "type": "module",

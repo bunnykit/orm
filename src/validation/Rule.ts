@@ -62,6 +62,7 @@ import {
   SizeRule,
   ComparisonRule,
   EmailRule,
+  PhMobileRule,
   UrlRule,
   UuidRule,
   RegexRule,
@@ -113,6 +114,10 @@ type Presence = "required" | "optional";
 type Defaulted<TValue, TDefault> = unknown extends TValue
   ? TDefault
   : Exclude<TValue, undefined>;
+
+export type ValidationFile = Blob & {
+  name: string;
+};
 
 export interface StandardSchemaIssue {
   message: string;
@@ -405,7 +410,9 @@ export class RuleBuilder<TValue = unknown, TPresence extends Presence = "require
   boolean(): RuleBuilder<boolean, TPresence> {
     return this.push(new BooleanRule()) as any;
   }
-  array(keys?: readonly string[]): RuleBuilder<unknown[], TPresence> {
+  array(): RuleBuilder<unknown[], TPresence>;
+  array<const TKeys extends readonly string[]>(keys: TKeys): RuleBuilder<Partial<Record<TKeys[number], unknown>>, TPresence>;
+  array(keys?: readonly string[]): any {
     return this.push(new ArrayRule(keys)) as any;
   }
   list(): RuleBuilder<unknown[], TPresence> {
@@ -477,6 +484,9 @@ export class RuleBuilder<TValue = unknown, TPresence extends Presence = "require
   // ── Format ─────────────────────────────────────────────────
   email(): this {
     return this.push(new EmailRule());
+  }
+  phMobile(): this {
+    return this.push(new PhMobileRule());
   }
   url(): this {
     return this.push(new UrlRule());
@@ -556,29 +566,31 @@ export class RuleBuilder<TValue = unknown, TPresence extends Presence = "require
     return this.push(new DifferentRule(field));
   }
 
-  file(): this {
-    return this.push(new FileRule());
+  file(): RuleBuilder<ValidationFile, TPresence> {
+    return this.push(new FileRule()) as any;
   }
-  image(): this {
-    return this.push(new ImageRule());
+  image(): RuleBuilder<ValidationFile, TPresence> {
+    return this.push(new ImageRule()) as any;
   }
-  mimes(...extensions: string[]): this {
-    return this.push(new MimesRule(extensions));
+  mimes(...extensions: string[]): RuleBuilder<ValidationFile, TPresence> {
+    return this.push(new MimesRule(extensions)) as any;
   }
-  mimeTypes(...types: string[]): this {
-    return this.push(new MimeTypesRule(types));
+  mimeTypes(...types: string[]): RuleBuilder<ValidationFile, TPresence> {
+    return this.push(new MimeTypesRule(types)) as any;
   }
-  extensions(...extensions: string[]): this {
-    return this.push(new ExtensionsRule(extensions));
+  extensions(...extensions: string[]): RuleBuilder<ValidationFile, TPresence> {
+    return this.push(new ExtensionsRule(extensions)) as any;
   }
-  dimensions(options: { width?: number; height?: number; minWidth?: number; minHeight?: number; maxWidth?: number; maxHeight?: number; ratio?: number }): this {
-    return this.push(new DimensionsRule(options));
+  dimensions(options: { width?: number; height?: number; minWidth?: number; minHeight?: number; maxWidth?: number; maxHeight?: number; ratio?: number }): RuleBuilder<ValidationFile, TPresence> {
+    return this.push(new DimensionsRule(options)) as any;
   }
-  enum(values: Record<string, unknown>): this {
-    return this.push(new EnumRule(values));
+  enum<const TValues extends Record<string, unknown>>(values: TValues): RuleBuilder<TValues[keyof TValues], TPresence> {
+    return this.push(new EnumRule(values)) as any;
   }
-  anyOf(...builders: RuleBuilder<any, any>[]): this {
-    return this.push(new AnyOfRule(builders.map((builder) => builder.specs)));
+  anyOf<const TBuilders extends readonly RuleBuilder<any, any>[]>(
+    ...builders: TBuilders
+  ): RuleBuilder<AnyOfValue<TValue, TBuilders>, TPresence> {
+    return this.push(new AnyOfRule(builders.map((builder) => builder.specs))) as any;
   }
   can(callback: (value: unknown, ctx: any) => boolean | Promise<boolean>): this {
     return this.push(new CanRule(callback));
@@ -666,6 +678,9 @@ export type ValidationSchema = Record<string, RuleBuilder<any, any>>;
 
 type ValueOf<B> = B extends RuleBuilder<infer V, any> ? V : never;
 type PresenceOf<B> = B extends RuleBuilder<any, infer P> ? P : "required";
+type ValueOfBuilders<T extends readonly RuleBuilder<any, any>[]> = ValueOf<T[number]>;
+type AnyOfValue<TCurrent, TBuilders extends readonly RuleBuilder<any, any>[]> =
+  unknown extends TCurrent ? ValueOfBuilders<TBuilders> : TCurrent | ValueOfBuilders<TBuilders>;
 
 export type InferOutput<S extends ValidationSchema> =
   // required keys

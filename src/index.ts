@@ -64,6 +64,7 @@ export type { FactoryDefinition, FactoryState } from "./seeding/Factory.js";
 
 export { rule, RuleBuilder, Validator, ValidationError } from "./validation/index.js";
 export type {
+  ValidationFile,
   ValidationSchema,
   InferOutput,
   ValidationObjectSchema,
