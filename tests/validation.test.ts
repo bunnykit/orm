@@ -348,6 +348,57 @@ describe("Validator — sync rules", () => {
     expect(out.items[1].qty).toBe(3);
   });
 
+  test("optional nested guardian arrays validate and infer as nested objects", async () => {
+    const schema = {
+      section_id: rule().required().string(),
+      academic_level_id: rule().required().string(),
+      guardians: rule().sometimes().array().max(2),
+      "guardians.*.firstname": rule().required().string(),
+      "guardians.*.lastname": rule().required().string(),
+      "guardians.*.contact_number": rule().required().string(),
+      "guardians.*.email": rule().sometimes().nullable().string().email(),
+    };
+
+    const out = await Validator.make(
+      {
+        section_id: "sec-1",
+        academic_level_id: "level-1",
+        guardians: [
+          {
+            firstname: "Jane",
+            lastname: "Doe",
+            contact_number: "09171234567",
+            email: null,
+          },
+        ],
+      },
+      schema,
+    ).validate();
+
+    expect(out.section_id).toBe("sec-1");
+    expect(out.guardians?.[0].firstname).toBe("Jane");
+    expect(out.guardians?.[0].email).toBeNull();
+    const firstnames = out.guardians?.map((guardian) => guardian.firstname);
+    expect(firstnames).toEqual(["Jane"]);
+    expectType<{
+      section_id: string;
+      academic_level_id: string;
+      guardians?: Array<{
+        firstname: string;
+        lastname: string;
+        contact_number: string;
+        email?: string | null;
+      }>;
+    }>(out);
+    expectType<string[] | undefined>(firstnames);
+
+    const { guardians, ...admissionData } = out;
+    expectType<{
+      section_id: string;
+      academic_level_id: string;
+    }>(admissionData);
+  });
+
   test("custom validators can be inline callbacks or reusable RuleContract objects", async () => {
     class EvenRule implements RuleContract {
       name = "even";

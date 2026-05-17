@@ -94,7 +94,7 @@ function wildcardValues(data: Record<string, any>, pattern: string): string[] {
     }
   };
   visit(data, 0, []);
-  return found.length ? found : [pattern.replace(/\*/g, "0")];
+  return found;
 }
 
 function resolveRelativePath(pattern: string, attribute: string, other: string): string {
@@ -328,10 +328,18 @@ export class Validator<S extends ValidationSchema> {
     return new Validator(data ?? {}, schema, connection);
   }
 
+  /**
+   * Start a new rule chain.
+   * Example: `Validator.rule().required().email()`
+   */
   static rule(): RuleBuilder {
     return new RuleBuilder();
   }
 
+  /**
+   * Start a required rule chain.
+   * Example: `Validator.required().string()`
+   */
   static required(): RuleBuilder {
     return new RuleBuilder().required();
   }

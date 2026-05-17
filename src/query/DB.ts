@@ -2,8 +2,11 @@ import { Builder } from "./Builder.js";
 import { Connection } from "../connection/Connection.js";
 import { ConnectionManager } from "../connection/ConnectionManager.js";
 import { TenantContext } from "../connection/TenantContext.js";
+import { TransactionContext } from "../connection/TransactionContext.js";
 
 function resolveDefaultConnection(): Connection {
+  const trx = TransactionContext.current();
+  if (trx) return trx;
   const tenant = TenantContext.current()?.connection;
   if (tenant) return tenant;
   const fallback = ConnectionManager.getDefault();
@@ -29,6 +32,12 @@ export const DB = {
 
   tenant<T>(tenantId: string, callback: () => T | Promise<T>): Promise<T> {
     return TenantContext.run(tenantId, callback);
+  },
+
+  transaction<T>(callback: (connection: Connection) => T | Promise<T>): Promise<T> {
+    return resolveDefaultConnection().transaction((trx) =>
+      TransactionContext.run(trx, () => callback(trx))
+    );
   },
 
   raw<T = any>(sql: string, bindings: any[] = []): Promise<T[]> {

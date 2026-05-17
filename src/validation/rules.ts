@@ -1178,26 +1178,50 @@ export class PasswordRule implements RuleContract {
   private requireNumbers = false;
   private requireSymbols = false;
 
+  /**
+   * Set the minimum password length.
+   * Example: `rule().password((r) => r.min(12))`
+   */
   min(n: number): this {
     this.minLength = n;
     return this;
   }
+  /**
+   * Require at least one letter.
+   * Example: `rule().password((r) => r.letters())`
+   */
   letters(): this {
     this.requireLetters = true;
     return this;
   }
+  /**
+   * Require both uppercase and lowercase letters.
+   * Example: `rule().password((r) => r.mixedCase())`
+   */
   mixedCase(): this {
     this.requireMixedCase = true;
     return this;
   }
+  /**
+   * Require at least one number.
+   * Example: `rule().password((r) => r.numbers())`
+   */
   numbers(): this {
     this.requireNumbers = true;
     return this;
   }
+  /**
+   * Require at least one symbol.
+   * Example: `rule().password((r) => r.symbols())`
+   */
   symbols(): this {
     this.requireSymbols = true;
     return this;
   }
+  /**
+   * Mark the password as uncompromised.
+   * Example: `rule().password((r) => r.uncompromised())`
+   */
   uncompromised(): this {
     return this;
   }
@@ -1228,38 +1252,66 @@ export class UniqueRule implements RuleContract {
     private column?: string,
   ) {}
 
+  /**
+   * Add an equality filter to the uniqueness query.
+   * Example: `rule().unique("users", "email").where("tenant_id", 1)`
+   */
   where(column: string, value: unknown): this {
     this.wheres.push({ column, op: "=", value });
     return this;
   }
 
+  /**
+   * Add an inequality filter to the uniqueness query.
+   * Example: `rule().unique("users", "email").whereNot("status", "archived")`
+   */
   whereNot(column: string, value: unknown): this {
     this.wheres.push({ column, op: "<>", value });
     return this;
   }
 
+  /**
+   * Restrict the uniqueness query to null values.
+   * Example: `rule().unique("users", "email").whereNull("deleted_at")`
+   */
   whereNull(column: string): this {
     this.wheres.push({ column, op: "IS NULL" });
     return this;
   }
 
+  /**
+   * Restrict the uniqueness query to non-null values.
+   * Example: `rule().unique("users", "email").whereNotNull("deleted_at")`
+   */
   whereNotNull(column: string): this {
     this.wheres.push({ column, op: "IS NOT NULL" });
     return this;
   }
 
+  /**
+   * Ignore a specific row when validating uniqueness.
+   * Example: `rule().unique("users", "email").ignore(userId)`
+   */
   ignore(id: unknown, column = "id"): this {
     this.ignoreId = id;
     this.ignoreColumn = column;
     return this;
   }
 
+  /**
+   * Ignore the row referenced by another input field.
+   * Example: `rule().unique("users", "email").ignoreField("id")`
+   */
   ignoreField(field: string, column = "id"): this {
     this.ignoreFieldName = field;
     this.ignoreColumn = column;
     return this;
   }
 
+  /**
+   * Skip soft-deleted rows during uniqueness checks.
+   * Example: `rule().unique("users", "email").withoutTrashed()`
+   */
   withoutTrashed(column = "deleted_at"): this {
     return this.whereNull(column);
   }
@@ -1301,26 +1353,46 @@ export class ExistsRule implements RuleContract {
   private wheres: Array<{ column: string; op: "=" | "<>" | "IS NULL" | "IS NOT NULL"; value?: unknown }> = [];
   constructor(private table: string, private column?: string) {}
 
+  /**
+   * Add an equality filter to the existence query.
+   * Example: `rule().exists("users", "id").where("tenant_id", 1)`
+   */
   where(column: string, value: unknown): this {
     this.wheres.push({ column, op: "=", value });
     return this;
   }
 
+  /**
+   * Add an inequality filter to the existence query.
+   * Example: `rule().exists("users", "id").whereNot("status", "archived")`
+   */
   whereNot(column: string, value: unknown): this {
     this.wheres.push({ column, op: "<>", value });
     return this;
   }
 
+  /**
+   * Restrict the existence query to null values.
+   * Example: `rule().exists("users", "id").whereNull("deleted_at")`
+   */
   whereNull(column: string): this {
     this.wheres.push({ column, op: "IS NULL" });
     return this;
   }
 
+  /**
+   * Restrict the existence query to non-null values.
+   * Example: `rule().exists("users", "id").whereNotNull("deleted_at")`
+   */
   whereNotNull(column: string): this {
     this.wheres.push({ column, op: "IS NOT NULL" });
     return this;
   }
 
+  /**
+   * Skip soft-deleted rows during existence checks.
+   * Example: `rule().exists("users", "id").withoutTrashed()`
+   */
   withoutTrashed(column = "deleted_at"): this {
     return this.whereNull(column);
   }

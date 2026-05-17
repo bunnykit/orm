@@ -9,8 +9,10 @@ import { Schema } from "../schema/Schema.js";
 import { ModelNotFoundError } from "./ModelNotFoundError.js";
 import { ConnectionManager } from "../connection/ConnectionManager.js";
 import { TenantContext } from "../connection/TenantContext.js";
+import { TransactionContext } from "../connection/TransactionContext.js";
 import { IdentityMap } from "./IdentityMap.js";
 import { Collection } from "../support/Collection.js";
+import { ModelSchemaBuilder } from "./ModelSchemaBuilder.js";
 
 export type ModelConstructor<T = Model> = (new (...args: any[]) => T) & Omit<typeof Model, "prototype">;
 export type GlobalScope = (builder: Builder<any>, model: ModelConstructor) => void;
@@ -554,6 +556,23 @@ export abstract class Relation<T extends Model = Model> {
     return this.builder;
   }
 
+  first(): Promise<T | null> { return this.builder.first(); }
+  find(id: any): Promise<T | null> { return this.builder.find(id); }
+  whereIn(column: string, values: any[]): this {
+    this.extraConstraints.push((b) => b.whereIn(column, values));
+    return this;
+  }
+  orderBy(column: string, direction: "asc" | "desc" = "asc"): this {
+    this.extraConstraints.push((b) => b.orderBy(column, direction));
+    return this;
+  }
+  limit(value: number): this {
+    this.extraConstraints.push((b) => b.limit(value));
+    return this;
+  }
+  count(): Promise<number> { return this.builder.count(); }
+  pluck(column: string): Promise<any[]> { return this.builder.pluck(column); }
+
   getRelatedModelConstructor(): ModelConstructor {
     return this.related;
   }
@@ -655,6 +674,20 @@ export class HasMany<T extends Model = Model> extends Relation<T> {
       models.push(instance);
     }
     return models;
+  }
+
+  async createOrUpdate(
+    attributes: ModelAttributeInput<T>,
+    values: ModelAttributeInput<T> = {}
+  ): Promise<T> {
+    const found = await this.getQuery().where(attributes as any).first();
+    if (found) {
+      found.fill(values);
+      await found.save();
+      return found;
+    }
+
+    return this.create({ ...attributes, ...values } as any);
   }
 
   addConstraints(): void {
@@ -1008,7 +1041,13 @@ export class Model<T extends Record<string, any> = any> {
     return new Proxy(this, modelProxyHandler);
   }
 
-  static define<A extends Record<string, any>>(tableName: string, modelName?: string): ModelConstructor<Model<A> & A> {
+  static define<A extends Record<string, any>>(
+    tableName: string,
+    modelNameOrColumns?: string | Partial<Record<keyof A, string>>,
+    columnsArg?: Partial<Record<keyof A, string>>
+  ): ModelConstructor<Model<A> & A> {
+    const modelName = typeof modelNameOrColumns === "string" ? modelNameOrColumns : undefined;
+    const columnHints = (typeof modelNameOrColumns === "object" ? modelNameOrColumns : columnsArg) as Record<string, string> | undefined;
     const name = modelName || tableName
       .split("_")
       .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
@@ -1016,6 +1055,8 @@ export class Model<T extends Record<string, any> = any> {
       .replace(/s$/, "");
     const Base = class extends (this as unknown as typeof Model)<A> {
       static override table = tableName;
+      static override casts: Record<string, CastDefinition> = columnHints ?? {};
+      static override fillable: string[] = columnHints ? Object.keys(columnHints) : [];
     };
     Object.defineProperty(Base, "name", { value: name, writable: false, configurable: true });
     return Base as unknown as ModelConstructor<Model<A> & A>;
@@ -1025,7 +1066,24 @@ export class Model<T extends Record<string, any> = any> {
     return this.table || snakeCase(this.name) + "s";
   }
 
+  static schema(): ModelSchemaBuilder {
+    return new ModelSchemaBuilder(this.getTable(), this.getConnection(), {
+      casts: this.casts,
+      fillable: this.fillable,
+      attributes: this.attributes,
+      primaryKey: this.primaryKey,
+      keyType: this.keyType,
+      incrementing: this.incrementing,
+      timestamps: this.timestamps,
+      softDeletes: this.softDeletes,
+      deletedAtColumn: this.deletedAtColumn,
+      schemaDefinition: (this as any).schemaDefinition,
+    });
+  }
+
   static getConnection(): Connection {
+    const transactionConnection = TransactionContext.current();
+    if (transactionConnection) return transactionConnection;
     const tenantConnection = TenantContext.current()?.connection;
     const ownConnection = Object.prototype.hasOwnProperty.call(this, "connection") ? this.connection : undefined;
     const connection = tenantConnection || ownConnection || this.connection || ConnectionManager.getDefault();

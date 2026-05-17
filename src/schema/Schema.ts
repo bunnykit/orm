@@ -7,6 +7,15 @@ import { PostgresGrammar } from "./grammars/PostgresGrammar.js";
 import { ConnectionManager } from "../connection/ConnectionManager.js";
 import { TenantContext } from "../connection/TenantContext.js";
 
+export interface SchemaColumn {
+  name: string;
+  type: string;
+  primary: boolean;
+  autoIncrement: boolean;
+  nullable: boolean;
+  default?: any;
+}
+
 export interface SchemaIndex {
   name: string;
   columns: string[];
@@ -227,8 +236,8 @@ export class Schema {
     return result.length > 0;
   }
 
-  static async getIndexes(table: string): Promise<SchemaIndex[]> {
-    const connection = this.getConnection();
+  static async getIndexes(table: string, conn?: Connection): Promise<SchemaIndex[]> {
+    const connection = conn ?? this.getConnection();
     const driver = connection.getDriverName();
     const grammar = this.getGrammar();
     const schema = connection.getSchema() || "public";
@@ -292,8 +301,8 @@ export class Schema {
     ));
   }
 
-  static async getForeignKeys(table: string): Promise<SchemaForeignKey[]> {
-    const connection = this.getConnection();
+  static async getForeignKeys(table: string, conn?: Connection): Promise<SchemaForeignKey[]> {
+    const connection = conn ?? this.getConnection();
     const driver = connection.getDriverName();
     const grammar = this.getGrammar();
     const schema = connection.getSchema() || "public";
@@ -425,6 +434,67 @@ export class Schema {
       grouped.set(name, fk);
     }
     return [...grouped.values()];
+  }
+
+  static async getColumns(table: string, connection?: Connection): Promise<SchemaColumn[]> {
+    const conn = connection ?? this.getConnection();
+    const driver = conn.getDriverName();
+    const schema = conn.getSchema() || "public";
+    const grammar = this.getGrammar();
+
+    if (driver === "sqlite") {
+      const rows = await conn.query(`PRAGMA table_info(${grammar.wrap(table)})`);
+      return (rows as any[]).map((row) => ({
+        name: row.name,
+        type: row.type,
+        primary: row.pk > 0,
+        autoIncrement: false,
+        nullable: row.notnull === 0,
+        default: row.dflt_value ?? undefined,
+      }));
+    }
+
+    if (driver === "mysql") {
+      const rows = await conn.query(
+        "SELECT column_name AS Field, column_type AS Type, column_key AS `Key`, extra AS Extra, is_nullable AS Nullable, column_default AS `Default` FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? ORDER BY ordinal_position",
+        [table]
+      );
+      return (rows as any[]).map((row) => ({
+        name: row.Field,
+        type: row.Type,
+        primary: row.Key === "PRI",
+        autoIncrement: String(row.Extra || "").toLowerCase().includes("auto_increment"),
+        nullable: row.Nullable === "YES",
+        default: row.Default ?? undefined,
+      }));
+    }
+
+    const rows = await conn.query(
+      `SELECT c.column_name, c.data_type, c.is_nullable, c.column_default,
+       COALESCE(bool_or(tc.constraint_type = 'PRIMARY KEY'), false) AS primary_key
+       FROM information_schema.columns c
+       LEFT JOIN information_schema.key_column_usage kcu
+         ON c.table_schema = kcu.table_schema
+        AND c.table_name = kcu.table_name
+        AND c.column_name = kcu.column_name
+       LEFT JOIN information_schema.table_constraints tc
+         ON kcu.table_schema = tc.table_schema
+        AND kcu.constraint_name = tc.constraint_name
+        AND tc.constraint_type = 'PRIMARY KEY'
+       WHERE c.table_schema = $1
+         AND c.table_name = $2
+       GROUP BY c.column_name, c.data_type, c.is_nullable, c.column_default, c.ordinal_position
+       ORDER BY c.ordinal_position`,
+      [schema, table]
+    );
+    return (rows as any[]).map((row) => ({
+      name: row.column_name,
+      type: row.data_type,
+      primary: !!row.primary_key,
+      autoIncrement: false,
+      nullable: row.is_nullable === "YES",
+      default: row.column_default ?? undefined,
+    }));
   }
 
   static async getColumn(

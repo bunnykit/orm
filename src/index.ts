@@ -8,6 +8,9 @@ export type { BunnyConfig, ConfiguredBunny } from "./config/BunnyConfig.js";
 export type { ConnectionConfig } from "./types/index.js";
 
 export { Schema } from "./schema/Schema.js";
+export type { SchemaColumn, SchemaIndex, SchemaForeignKey } from "./schema/Schema.js";
+export { ModelSchemaBuilder } from "./model/ModelSchemaBuilder.js";
+export type { IntrospectedSchema } from "./model/ModelSchemaBuilder.js";
 export { Blueprint } from "./schema/Blueprint.js";
 export { Grammar } from "./schema/grammars/Grammar.js";
 export { SQLiteGrammar } from "./schema/grammars/SQLiteGrammar.js";
